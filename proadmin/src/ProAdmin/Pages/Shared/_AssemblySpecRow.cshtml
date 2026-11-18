@@ -1,0 +1,22 @@
+@model (ProAdmin.Modules.AssemblySpecEntry Entry, int Index, bool IsNew, bool ReadOnly)
+@using ProAdmin.Modules
+@{
+    var (e, i, isNew, readOnly) = Model;
+}
+<tr>
+    <td><input name="Entries[@i].Name" value="@e.Name" placeholder="@(isNew ? "+ новая сборка, например Newtonsoft.Json" : "")" class="mono" disabled="@readOnly" aria-label="Имя сборки" /></td>
+    <td>
+        <select name="Entries[@i].Rule" disabled="@readOnly" aria-label="Правило">
+            @foreach (var r in Enum.GetValues<AssemblyRule>())
+            {
+                <option value="@r" selected="@(e.Rule == r)">@AssemblySpec.RuleTitle(r)</option>
+            }
+        </select>
+    </td>
+    <td><input name="Entries[@i].AssemblyVersion" value="@e.AssemblyVersion" placeholder="любая" class="mono" disabled="@readOnly" aria-label="AssemblyVersion" /></td>
+    <td><input name="Entries[@i].FileVersion" value="@e.FileVersion" placeholder="любая" class="mono" disabled="@readOnly" aria-label="Версия файла" /></td>
+    <td><input name="Entries[@i].Modules" value="@string.Join(", ", e.Modules)" placeholder="все" disabled="@readOnly" aria-label="Только модули" /></td>
+    <td><input name="Entries[@i].Package" value="@e.Package" placeholder="Пакет 1.2.3" class="mono" disabled="@readOnly" aria-label="NuGet-пакет и версия" /></td>
+    <td><input name="Entries[@i].Comment" value="@e.Comment" disabled="@readOnly" aria-label="Комментарий" /></td>
+    <td>@if (!isNew) { <input type="checkbox" name="Entries[@i].Delete" value="true" disabled="@readOnly" aria-label="Удалить @e.Name" /> }</td>
+</tr>

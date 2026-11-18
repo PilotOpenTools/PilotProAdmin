@@ -1,0 +1,93 @@
+@page "/Compare/Automation"
+@model ProAdmin.Pages.Compare.AutomationModel
+@{
+    ViewData["Title"] = $"Различия: {Model.Name}";
+    var a = Model.EnvA;
+    var b = Model.EnvB;
+    var q = Uri.EscapeDataString(Model.Name);
+    var jsonTitle = (Model.Repo?.Name ?? Model.Name) + ".json";
+    var csTitle = "C#-вставка";
+}
+<div class="crumbs">
+    <a href="/Compare?kind=automations&a=@a?.Key&b=@b?.Key">Сравнение</a> <span>/</span> <span>@Model.Name</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Различия <span class="mono-title">@Model.Name</span></h1>
+        @if (a is not null && b is not null)
+        {
+            <p class="muted">Строки <span class="diff-legend-del">−</span> есть только на @Model.LabelA, <span class="diff-legend-add">+</span> - только на @Model.LabelB.</p>
+        }
+    </div>
+    @if (a is not null && b is not null)
+    {
+        <div class="head-actions">
+            <nav class="seg" aria-label="Что сравнивать">
+                <a class="seg-btn @(!Model.FromBranches ? "active" : "")" href="@Model.Link("servers")">Серверы</a>
+                <a class="seg-btn @(Model.FromBranches ? "active" : "")" href="@Model.Link("branches")">Ветки @a.Branch / @b.Branch</a>
+            </nav>
+            <a class="btn btn-sm" href="@Model.Link(a: b.Key, b: a.Key)" title="Поменять стороны местами">Поменять местами</a>
+        </div>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (a is not null && b is not null)
+{
+    <div class="compare-sides">
+        @foreach (var (env, label, side) in new[] { (a, Model.LabelA, Model.SideA), (b, Model.LabelB, Model.SideB) })
+        {
+            <div class="card compare-side">
+                <div class="muted small"><span class="env-dot env-@env.Key"></span>@label</div>
+                @if (side is null)
+                {
+                    <div class="h3">нет</div>
+                }
+                else
+                {
+                    <div class="h3 mono">@(side.Version?.ToString() ?? "без версии")</div>
+                    <div class="meta-row">
+                        @if (!Model.FromBranches)
+                        {
+                            <span class="badge @(side.IsPaused ? "badge-paused" : "badge-active")">@(side.IsPaused ? "на паузе" : "работает")</span>
+                        }
+                        <span class="muted small">@(side.HasCSharp ? "есть C#" : "без C#")</span>
+                    </div>
+                    <a class="small" href="/Automations/@env.Key/Edit?name=@q">Открыть в редакторе</a>
+                }
+            </div>
+        }
+    </div>
+
+    @if (!Model.FromBranches && Model.SideA is not null && Model.SideB is not null && Model.SideA.IsPaused != Model.SideB.IsPaused)
+    {
+        <div class="alert alert-warn">Пауза отличается: на @a.Title - @(Model.SideA.IsPaused ? "на паузе" : "работает"), на @b.Title - @(Model.SideB.IsPaused ? "на паузе" : "работает").</div>
+    }
+
+    @if (Model.JsonDiff is not null && Model.CsDiff is not null && (Model.SideA is not null || Model.SideB is not null))
+    {
+        @if (Model.JsonDiff.Identical && Model.CsDiff.Identical)
+        {
+            <div class="alert alert-ok">JSON и C# на @Model.LabelA и @Model.LabelB совпадают.</div>
+        }
+        <section class="card">
+            <partial name="_Diff" model="(jsonTitle, Model.JsonDiff, Model.LabelA, Model.LabelB)" />
+            @if (Model.SideA?.HasCSharp == true || Model.SideB?.HasCSharp == true)
+            {
+                <partial name="_Diff" model="(csTitle, Model.CsDiff, Model.LabelA, Model.LabelB)" />
+            }
+        </section>
+
+        @if (Model.Repo is not null && !(Model.JsonDiff.Identical && Model.CsDiff.Identical)
+             && a.Branch == ProAdmin.Automations.AutomationRepositories.DevBranch
+             && b.Branch == ProAdmin.Automations.AutomationRepositories.MainBranch)
+        {
+            <a class="btn btn-promote" href="/Automations/Promote?name=@q">Перенести на прод /</a>
+        }
+    }
+}

@@ -1,0 +1,392 @@
+@page "/Modules/Assemblies"
+@model ProAdmin.Pages.Modules.AssembliesModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "Сборки модулей";
+    var spec = Model.Spec;
+    var readOnly = Model.ModulesReadOnly;
+    var shared = spec.Mode == AssemblySpecMode.SharedModule;
+    var mainRows = spec.Entries.Where(e => e.Rule != AssemblyRule.Pilot).ToList();
+    var pilotRows = spec.Entries.Where(e => e.Rule == AssemblyRule.Pilot).ToList();
+    var index = 0;
+}
+
+<div class="page-head">
+    <div>
+        <h1>Библиотеки клиентских модулей: правила и состав</h1>
+        <p class="muted">
+            Какие сторонние dll можно использовать в модулях и каких версий. Главная сборка (<code>*.ext2.dll</code>) разрешена всегда.
+            Библиотеки проверяются в CI (job <code>check_libraries</code>) и при каждой выкладке, результат - в журнале операции.
+        </p>
+    </div>
+    <div class="head-actions">
+        <a class="btn" href="/Modules">Модули</a>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@if (readOnly)
+{
+    <div class="alert alert-info">Только просмотр: изменять спецификацию может Developer и выше в группе «@Model.ModulesGroupPath».</div>
+}
+
+@if (Model.CheckResult is { } check)
+{
+    <section class="card" id="check">
+        <h2>Проверка: @Model.Checked!.FileName <span class="muted small">- @Model.Checked.AssemblyName @Model.Checked.Version</span></h2>
+        <p class="@(check.HasProblems ? "alert alert-warn" : "alert alert-ok")">@check.Summary</p>
+        @if (shared && Model.Scan is null)
+        {
+            <p class="muted small">Зависимости и папка Preload проверяются против общего модуля на сервере - выберите сервер в «Составе модулей на сервере» и проверьте zip ещё раз.</p>
+        }
+        @await Html.PartialAsync("_AssemblyCheck", check)
+    </section>
+}
+
+@if (shared)
+{
+    var libs = Model.SharedLibraries();
+    <section class="card" id="shared-libs">
+        <h2>Библиотеки общего модуля «@spec.SharedModule»</h2>
+        <p class="muted small">
+            Что можно использовать в модулях, не кладя dll в свой zip: подключите пакет только для компиляции
+            (<code>ExcludeAssets="runtime"</code>) - в клиенте библиотеку отдаст общий модуль. Нужна новая библиотека или версия -
+            её сначала добавляют в общий модуль и в эту таблицу. Плюс всё из списка «Есть в клиенте Pilot» ниже.
+        </p>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Библиотека</th>
+                    <th>NuGet-пакет</th>
+                    <th>По спецификации</th>
+                    @foreach (var env in Model.Envs)
+                    {
+                        <th><span class="env-dot env-@env.Key"></span>@env.Title</th>
+                    }
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td class="strong">@spec.SharedModule <span class="badge badge-onlypilot">общий модуль</span></td>
+                    <td></td>
+                    <td class="muted small">в папке @AssemblySpec.PreloadFolder</td>
+                    @foreach (var env in Model.Envs)
+                    {
+                        var (st, err) = Model.SharedByEnv.TryGetValue(env.Key, out var v) ? v : (null, null);
+                        <td class="small">
+                            @if (err is not null) { <span class="muted">@err</span> }
+                            else if (st is null || !st.Found) { <span class="badge badge-failed">нет</span> }
+                            else
+                            {
+                                <span class="mono">@st.Version</span>
+                                @if (!st.InPreload) { <span class="badge badge-differs" title="Папка: @(string.IsNullOrEmpty(st.Folder) ? "корень" : st.Folder)">не в Preload</span> }
+                            }
+                        </td>
+                    }
+                </tr>
+                @foreach (var row in libs)
+                {
+                    var e = row.Entry;
+                    var expected = e is { IsSharedLibrary: true };
+                    <tr>
+                        <td class="mono">@row.Name</td>
+                        <td class="mono small">@e?.Package</td>
+                        <td class="small">
+                            @if (!expected) { <span class="badge badge-differs" title="Лежит в общем модуле, но не описана в спецификации как общая библиотека">нет в спецификации</span> }
+                            else { <span class="mono">@(e!.AssemblyVersion.Length > 0 ? e.AssemblyVersion : "любая")@(e.FileVersion.Length > 0 ? " · файл " + e.FileVersion : "")</span> }
+                            @if (e?.Comment is { Length: > 0 } c) { <div class="muted">@c</div> }
+                        </td>
+                        @foreach (var env in Model.Envs)
+                        {
+                            var a = row.ByEnv[env.Key];
+                            var hasState = Model.SharedByEnv.TryGetValue(env.Key, out var v) && v.State is { Found: true };
+                            <td class="mono small">
+                                @if (a is not null)
+                                {
+                                    var ok = !expected || (VersionPattern.Matches(e!.AssemblyVersion, a.AssemblyVersion) && VersionPattern.Matches(e.FileVersion, a.FileVersion ?? a.AssemblyVersion));
+                                    <span class="@(ok ? "" : "badge badge-differs")" title="@(ok ? "" : "Версия не совпадает со спецификацией")">@(a.AssemblyVersion ?? "native")</span>
+                                    @if (a.FileVersion is { } f && f != a.AssemblyVersion) { <div class="muted">файл @f</div> }
+                                }
+                                else if (hasState) { <span class="muted" title="В общем модуле на этом контуре библиотеки нет - модули, которые на неё ссылаются, сюда не выложатся">нет</span> }
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        @{
+            var packages = libs.Select(r => r.Entry).Where(x => x is { IsSharedLibrary: true } && x.PackageId.Length > 0).ToList();
+        }
+        @if (packages.Count > 0)
+        {
+            <details>
+                <summary class="small">Фрагмент для .csproj модуля</summary>
+                <pre class="mono small">&lt;ItemGroup&gt;
+    &lt;!-- Библиотеки общего модуля @spec.SharedModule: только для компиляции, в zip модуля не попадают --&gt;
+@foreach (var p in packages)
+{
+@:    &lt;PackageReference Include="@p!.PackageId" Version="@(p.PackageVersion.Length > 0 ? p.PackageVersion : "*")" ExcludeAssets="runtime" /&gt;
+}
+&lt;/ItemGroup&gt;</pre>
+            </details>
+        }
+    </section>
+}
+
+<form method="post" asp-page-handler="Save" asp-route-env="@Model.Env" asp-route-onlyProblems="@Model.OnlyProblems" class="form">
+    <section class="card">
+        <h2>Режим: @AssemblySpec.ModeTitle(spec.Mode)@(shared ? $" - общий модуль «{spec.SharedModule}»" : "")</h2>
+        <p class="muted small">
+            @AssemblySpec.ModeHint(spec.Mode)
+            Режим и общий модуль выбираются в <a href="/Settings#libraries">настройках</a>.
+        </p>
+        <p class="muted small">
+            Ниже - полный список правил для клиентских модулей. <b>Разрешена</b> - библиотека, на которую модуль может ссылаться
+            @(spec.Mode == AssemblySpecMode.WarnList ? "и которую можно положить в zip" : "")
+            (с «только модули» - только этим модулям, их zip может её содержать как исключение, например native-dll);
+            <b>запрещена</b> - нельзя ни класть, ни ссылаться; <b>есть в клиенте Pilot</b> - её отдаёт клиент.
+            Версии: <code>13.0.0.0</code> - ровно эта, <code>6.*</code> - по префиксу, <code>&gt;=6.0 &lt;7</code> - диапазон,
+            варианты через <code>;</code>. Пусто - любая. «Только модули» - имена модулей в Pilot, сборок или репозиториев через запятую.
+        </p>
+    </section>
+
+    <div class="table-wrap">
+        <table class="table" id="spec">
+            <thead>
+            <tr>
+                <th>Сборка</th>
+                <th>Правило</th>
+                <th>AssemblyVersion</th>
+                <th>Версия файла</th>
+                <th>@(shared ? "Исключение для модулей" : "Только модули")</th>
+                <th>NuGet-пакет</th>
+                <th>Комментарий</th>
+                <th title="Удалить строку при сохранении">X</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var e in mainRows.Append(readOnly ? null : new AssemblySpecEntry()))
+            {
+                if (e is null) { continue; }
+                var i = index++;
+                var isNew = e.Name.Length == 0;
+                @await Html.PartialAsync("_AssemblySpecRow", (e, i, isNew, readOnly))
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <details class="card">
+        <summary><b>Есть в клиенте Pilot</b> <span class="muted small">- @pilotRows.Count сборок: класть их не нужно ни в какой модуль, клиент отдаст свою копию</span></summary>
+        <div class="table-wrap">
+            <table class="table">
+                <tbody>
+                @foreach (var e in pilotRows)
+                {
+                    var i = index++;
+                    @await Html.PartialAsync("_AssemblySpecRow", (e, i, false, readOnly))
+                }
+                </tbody>
+            </table>
+        </div>
+    </details>
+
+    @if (!readOnly)
+    {
+        <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Сохранить список</button>
+            <button class="btn" type="submit" formaction="?handler=AddPilot&env=@Model.Env" formnovalidate
+                    title="Добавить сборки из папки клиента Pilot 26.x, которых ещё нет в спецификации">Добавить библиотеки клиента Pilot</button>
+            <span class="muted small">
+                @if (spec.UpdatedAt is { } at) { <span>Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @spec.UpdatedBy</span> }
+            </span>
+        </div>
+    }
+</form>
+
+<div class="grid-2">
+    <section class="card">
+        <h2>Проверить zip модуля</h2>
+        <p class="muted small">Без выкладки: состав и версии сборок против текущей спецификации@(shared ? " и общего модуля на выбранном сервере" : "").</p>
+        <form method="post" asp-page-handler="Check" asp-route-env="@Model.Env" enctype="multipart/form-data" class="form">
+            <label class="field"><span>Архив модуля</span><input type="file" name="Archive" accept=".zip" required /></label>
+            <button class="btn" type="submit">Проверить</button>
+        </form>
+    </section>
+    <section class="card">
+        <h2>История изменений</h2>
+        @if (spec.History.Count == 0)
+        {
+            <p class="muted small">Изменений ещё не было.</p>
+        }
+        else
+        {
+            <ul class="timeline">
+                @foreach (var h in spec.History.Take(15))
+                {
+                    <li><span class="tl-time muted small">@h.At.ToLocalTime().ToString("dd.MM HH:mm") · @h.By</span> <span class="tl-text mono small">@h.Text</span></li>
+                }
+            </ul>
+        }
+    </section>
+</div>
+
+<section class="card" id="scan">
+    <h2>Состав модулей на сервере</h2>
+    <p class="muted small">Скачивает zip всех клиентских модулей сервера и показывает, какие dll в них лежат, каких версий и что не по спецификации.
+        Отсюда удобно заполнять спецификацию и искать конфликты версий: одна сборка разных версий в разных модулях.</p>
+    <div class="btn-row">
+        @foreach (var env in Model.Envs)
+        {
+            <a class="btn @(Model.Env == env.Key ? "btn-primary" : "")" href="/Modules/Assemblies?env=@env.Key@(Model.OnlyProblems ? "&onlyProblems=true" : "")#scan"><span class="env-dot env-@env.Key"></span>@env.Title</a>
+        }
+        @if (Model.Scan is not null)
+        {
+            <a class="btn btn-ghost" href="/Modules/Assemblies?env=@Model.Env&fresh=true@(Model.OnlyProblems ? "&onlyProblems=true" : "")#scan" title="Список модулей сервера заново (zip берутся из кэша, если не изменились)">Обновить</a>
+            <a class="btn btn-ghost" href="/Modules/Assemblies?env=@Model.Env&onlyProblems=@(!Model.OnlyProblems)#scan">@(Model.OnlyProblems ? "Показать все сборки" : "Только нарушения")</a>
+        }
+    </div>
+    @if (Model.ScanError is not null)
+    {
+        <div class="alert alert-error">@Model.ScanError</div>
+    }
+    @if (Model.ScanShared is { } sm)
+    {
+        if (!sm.Found)
+        {
+            <div class="alert alert-error">На сервере @Model.Scan!.Env.Title нет общего модуля «@spec.SharedModule».</div>
+        }
+        else
+        {
+            <div class="alert @(sm.InPreload ? "alert-ok" : "alert-warn")">
+                Общий модуль: <b>@sm.Name</b> @sm.Version · папка «@(string.IsNullOrEmpty(sm.Folder) ? "корень" : sm.Folder)»
+                @(sm.InPreload ? "- в Preload, грузится первым." : $"- НЕ в {AssemblySpec.PreloadFolder}: перенесите его туда, иначе порядок загрузки не гарантирован.")
+                Библиотек в нём: @sm.Assemblies.Count(a => !a.IsMain).
+            </div>
+        }
+    }
+</section>
+
+@if (Model.Scan is { } scan)
+{
+    var sharedState = Model.ScanShared;
+    var assemblies = scan.Assemblies;
+    var checks = scan.Modules.ToDictionary(m => m.Module.Id, m => AssemblyScanService.Check(spec, m, sharedState));
+    var verdicts = checks.Values.SelectMany(c => c.Items).Where(i => i.IsFile && !i.Assembly.IsMain)
+        .GroupBy(i => i.Assembly.Name, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+    var badModules = checks.Count(c => c.Value.HasProblems);
+    <div class="toolbar">
+        <span class="muted small">@scan.Env.Title · @scan.At.ToLocalTime().ToString("HH:mm") · модулей: @scan.Modules.Count · сторонних сборок: @assemblies.Count</span>
+        <div class="legend">
+            @if (badModules > 0) { <span class="badge badge-differs">модулей с нарушениями: @badModules</span> }
+            @if (assemblies.Count(a => a.Conflicts) is var conflicts and > 0) { <span class="badge badge-failed">конфликтов версий: @conflicts</span> }
+        </div>
+    </div>
+
+    <h2 class="h3">По сборкам</h2>
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+            <tr><th>Сборка</th><th>В спецификации</th><th>AssemblyVersion</th><th>Версия файла</th><th>Модули</th><th></th></tr>
+            </thead>
+            <tbody>
+            @foreach (var a in assemblies)
+            {
+                var items = verdicts.TryGetValue(a.Name, out var list) ? list : new();
+                var problems = items.Count(i => i.IsProblem);
+                if (Model.OnlyProblems && problems == 0 && !a.Conflicts) { continue; }
+                var entry = spec.Find(a.Name);
+                <tr>
+                    <td class="mono">@a.Name</td>
+                    <td>
+                        @if (entry is null) { <span class="badge badge-differs">нет</span> }
+                        else if (entry.Rule == AssemblyRule.Forbidden) { <span class="badge badge-failed">запрещена</span> }
+                        else if (entry.Rule == AssemblyRule.Pilot) { <span class="badge">есть в Pilot</span> }
+                        else
+                        {
+                            <span class="badge badge-synced">@(shared && entry.Modules.Count == 0 ? "общая · " : "")@(entry.AssemblyVersion.Length > 0 ? entry.AssemblyVersion : "любая")@(entry.FileVersion.Length > 0 ? " · файл " + entry.FileVersion : "")</span>
+                        }
+                        @if (problems > 0) { <div class="muted small">нарушений: @problems</div> }
+                    </td>
+                    <td class="mono small">
+                        @foreach (var v in a.AssemblyVersions)
+                        {
+                            var n = a.Uses.Count(u => (u.Assembly.AssemblyVersion ?? "native") == v);
+                            <div class="@(a.Conflicts ? "strong" : "")">@v <span class="muted">×@n</span></div>
+                        }
+                    </td>
+                    <td class="mono small">@string.Join(", ", a.FileVersions)</td>
+                    <td class="small">
+                        <details>
+                            <summary>@a.Uses.Count</summary>
+                            @foreach (var u in a.Uses)
+                            {
+                                <div>@u.Module.Module.Name <span class="muted mono">@u.Assembly.AssemblyVersion @(u.Assembly.FileVersion is { } f && f != u.Assembly.AssemblyVersion ? "(" + f + ")" : "")</span></div>
+                            }
+                        </details>
+                    </td>
+                    <td class="nowrap">
+                        @if (!readOnly)
+                        {
+                            var version = a.AssemblyVersions.Count == 1 && a.AssemblyVersions[0] != "native" ? a.AssemblyVersions[0] : "";
+                            <form method="post" asp-page-handler="Add" asp-route-env="@Model.Env" asp-route-onlyProblems="@Model.OnlyProblems" class="inline">
+                                <input type="hidden" name="AddName" value="@a.Name" />
+                                <input type="hidden" name="AddVersion" value="@version" />
+                                @if (entry?.Rule != AssemblyRule.Allowed)
+                                {
+                                    <button class="btn btn-sm" name="AddRule" value="@AssemblyRule.Allowed" title="@(shared ? "Общая библиотека - в общем модуле" : "Разрешить")@(version.Length > 0 ? " в версии " + version : " (любая версия - уточните в таблице выше)")">@(shared ? "в общий модуль" : "разрешить")</button>
+                                }
+                                @if (entry?.Rule != AssemblyRule.Pilot)
+                                {
+                                    <button class="btn btn-sm btn-ghost" name="AddRule" value="@AssemblyRule.Pilot" title="Есть в папке клиента Pilot - не класть ни в какой модуль">есть в Pilot</button>
+                                }
+                                @if (entry?.Rule != AssemblyRule.Forbidden)
+                                {
+                                    <button class="btn btn-sm btn-ghost" name="AddRule" value="@AssemblyRule.Forbidden" title="Запретить класть в модули">запретить</button>
+                                }
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="h3">По модулям</h2>
+    <div class="table-wrap">
+        <table class="table">
+            <thead><tr><th>Модуль</th><th>Папка</th><th>Версия</th><th>Сборок</th><th>Нарушения</th></tr></thead>
+            <tbody>
+            @foreach (var m in scan.Modules)
+            {
+                var c = checks[m.Module.Id];
+                if (Model.OnlyProblems && !c.HasProblems && m.Error is null) { continue; }
+                <tr>
+                    <td>@m.Module.Name @if (shared && AssemblyScanService.IsShared(spec, m.Module, m.MainAssembly)) { <span class="badge badge-onlypilot">общий модуль</span> } <div class="muted small mono">@m.MainAssembly</div></td>
+                    <td class="small">@(string.IsNullOrEmpty(m.Module.Folder) ? "-" : m.Module.Folder)</td>
+                    <td class="mono small">@m.Module.Version</td>
+                    <td>@m.Assemblies.Count</td>
+                    <td class="small">
+                        @if (m.Error is not null) { <span class="badge badge-failed">@m.Error</span> }
+                        else if (!c.HasProblems) { <span class="badge badge-synced">по спецификации</span> }
+                        else
+                        {
+                            <details>
+                                <summary>@c.Summary</summary>
+                                @await Html.PartialAsync("_AssemblyCheck", c)
+                            </details>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

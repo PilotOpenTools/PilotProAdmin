@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<AssemblyName>TestServerAction.servext</AssemblyName>
+		<RootNamespace>TestServerAction</RootNamespace>
+		<Version>1.0.4</Version>
+		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<OutputPath>bin\$(Configuration)\</OutputPath>
+		<NoWarn>$(NoWarn);CS1998</NoWarn>
+		<!-- В CI пути исходников не попадают в сборку: одинаковый код даёт одинаковый dll -->
+		<ContinuousIntegrationBuild Condition="'$(CI)' == 'true' Or '$(GITLAB_CI)' == 'true'">true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
+	<!-- Ascon.Pilot.* и System.* уже есть в Pilot-Server: нужны только для компиляции, в архив не кладём -->
+	<ItemGroup>
+		<PackageReference Include="Ascon.Pilot.ServerExtensions.SDK" Version="26.13.0" ExcludeAssets="runtime" />
+		<PackageReference Include="System.ComponentModel.Composition" Version="4.7.0" ExcludeAssets="runtime" />
+	</ItemGroup>
+
+	<!-- Release: упаковываем содержимое bin\Release в dist\TestServerAction.zip для загрузки в Pilot -->
+	<Target Name="ZipAfterBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+		<MakeDir Directories="$(MSBuildProjectDirectory)\dist" />
+		<ZipDirectory SourceDirectory="$(OutputPath)" DestinationFile="$(MSBuildProjectDirectory)\dist\TestServerAction.zip" Overwrite="true" />
+	</Target>
+</Project>

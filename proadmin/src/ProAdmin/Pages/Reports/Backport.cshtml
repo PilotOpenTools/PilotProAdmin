@@ -1,0 +1,133 @@
+@page "/Reports/Backport"
+@model ProAdmin.Pages.Reports.BackportModel
+@using ProAdmin.Reports
+@{
+    ViewData["Title"] = "Хотфикс с прода в тест";
+    var dev = Model.Dev;
+    var main = Model.Main;
+}
+<div class="crumbs">
+    <a href="/Reports">Отчёты</a> <span>/</span> <span>@Model.Name</span> <span>/</span> <span>С прода в тест</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Хотфикс с прода в тест <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">
+            Отчёт исправляли прямо на @(main?.Title ?? "проде") - версия попала в <code>main</code> мимо <code>dev</code>.
+            Merge Request <code>main</code> / <code>dev</code> возвращает её в разработку: после pipeline она записывается на сервер
+            @(dev?.Title ?? "тест"), затем MR вливается (если merge не удастся, сервер откатится). Прод и <code>main</code> не меняются.
+        </p>
+    </div>
+    @if (Model.Repo is not null)
+    {
+        <a class="btn" href="@Model.Repo.WebUrl/-/compare/dev...main" target="_blank" rel="noopener">Сравнить dev…main в GitLab</a>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Repo is not null && dev is not null && Model.MainPath is not null)
+{
+    <div class="promote-flow">
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>main</code> (прод)</div>
+            <div class="h3 mono">@Model.MainPath</div>
+            <span class="badge badge-synced">источник</span>
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>dev</code></div>
+            <div class="h3">@(Model.BranchesEqual ? "= main" : "будет обновлена")</div>
+            <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "Merge Request main / dev")</span>
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Сервер @dev.Title</div>
+            <div class="h3">@(Model.TestReport is null ? "нет" : Model.TestReport.Folder is { Length: > 0 } f ? f : "корень отчётов")</div>
+            <span class="badge @(Model.TestUpToDate == true ? "badge-synced" : "badge-onlypilot")">
+                @(Model.TestUpToDate == true ? "уже эта версия" : Model.TestReport is null ? "будет создан" : "будет обновлён")
+            </span>
+        </div>
+    </div>
+
+    @if (Model.Drift == ReportDrift.Diverged)
+    {
+        <div class="alert alert-warn">
+            Отчёт менялся и в <code>dev</code>, и в <code>main</code>. Если GitLab не сможет объединить их сам, MR останется открытым с конфликтом -
+            разрешите его в GitLab и запустите перенос снова. Сервер @dev.Title до этого не изменится.
+        </div>
+    }
+    else if (Model.Drift == ReportDrift.DevAhead)
+    {
+        <div class="alert alert-info">В <code>main</code> нет правок отчёта, которых нет в <code>dev</code>, - обычно здесь нужен перенос на прод, а не с прода.</div>
+    }
+    @if (Model.OpenMergeRequestUrl is not null)
+    {
+        <div class="alert alert-info">Уже есть открытый <a href="@Model.OpenMergeRequestUrl" target="_blank" rel="noopener">Merge Request main / dev</a> - он будет использован.</div>
+    }
+    @if (Model.BranchesEqual && Model.TestUpToDate == true)
+    {
+        <div class="alert alert-ok"><code>dev</code> и сервер @dev.Title уже содержат версию с прода - переносить нечего.</div>
+    }
+
+    <div class="grid-2">
+        <section class="card">
+            <h2>Правки в main, которых нет в dev</h2>
+            @if (Model.HotfixCommits.Count == 0)
+            {
+                <p class="muted">Нет.</p>
+            }
+            else
+            {
+                <ul class="small">
+                    @foreach (var c in Model.HotfixCommits)
+                    {
+                        <li>
+                            <a class="mono" href="@c.WebUrl" target="_blank" rel="noopener">@c.ShortId</a> @c.Title
+                            <span class="muted">· @(c.CommittedDate?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")) · @c.AuthorName</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+
+        <section class="card">
+            <h2>Перенос с прода</h2>
+            <form method="post" class="form" data-confirm="Перенести версию отчёта «@Model.Name» с прода в dev и на @dev.Title?">
+                <input type="hidden" asp-for="Name" />
+                @if (dev.RequireTaskReference)
+                {
+                    <label class="field">
+                        <span>Задача</span>
+                        <input asp-for="Task" placeholder="TASK-123" autocomplete="off" required />
+                    </label>
+                }
+                <label class="field">
+                    <span>Что исправили на проде</span>
+                    <textarea asp-for="Description" rows="3" required></textarea>
+                    <small class="muted">Попадёт в Merge Request и в причину версии отчёта на сервере @dev.Title. Подставлено из коммитов main.</small>
+                </label>
+                <button class="btn btn-primary" type="submit" disabled="@(!Model.CanBackport)">Перенести в dev и на @dev.Title</button>
+            </form>
+        </section>
+    </div>
+
+    @if (Model.ScriptDiff is not null && Model.MarkupDiff is not null && Model.TestUpToDate != true)
+    {
+        <section class="card">
+            <h2>Что изменится на сервере @dev.Title</h2>
+            @{
+                var labelA = "сейчас на тесте";
+                var labelB = "с прода (main)";
+                var scriptTitle = "Скрипт";
+                var markupTitle = "Разметка";
+            }
+            <partial name="/Pages/Compare/_Diff.cshtml" model="(scriptTitle, Model.ScriptDiff, labelA, labelB)" />
+            <partial name="/Pages/Compare/_Diff.cshtml" model="(markupTitle, Model.MarkupDiff, labelA, labelB)" />
+        </section>
+    }
+}

@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Правила алертинга можно подключить позже, положив файлы в ./prometheus/rules
+# и раскомментировав секцию ниже.
+# rule_files:
+#   - "rules/*.yml"
+
+scrape_configs:
+  # Сам Prometheus
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Нагрузка хоста: CPU, память, диск, сеть, load average
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Нагрузка контейнеров (CPU/RAM/IO по каждому контейнеру, включая будущий GitLab)
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # Пример: когда GitLab поднимется рядом и откроет /-/metrics,
+  # раскомментируйте и укажите реальный host:port контейнера gitlab.
+  # - job_name: "gitlab"
+  #   metrics_path: /-/metrics
+  #   static_configs:
+  #     - targets: ["gitlab:9090"]
+
+  # Пример: метрики самого Docker-демона (нужно включить
+  # "metrics-addr": "0.0.0.0:9323" в /etc/docker/daemon.json на хосте)
+  # - job_name: "docker-engine"
+  #   static_configs:
+  #     - targets: ["host.docker.internal:9323"]

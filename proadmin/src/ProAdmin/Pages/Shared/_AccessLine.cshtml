@@ -1,0 +1,10 @@
+@model ProAdmin.GitLab.GitLabGroupAccess?
+@* Строка «Ваш доступ: Developer - можно изменять» под полем группы в настройках. *@
+@if (Model is { } access)
+{
+    var cls = access.Error is not null ? "access-unknown" : access.ReadOnly || (!access.GroupFound && !access.IsAdmin) ? "access-fail" : "access-ok";
+    <div class="access-line @cls">
+        <span class="access-mark">@(cls == "access-ok" ? "" : cls == "access-fail" ? "X" : "?")</span>
+        Ваш доступ к <code>@access.GroupPath</code>: <b>@access.Summary</b>
+    </div>
+}

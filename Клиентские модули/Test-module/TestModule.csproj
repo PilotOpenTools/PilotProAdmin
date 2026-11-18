@@ -1,0 +1,96 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- Тестовый модуль: проверка CI/CD клиентских модулей и статистики ошибок в Grafana -->
+	<PropertyGroup>
+		<TargetFramework>net48</TargetFramework>
+		<UseWPF>true</UseWPF>
+		<LangVersion>latest</LangVersion>
+		<Nullable>disable</Nullable>
+		<Version>1.4.1</Version>
+		<AssemblyName>114TestModule.ext2</AssemblyName>
+		<RootNamespace>TestModule</RootNamespace>
+		<OutputType>Library</OutputType>
+		<PlatformTarget>AnyCPU</PlatformTarget>
+		<EnableWindowsTargeting>true</EnableWindowsTargeting>
+		<!-- Версия модуля - только <Version>: AssemblyVersion/FileVersion генерирует SDK. Остальные атрибуты - в AssemblyInfo.cs. -->
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+		<GenerateAssemblyDescriptionAttribute>false</GenerateAssemblyDescriptionAttribute>
+		<GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+		<GenerateAssemblyCopyrightAttribute>false</GenerateAssemblyCopyrightAttribute>
+		<GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+		<GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+		<GenerateAssemblyTrademarkAttribute>false</GenerateAssemblyTrademarkAttribute>
+		<GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)'=='Debug'">
+		<DebugType>full</DebugType>
+		<StartAction>Program</StartAction>
+		<StartProgram>C:\Program Files\ASCON\Pilot-BIM\Ascon.Pilot.PilotBIM.exe</StartProgram>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Ascon.Pilot.SDK" Version="26.13.0">
+			<ExcludeAssets>runtime</ExcludeAssets>
+		</PackageReference>
+	</ItemGroup>
+
+	<!--
+		Pilot.ClientSdk: NuGet-пакет из реестра GitLab (nuget.config). Только для компиляции - в zip не попадает, в клиенте уже загружен.
+		В монорепозитории рядом лежит исходник Pilot.ClientSdk - тогда проект собирается по нему, без реестра пакетов.
+	-->
+	<ItemGroup Condition="Exists('..\Pilot.ClientSdk\Pilot.ClientSdk.csproj')">
+		<ProjectReference Include="..\Pilot.ClientSdk\Pilot.ClientSdk.csproj" Private="false">
+			<SetConfiguration>Configuration=Debug</SetConfiguration>
+			<AdditionalProperties>CopyToPilot=false</AdditionalProperties>
+		</ProjectReference>
+	</ItemGroup>
+	<ItemGroup Condition="!Exists('..\Pilot.ClientSdk\Pilot.ClientSdk.csproj')">
+		<PackageReference Include="Pilot.ClientSdk" Version="2.0.0" />
+	</ItemGroup>
+	<ItemGroup>
+		<Reference Include="System.ComponentModel.Composition" />
+	</ItemGroup>
+
+	<!--
+		Эксперимент «общие библиотеки»: сторонние сборки - только для компиляции, в zip модуля их нет.
+		Newtonsoft.Json есть в папке клиента Pilot, Humanizer - в модуле Pilot.ClientSdk (там 2.14.1;
+		здесь нарочно 2.13.14 - проверка, примет ли клиент другую версию).
+	-->
+	<ItemGroup>
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
+		<PackageReference Include="Humanizer.Core" Version="2.13.14" ExcludeAssets="runtime" />
+	</ItemGroup>
+
+	<!-- Release: архив для загрузки модуля на сервер Pilot -->
+	<Target Name="CreateReleaseZip" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+		<PropertyGroup>
+			<_ZipStage>$(MSBuildProjectDirectory)\obj\zip-stage\</_ZipStage>
+			<_ZipPath>$(MSBuildProjectDirectory)\bin\$(AssemblyName)-$(Version).zip</_ZipPath>
+		</PropertyGroup>
+		<ItemGroup>
+			<_ZipFiles Include="$(TargetDir)$(AssemblyName).dll" />
+		</ItemGroup>
+		<RemoveDir Directories="$(_ZipStage)" />
+		<Copy SourceFiles="@(_ZipFiles)" DestinationFolder="$(_ZipStage)" />
+		<Delete Files="$(_ZipPath)" />
+		<ZipDirectory SourceDirectory="$(_ZipStage)" DestinationFile="$(_ZipPath)" />
+		<Message Importance="high" Text="Модуль для загрузки в Pilot: $(_ZipPath)" />
+	</Target>
+
+	<!-- Debug: копия в папку разработки клиента -->
+	<PropertyGroup>
+		<DevExtensionDir>$(LocalAppData)\ASCON\Pilot-BIM\Development\$(AssemblyName)</DevExtensionDir>
+	</PropertyGroup>
+	<Target Name="CopyToDevelopmentDirectory" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' AND '$(OS)' == 'Windows_NT' AND '$(CopyToPilot)' != 'false'">
+		<ItemGroup>
+			<_DevFiles Include="$(TargetDir)$(AssemblyName).*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_DevFiles)" DestinationFolder="$(DevExtensionDir)" />
+	</Target>
+
+</Project>

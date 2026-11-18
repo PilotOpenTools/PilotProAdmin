@@ -1,0 +1,141 @@
+@model ProAdmin.Pages.Modules.IndexModel
+@using ProAdmin.Modules
+@{
+    var spec = Model.Libraries;
+    var readOnly = Model.ModulesReadOnly;
+    var envs = Model.Catalog?.Envs ?? new List<ModuleEnv>();
+    var number = Array.IndexOf(AssemblySpec.Modes, spec.Mode) + 1;
+}
+
+<section class="card" id="libraries">
+    <div class="page-head">
+        <div>
+            <h2>Библиотеки: @number. @AssemblySpec.ModeTitle(spec.Mode)@(spec.IsShared ? $" - общий модуль «{spec.SharedModule}»" : "")</h2>
+            <p class="muted small">@AssemblySpec.ModeHint(spec.Mode) Проверяется в CI (job <code>check_libraries</code>) и при выкладке.</p>
+        </div>
+        <div class="head-actions">
+            <a class="btn btn-sm" href="/Settings#libraries">Режим - в настройках</a>
+            @if (!Model.IsServer)
+            {
+                <a class="btn btn-sm" href="/Modules/Assemblies" title="Все правила (запрещённые, «есть в клиенте Pilot», версии файла) и состав модулей на серверах">Все правила и состав</a>
+            }
+        </div>
+    </div>
+
+    @if (spec.IsShared)
+    {
+        <p class="muted small">
+            Список задаёт сам общий модуль: модули могут ссылаться только на эти библиотеки (и на .NET / Pilot SDK), подключая их
+            только для компиляции (<code>ExcludeAssets="runtime"</code>). Нужна новая библиотека или версия - сначала её добавляют в общий модуль.
+        </p>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr>
+                    <th>Модуль / библиотека</th>
+                    @foreach (var env in envs)
+                    {
+                        <th><span class="env-dot env-@env.Key"></span>@env.Title</th>
+                    }
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td class="strong">@spec.SharedModule <span class="badge badge-onlypilot">общий модуль</span></td>
+                    @foreach (var env in envs)
+                    {
+                        var (st, err) = Model.SharedByEnv.TryGetValue(env.Key, out var v) ? v : (null, null);
+                        <td class="small">
+                            @if (err is not null) { <span class="muted">@err</span> }
+                            else if (st is null || !st.Found) { <span class="badge badge-failed">нет</span> }
+                            else
+                            {
+                                <span class="mono">@(st.Version ?? "есть")</span>
+                                @if (!Model.IsServer && !st.InPreload) { <span class="badge badge-differs" title="Папка: @(string.IsNullOrEmpty(st.Folder) ? "корень" : st.Folder)">не в @AssemblySpec.PreloadFolder</span> }
+                            }
+                        </td>
+                    }
+                </tr>
+                @foreach (var row in Model.SharedLibraries(envs))
+                {
+                    <tr>
+                        <td class="mono">@row.Name</td>
+                        @foreach (var env in envs)
+                        {
+                            var a = row.ByEnv[env.Key];
+                            <td class="mono small">
+                                @if (a is not null) { @(a.AssemblyVersion ?? (a.IsManaged ? "есть" : "native")) }
+                                else if (Model.SharedByEnv.TryGetValue(env.Key, out var v) && v.State is { Found: true }) { <span class="muted" title="В общем модуле на этом контуре библиотеки нет">-</span> }
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        var rows = spec.Allowed.ToList();
+        <p class="muted small">
+            Модули могут ссылаться только на эти библиотеки (плюс .NET и Pilot SDK@(Model.IsServer ? ", System.* и Microsoft.* Pilot-Server" : " и библиотеки клиента Pilot")).
+            @(spec.Mode == AssemblySpecMode.WarnList
+                ? "Их можно класть в zip модуля; всё прочее - предупреждение."
+                : "В zip модуля их класть нельзя - подключайте только для компиляции (ExcludeAssets=\"runtime\").")
+            Версия: <code>13.0.0.0</code> - ровно эта, <code>6.*</code> - по префиксу, <code>&gt;=6.0 &lt;7</code> - диапазон, пусто - любая.
+            «Только модули» - через запятую; пусто - всем модулям.
+        </p>
+        <form method="post" asp-page-handler="Libraries" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                    <tr>
+                        <th>Библиотека</th>
+                        <th>Версия (AssemblyVersion)</th>
+                        <th>NuGet-пакет</th>
+                        <th>Только модули</th>
+                        <th>Комментарий</th>
+                        @if (!readOnly) { <th title="Удалить строку при сохранении">X</th> }
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @if (readOnly && rows.Count == 0)
+                    {
+                        <tr><td colspan="5" class="muted">Список пуст - модулям разрешены только .NET и Pilot.</td></tr>
+                    }
+                    @for (var i = 0; i < rows.Count + (readOnly ? 0 : 1); i++)
+                    {
+                        var e = i < rows.Count ? rows[i] : new AssemblySpecEntry();
+                        <tr>
+                            <td>
+                                <input name="LibraryRows[@i].Name" value="@e.Name" placeholder="@(i == rows.Count ? "новая: Newtonsoft.Json" : "")" disabled="@readOnly" class="mono" />
+                                <input type="hidden" name="LibraryRows[@i].FileVersion" value="@e.FileVersion" />
+                                @if (e.FileVersion.Length > 0) { <div class="muted small">файл @e.FileVersion</div> }
+                            </td>
+                            <td><input name="LibraryRows[@i].AssemblyVersion" value="@e.AssemblyVersion" placeholder="любая" disabled="@readOnly" class="mono" /></td>
+                            <td><input name="LibraryRows[@i].Package" value="@e.Package" placeholder="Пакет 1.2.3" disabled="@readOnly" class="mono" /></td>
+                            <td><input name="LibraryRows[@i].Modules" value="@string.Join(", ", e.Modules)" placeholder="все" disabled="@readOnly" /></td>
+                            <td><input name="LibraryRows[@i].Comment" value="@e.Comment" disabled="@readOnly" /></td>
+                            @if (!readOnly)
+                            {
+                                <td>@if (i < rows.Count) { <input type="checkbox" name="LibraryRows[@i].Delete" value="true" title="Удалить" /> }</td>
+                            }
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            @if (readOnly)
+            {
+                <p class="muted small">Только просмотр: изменять список может Developer и выше в группе «@Model.ModulesGroupPath».</p>
+            }
+            else
+            {
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">Сохранить список</button>
+                    @if (spec.UpdatedAt is { } at) { <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @spec.UpdatedBy</span> }
+                </div>
+            }
+        </form>
+    }
+</section>

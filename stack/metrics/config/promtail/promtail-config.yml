@@ -1,0 +1,61 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Машина-источник (compose: LOG_HOST, иначе INTERNAL_BIND): при нескольких машинах одноимённые контейнеры различаются по host.
+    external_labels:
+      host: ${LOG_HOST:-localhost}
+
+scrape_configs:
+  # ---- Логи всех Docker-контейнеров (включая будущий GitLab, runner-ы и т.д.) ----
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Метка job нужна правилу category="auth" ниже и панелям Grafana с селектором {job="docker"}: docker_sd её не ставит.
+      - target_label: job
+        replacement: docker
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: compose_project
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: compose_service
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+    pipeline_stages:
+      # Docker пишет логи в JSON-обёртке {"log":"...","stream":"stdout","time":"..."}
+      - docker: {}
+      # Отдельным лейблом помечаем строки, похожие на события авторизации/логина,
+      # чтобы в Grafana можно было быстро отфильтровать { category="auth" }
+      - match:
+          selector: '{job="docker"}'
+          stages:
+            - regex:
+                expression: '(?i)(sign[_ -]?in|log[_ -]?in|logon|authentication|auth fail|failed password|invalid user|unauthorized|401|access denied|permission denied)'
+            - labels:
+                category: auth
+
+  # ---- Системные логи хоста: попытки входа по SSH и т.п. (только Linux) ----
+  # Требует монтирования host-файлов в контейнер promtail (см. docker-compose.yml).
+  # Если файла нет (например, стек тестируется на Windows) - источник просто пуст,
+  # ошибок это не вызывает.
+  - job_name: host_auth
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: host_auth
+          category: auth
+          __path__: /var/log/host/auth.log*
+      - targets: [localhost]
+        labels:
+          job: host_auth
+          category: auth
+          __path__: /var/log/host/secure*

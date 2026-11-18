@@ -1,0 +1,8 @@
+@model string
+@* Вкладка «Серверные модули»: всё про модули Pilot-Server в одном месте - ветки GitLab и что установлено в ServerHost. *@
+<nav class="seg sub-tabs" aria-label="Серверные модули">
+    <a class="seg-btn @(Model == "branches" ? "active" : "")" href="/Modules?kind=server"
+       title="Репозитории серверных модулей: dev / тест, release/X.Y.Z / стейдж, main / прод">Ветки и выкладка (GitLab)</a>
+    <a class="seg-btn @(Model == "host" ? "active" : "")" href="/ServerModules"
+       title="Что установлено в ServerHost: активности, журнал, ручная загрузка, отладка">ServerHost на серверах</a>
+</nav>

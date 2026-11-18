@@ -1,0 +1,72 @@
+@model ProAdmin.GitLab.BranchesPanel
+@using ProAdmin.Modules
+@using ProAdmin.GitLab
+@* Активные ветки (есть коммиты сверх базы) и ветки, которые можно удалить (страницы модуля, отчёта, автоматизации). *@
+@{
+    var repo = Model.RepoUrl;
+    var deletable = Model.Deletable;
+    var deletableText = ModuleNextSteps.Plural(deletable, "ветку", "ветки", "веток");
+}
+<h3 class="branches-head">Активные ветки <span class="muted small">- есть коммиты, которых нет в базовой ветке; свежие сверху</span></h3>
+@if (Model.Active.Count == 0)
+{
+    <div class="work-empty">Новых коммитов нет ни в одной ветке: всё влито.</div>
+}
+else
+{
+    <table class="table branches">
+        <thead><tr><th>Ветка</th><th>Что это</th><th>Новых коммитов</th><th>Последний коммит</th><th>MR</th></tr></thead>
+        <tbody>
+        @foreach (var a in Model.Active)
+        {
+            var last = a.Branch.Commit;
+            var url = Model.TaskUrl?.Invoke(a.Branch.Name);
+            <tr>
+                <td><a class="mono" href="@repo/-/commits/@Uri.EscapeDataString(a.Branch.Name)" target="_blank" rel="noopener">@a.Branch.Name</a>
+                    @if (url is not null) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }</td>
+                <td><span class="badge @(a.Kind switch { "hotfix" => "badge-failed", "вне схемы" => "badge-onlygit", "задача" or "правка" => "badge-differs", _ => "badge-synced" })">@a.Kind</span></td>
+                <td>@if (a.Ahead == 0) { <span class="muted">нет коммитов</span> }
+                    else { <a href="@repo/-/compare/@Uri.EscapeDataString(a.Base)...@Uri.EscapeDataString(a.Branch.Name)" target="_blank" rel="noopener"><b>+@a.Ahead</b></a> }
+                    <span class="muted">к <code>@a.Base</code></span></td>
+                <td>@if (last is not null)
+                    {
+                        <span class="mono">@last.ShortId</span> @last.Title
+                        <div class="muted small">@last.AuthorName · @BranchActivity.Ago(last.CommittedDate)</div>
+                    }</td>
+                <td>@if (a.Mr is not null) { <a href="@a.Mr.WebUrl" target="_blank" rel="noopener">!@a.Mr.Iid</a> }
+                    else if (a.Kind is "задача" or "hotfix") { <span class="badge badge-onlygit">нет MR</span> }
+                    else { <span class="muted">-</span> }</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+<div class="work-cleanup">
+    @if (deletable == 0)
+    {
+        <span class="muted">Удалять нечего: выпущенных релизов и влитых веток нет.</span>
+    }
+    else
+    {
+        <b>Можно удалить: @deletableText</b>
+        @if (Model.CanDelete)
+        {
+            <form method="post" asp-page-handler="CleanupBranches" asp-all-route-data="@Model.RouteValues" class="inline"
+                  data-confirm="Удалить @deletableText? Ветки, где есть коммиты не из базовой ветки или открытый MR, останутся.">
+                <button class="btn btn-sm" type="submit">Удалить</button>
+            </form>
+        }
+    }
+    @if (Model.Groups.Any(g => g.Branches.Count > 0))
+    {
+        <details class="cleanup-details">
+            <summary>Подробнее</summary>
+            @foreach (var g in Model.Groups.Where(g => g.Branches.Count > 0))
+            {
+                <div>@g.Label: @foreach (var b in g.Branches) { <code>@b.Name</code><span> </span> }
+                    @if (!g.Deletable) { <span class="muted">- админка их не удаляет, удалите в <a href="@repo/-/branches" target="_blank" rel="noopener">GitLab</a>.</span> }</div>
+            }
+        </details>
+    }
+</div>

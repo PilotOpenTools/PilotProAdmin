@@ -1,0 +1,82 @@
+@page "/Automations/Create"
+@model ProAdmin.Pages.Automations.CreateModel
+@{
+    var heading = Model.IsCopy ? $"Копировать {Model.CopyFrom}" : Model.IsImport ? $"Репозиторий для {Model.Source}" : "Создать автоматизацию";
+    ViewData["Title"] = heading;
+}
+<div class="crumbs">
+    <a href="/Automations">Автоматизации</a> <span>/</span> <span>@(Model.IsCopy ? "Копирование" : "Создание")</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>@heading</h1>
+        <p class="muted">
+            Будет создан репозиторий в группе <code>@Model.GroupPath</code> с ветками <code>main</code> и <code>dev</code>: <code>Имя.json</code> и <code>README.md</code> с описанием.
+            @if (Model.IsCopy)
+            {
+                <text>Содержимое берётся из «@Model.CopyFrom» (из его веток, а если репозитория нет - с серверов). На серверы копия попадёт после отправки из редактора.</text>
+            }
+            else if (Model.IsImport)
+            {
+                <text>В ветки попадут текущие версии с серверов: <code>main</code> / @(Model.MainEnv?.Title ?? "-"), <code>dev</code> / @(Model.DevEnv?.Title ?? "-").</text>
+            }
+        </p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@if (Model.SourceNameProblem is not null)
+{
+    <div class="alert alert-warn">
+        Имя «@Model.Source» нельзя использовать для репозитория: @Model.SourceNameProblem
+        Укажите новое имя - автоматизация будет <b>переименована на всех серверах Pilot</b>, чтобы совпадать с репозиторием.
+    </div>
+}
+
+<form method="post" class="form">
+    <input type="hidden" asp-for="Source" />
+    <input type="hidden" asp-for="CopyFrom" />
+    <section class="card narrow-form">
+        <label class="field">
+            <span>Имя</span>
+            <input asp-for="Name" placeholder="NotifyOnApproval" autocomplete="off" required autofocus />
+            <small class="muted">Имя автоматизации в Pilot = имя проекта в GitLab: буквы (можно русские), цифры, пробел, «_», «-», «.», «+». Путь репозитория создаётся транслитом.</small>
+        </label>
+
+        <label class="field">
+            <span>Папка</span>
+            <select asp-for="Folder">
+                @foreach (var f in Model.Folders)
+                {
+                    <option value="@f.Folder" selected="@(f.Folder == (Model.Folder ?? ""))">@(f.Folder.Length == 0 ? $"{Model.GroupPath} (корень)" : $"{Model.GroupPath}/{f.Folder}")</option>
+                }
+            </select>
+            <small class="muted">Папки - это подгруппы GitLab. Новую папку создайте в GitLab как подгруппу <code>@Model.GroupPath</code>.</small>
+        </label>
+
+        <label class="field">
+            <span>Описание</span>
+            <textarea asp-for="Description" rows="4" placeholder="Что делает автоматизация, когда срабатывает, кого уведомляет…" required></textarea>
+        </label>
+
+        @if (!Model.IsCopy && !Model.IsImport && (Model.DevEnv is not null || Model.MainEnv is not null))
+        {
+            <label class="check">
+                <input type="checkbox" asp-for="ImportFromServers" />
+                <span>
+                    Если автоматизация с таким именем уже есть на серверах - взять её текущие версии
+                    (@(string.Join(", ", new[] { Model.DevEnv is null ? null : $"dev / {Model.DevEnv.Title}", Model.MainEnv is null ? null : $"main / {Model.MainEnv.Title}" }.Where(s => s is not null))))
+                </span>
+            </label>
+        }
+
+        <div class="form-actions">
+            <button class="btn btn-primary" type="submit">@(Model.SourceNameProblem is not null ? "Переименовать и создать репозиторий" : Model.IsCopy ? "Создать копию" : "Создать репозиторий")</button>
+            <a class="btn btn-ghost" href="/Automations">Отмена</a>
+        </div>
+    </section>
+</form>

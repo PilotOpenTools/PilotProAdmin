@@ -1,0 +1,181 @@
+@page "/Automations/Promote"
+@model ProAdmin.Pages.Automations.PromoteModel
+@using System.Text.Json
+@{
+    ViewData["Title"] = "Перенос на прод";
+    var src = Model.Source;
+    var dst = Model.Target;
+    string V(string? text) => AutomationVersion.Find(text)?.ToString() ?? "без версии";
+    var data = JsonSerializer.Serialize(new
+    {
+        source = Model.SourceContent is null ? null : new { triggers = Model.SourceContent.Triggers, csharp = Model.SourceContent.CSharpCode },
+        target = Model.TargetJson is null ? null : new { triggers = Model.TargetJson.Text, csharp = Model.TargetCs?.Text ?? "" },
+    });
+    var errors = Model.Lint.Count(i => i.IsError);
+    var warns = Model.Lint.Count(i => i.Level == "warn");
+}
+<div class="crumbs">
+    <a href="/Automations/@(src?.Key)">@(src?.Title ?? "Автоматизации")</a> <span>/</span>
+    <a href="/Automations/@(src?.Key)/Edit?name=@Uri.EscapeDataString(Model.Name)">@Model.Name</a> <span>/</span> <span>Перенос на прод</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Перенести на прод <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">Версия из ветки <code>@Model.SourceBranch</code> уйдёт через Merge Request в <code>@dst?.Branch</code>. На сервер @dst?.Title она попадёт только после успешного pipeline.</p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.SourceContent is not null && dst is not null)
+{
+    <div class="promote-flow">
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>@src!.Branch</code></div>
+            <div class="h3 mono">@V(Model.SourceContent.Triggers)</div>
+            @if (Model.SourceServer is null)
+            {
+                <span class="badge badge-differs">нет на сервере @src.Title</span>
+            }
+            else if (Model.TestedOnSourceServer)
+            {
+                <span class="badge badge-synced">= сервер @src.Title</span>
+            }
+            else
+            {
+                <span class="badge badge-differs">≠ сервер @src.Title</span>
+            }
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>@dst.Branch</code></div>
+            <div class="h3 mono">@(Model.TargetJson is null ? "нет" : V(Model.TargetJson.Text))</div>
+            <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "будет обновлена")</span>
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Сервер @dst.Title</div>
+            <div class="h3 mono">@(Model.TargetServer is null ? "нет" : V(Model.TargetServer.Triggers))</div>
+            <span class="badge @(Model.ServerUpToDate ? "badge-synced" : "badge-onlypilot")">@(Model.ServerUpToDate ? "уже эта версия" : Model.TargetServer is null ? "будет создана" : "будет обновлена")</span>
+        </div>
+    </div>
+
+    @if (Model.SourceServer is not null && !Model.TestedOnSourceServer)
+    {
+        <div class="alert alert-warn">Версия в ветке <code>@Model.SourceBranch</code> отличается от той, что сейчас на сервере @src.Title, - на тесте проверялась другая версия.</div>
+    }
+    @if (Model.BranchesEqual && !Model.ServerUpToDate)
+    {
+        <div class="alert alert-info">Ветка <code>@dst.Branch</code> уже содержит эту версию - коммит не нужен, она будет только записана на сервер @dst.Title.</div>
+    }
+
+    <div class="grid-2">
+        <section class="card">
+            <h2>Проверка сценария для @dst.Title
+                <span class="muted small">- ошибок @errors, предупреждений @warns</span></h2>
+            @if (Model.Lint.Count == 0)
+            {
+                <p class="lint-ok">замечаний нет</p>
+            }
+            else
+            {
+                <ul class="checklist">
+                    @foreach (var i in Model.Lint)
+                    {
+                        <li class="lvl-@i.Level">Строка @i.Line: @i.Message</li>
+                    }
+                </ul>
+            }
+            <p class="muted small">@Model.LintNote</p>
+        </section>
+
+        <section class="card">
+            <h2>Коммит в <code>@dst.Branch</code></h2>
+            <form method="post" class="form" data-confirm="Перенести «@Model.Name» на прод?">
+                <input type="hidden" asp-for="Name" />
+                <input type="hidden" asp-for="From" />
+                <input type="hidden" asp-for="BasePilotHash" />
+                <input type="hidden" asp-for="BaseMainJsonBlob" />
+                <input type="hidden" asp-for="BaseMainCsBlob" />
+                @if (dst.RequireTaskReference)
+                {
+                    <label class="field">
+                        <span>Задача</span>
+                        <input asp-for="TaskReference" placeholder="TASK-123" autocomplete="off" required />
+                    </label>
+                }
+                <label class="field">
+                    <span>Что изменилось (для бизнеса)</span>
+                    <textarea asp-for="Description" rows="5" required></textarea>
+                    <small class="muted">
+                        Каждая строка - пункт раздела <code>[@(Model.SourceContent.Version?.ToString() ?? "версия")]</code> в <code>@Changelog.FileName</code>.
+                        Пункты также попадут в Merge Request, Release и журнал операций.
+                        @if (Model.NotesSource is not null)
+                        {
+                            <br />@:Подставлено: @Model.NotesSource. Отредактируйте, объедините мелкие правки.
+                        }
+                    </small>
+                </label>
+                <div class="commit-preview"><span class="muted small">Коммит:</span> <code id="commit-preview"></code></div>
+                <button class="btn btn-primary" type="submit" disabled="@(!Model.CanPromote || errors > 0)">Перенести на прод</button>
+                @if (errors > 0)
+                {
+                    <p class="muted small">Исправьте ошибки сценария в ветке <code>@Model.SourceBranch</code> (через тест), затем повторите перенос.</p>
+                }
+            </form>
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Что изменится в <code>@dst.Branch</code></h2>
+        <div id="promote-diff" class="diff"></div>
+    </section>
+
+    <script type="application/json" id="promote-data">@Html.Raw(data)</script>
+}
+
+@section Scripts {
+    <script src="~/js/diff.js" asp-append-version="true"></script>
+    <script>
+        (function () {
+            const el = document.getElementById('promote-data');
+            if (!el) return;
+            const d = JSON.parse(el.textContent);
+            const out = document.getElementById('promote-diff');
+            const norm = s => (s || '').replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+            let any = false;
+            [['JSON', 'triggers'], ['C#', 'csharp']].forEach(([title, key]) => {
+                const a = d.target ? d.target[key] : '';
+                const b = d.source ? d.source[key] : '';
+                if (norm(a) === norm(b)) return;
+                any = true;
+                const h = document.createElement('div');
+                h.className = 'diff-title';
+                h.textContent = title;
+                out.append(h, window.lineDiff(a, b));
+            });
+            if (!any) {
+                const p = document.createElement('p');
+                p.className = 'muted';
+                p.textContent = 'Отличий между ветками нет.';
+                out.appendChild(p);
+            }
+
+            const name = @Json.Serialize(Model.Name);
+            const task = document.getElementById('TaskReference');
+            const desc = document.getElementById('Description');
+            const preview = document.getElementById('commit-preview');
+            function update() {
+                const t = task ? task.value.trim() : '';
+                const s = desc ? desc.value.split(/\r?\n/).map(l => l.trim().replace(/^[-*•]\s+/, '')).filter(Boolean).join('; ') : '';
+                preview.textContent = t ? `${name}: ${t}, ${s || '…'}` : `${name}: ${s || '…'}`;
+            }
+            [task, desc].forEach(x => x && x.addEventListener('input', update));
+            update();
+        })();
+    </script>
+}

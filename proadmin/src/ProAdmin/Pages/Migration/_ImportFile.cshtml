@@ -1,0 +1,32 @@
+@using ProAdmin.Migration
+@model ProAdmin.Pages.Migration.ImportFileField
+@{
+    var matching = Model.Sources.OfKind(Model.Kind).ToList();
+    var others = Model.Sources.NotOfKind(Model.Kind).ToList();
+}
+<label class="field">
+    <span>@Model.Title <span class="muted small">(@Model.Hint)</span></span>
+    <select name="@Model.Name">
+        @if (!Model.Required)
+        {
+            <option value="" selected="@string.IsNullOrEmpty(Model.Selected)">- не переносить -</option>
+        }
+        else if (matching.Count == 0)
+        {
+            <option value="">- файл не выбран -</option>
+        }
+        @foreach (var file in matching)
+        {
+            <option value="@file.Path" selected="@(Model.Selected == file.Path)">@file.Path - @file.Describe()</option>
+        }
+        @if (others.Count > 0)
+        {
+            <optgroup label="Прочие файлы - вид не совпал">
+                @foreach (var file in others)
+                {
+                    <option value="@file.Path" selected="@(Model.Selected == file.Path)">@file.Path - @file.Describe()</option>
+                }
+            </optgroup>
+        }
+    </select>
+</label>

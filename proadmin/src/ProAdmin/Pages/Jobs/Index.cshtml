@@ -1,0 +1,53 @@
+@page "/Jobs"
+@model ProAdmin.Pages.Jobs.IndexModel
+@{
+    ViewData["Title"] = "Операции";
+}
+<div class="page-head">
+    <div>
+        <h1>@(Model.ShowAll ? "Операции" : "Ваши операции")</h1>
+        <p class="muted">@(Model.ShowAll ? "Журнал операций всех пользователей." : "Операции, которые вы запустили. Общий журнал доступен администратору прода.")</p>
+    </div>
+</div>
+
+@if (Model.Jobs.Count == 0)
+{
+    <div class="empty"><p>Операций пока не было.</p></div>
+}
+else
+{
+    <div class="table-wrap catalog-table" role="region" aria-label="Журнал операций" tabindex="0">
+        <table class="table jobs-table">
+            <thead>
+            <tr>
+                <th>Когда</th>
+                <th>Объект</th>
+                <th>Статус</th>
+                <th>Контур</th>
+                <th>Что изменилось</th>
+                <th>Кто</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var job in Model.Jobs)
+            {
+                <tr>
+                    <td class="nowrap"><a href="/Jobs/@job.Id">@job.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm:ss")</a></td>
+                    <td>
+                        <a class="strong" href="/Jobs/@job.Id">@job.AutomationName</a>
+                        @if (job.Operation is not null || job.IsDelete)
+                        {
+                            <span class="muted">@(job.Operation ?? "Удаление из ветки")</span>
+                        }
+                    </td>
+                    <td><partial name="_JobStatus" model="job.Status" /></td>
+                    <td class="nowrap"><span class="env-dot env-@job.Env"></span>@job.EnvTitle · <code>@job.Branch</code></td>
+                    @{ var changes = job.ChangeNotes.Count > 0 ? string.Join("; ", job.ChangeNotes) : job.CommitMessage; }
+                    <td class="ellipsis" title="@(job.ChangeNotes.Count > 0 ? string.Join("\n", job.ChangeNotes.Select(n => "• " + n)) : job.CommitMessage)">@changes</td>
+                    <td class="nowrap">@(job.GitLabUser ?? job.PilotUser)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

@@ -1,0 +1,221 @@
+# Метрики: Prometheus / Loki / Promtail / cAdvisor / node-exporter / Grafana + сборщики статистики
+# автоматизаций и отчётов/модулей. Всё одним compose-проектом `metrics`.
+#
+# Запуск: docker compose up -d --build
+# Контуры Pilot (prod/test/stage) должны быть подняты раньше: сборщик автоматизаций читает лог
+# из контейнеров pilot-server-test / pilot-server-stage (каталог логов контура, только чтение), а PostgreSQL с базой pilot_metrics
+# живёт в контуре prod (postgres-prod, сеть pilot-prod).
+
+name: metrics
+
+networks:
+  monitoring:
+    name: monitoring
+  # Сеть контура prod Pilot - Grafana и сборщики видят postgres-prod (база pilot_metrics).
+  pilot-prod:
+    external: true
+
+# Имена томов закреплены явно: в них уже лежат данные Grafana/Prometheus/Loki прежнего проекта `grafana`.
+volumes:
+  prometheus_data:
+    name: grafana_prometheus_data
+  loki_data:
+    name: grafana_loki_data
+  grafana_data:
+    name: grafana_grafana_data
+
+x-automation-collector: &automation-collector
+  image: pilot-automation-metrics:latest
+  restart: unless-stopped
+  networks:
+    - pilot-prod
+
+x-automation-env: &automation-env
+  # Кластер: логи узлов в logs/<узел>/ - /App/logs/*/automation.log (метка узла = имя каталога), см. automation-collector/README.md §4.4
+  LOG_PATH: /App/logs/automation.log
+  PG_HOST: ${PG_HOST:-postgres-prod}
+  PG_PORT: "${PG_PORT:-5432}"
+  PG_DB: ${PG_DB:-pilot_metrics}
+  PG_USER: ${PG_USER:-metrics_writer}
+  PG_PASSWORD: ${PG_PASSWORD:?Задайте PG_PASSWORD (пароль metrics_writer) в .env}
+  INTERVAL: "300"
+  STATS_RETENTION_DAYS: ${STATS_RETENTION_DAYS:-30}
+  TZ: ${TZ:-Europe/Moscow}
+
+services:
+  # ------------------------------------------------------------------
+  # Prometheus - хранит метрики (нагрузка хоста и контейнеров)
+  # ------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      # Папка, а не файл: после замены файла редактором SIGHUP иначе перечитал бы старую версию.
+      - ./config/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    # Без аутентификации: по умолчанию только этот хост (reload конфигурации - docker kill -s SIGHUP prometheus).
+    ports:
+      - "${INTERNAL_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - monitoring
+
+  # ------------------------------------------------------------------
+  # node-exporter - метрики хоста: CPU, память, диск, сеть, load average
+  # (только для Linux-хоста; на Windows Docker Desktop полезных данных не даст)
+  # ------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    container_name: node-exporter
+    restart: unless-stopped
+    pid: host
+    # Имя хоста в метриках (node_uname_info) вместо идентификатора контейнера.
+    uts: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - monitoring
+
+  # ------------------------------------------------------------------
+  # cAdvisor - метрики нагрузки по каждому контейнеру (включая GitLab/runner-ы)
+  # ------------------------------------------------------------------
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - monitoring
+
+  # ------------------------------------------------------------------
+  # Loki - хранилище логов
+  # ------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    container_name: loki
+    restart: unless-stopped
+    volumes:
+      - ./config/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml -reporting.enabled=false
+    networks:
+      - monitoring
+
+  # ------------------------------------------------------------------
+  # Promtail - собирает логи всех контейнеров + системные логи хоста
+  # ------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./config/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log/host:ro
+    environment:
+      LOG_HOST: ${LOG_HOST:-localhost}
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    depends_on:
+      - loki
+    networks:
+      - monitoring
+
+  # ------------------------------------------------------------------
+  # Grafana - визуализация метрик и логов
+  # ------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.6.16@sha256:d67af92050b8d93b393dc741864752a69c9da1ffa39c1bb9af49ad5d9e47d2c3
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Задайте GRAFANA_ADMIN_PASSWORD в .env}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      # Без обращений в интернет: статистика использования, проверка обновлений, новости, предустановка плагинов.
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
+      # Пароль metrics_reader (только чтение pilot_metrics) для источника «Pilot metrics (prod)».
+      - METRICS_READER_PASSWORD=${METRICS_READER_PASSWORD:?Задайте METRICS_READER_PASSWORD в .env}
+      - TZ=${TZ:-Europe/Moscow}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - monitoring
+      - pilot-prod
+
+  # ------------------------------------------------------------------
+  # Сборщики статистики автоматизаций. Лог берётся прямо из контейнера сервера (каталог логов контура, только чтение).
+  # Только test и stage: на проде логирование автоматизаций выключено (админка / «Серверы»).
+  # События пишутся в базу pilot_metrics на postgres-prod (колонка env).
+  # ------------------------------------------------------------------
+  automation-metrics-test:
+    <<: *automation-collector
+    build:
+      context: ./automation-collector
+    container_name: automation-metrics-test
+    # Только каталог логов, только чтение (не все тома Pilot-Server: там settings.xml с паролем PostgreSQL).
+    volumes:
+      - ${DATA_ROOT:-C:/Ascon-Docker}/test/logs:/App/logs:ro
+    environment:
+      <<: *automation-env
+      PILOT_ENV: test
+
+  automation-metrics-stage:
+    <<: *automation-collector
+    container_name: automation-metrics-stage
+    volumes:
+      - ${DATA_ROOT:-C:/Ascon-Docker}/stage/logs:/App/logs:ro
+    environment:
+      <<: *automation-env
+      PILOT_ENV: stage
+
+  # ------------------------------------------------------------------
+  # Приём статистики построения отчётов и работы модулей (Reports, Pilot.ClientSdk, ServerHost).
+  # Клиенты Pilot шлют события на COLLECTOR_PORT, поэтому порт должен быть доступен с рабочих мест.
+  # ------------------------------------------------------------------
+  report-metrics-collector:
+    build: ./report-collector
+    image: pilot-report-metrics:latest
+    container_name: report-metrics-collector
+    restart: unless-stopped
+    ports:
+      - "${COLLECTOR_PORT:-5310}:8080"
+    environment:
+      ConnectionStrings__Metrics: "Host=${PG_HOST:-postgres-prod};Port=${PG_PORT:-5432};Database=${PG_DB:-pilot_metrics};Username=${PG_USER:-metrics_writer};Password=${PG_PASSWORD:?Задайте PG_PASSWORD (пароль metrics_writer) в .env}"
+      # Пусто - ключ не проверяется. Если задан, тот же ключ прописывается в Reports.config.json.
+      Collector__ApiKey: ${COLLECTOR_API_KEY:-}
+      # Контур по адресу сервера Pilot: "подстрока=контур;...;*=по_умолчанию", первое совпадение.
+      Collector__EnvMap: ${ENV_MAP:-:5549=stage;:5547=test;stage=stage;test=test;*=prod}
+      # Срок хранения событий с персональными данными, дней; 0 - не удалять.
+      Collector__RetentionDays: ${STATS_RETENTION_DAYS:-30}
+      TZ: ${TZ:-Europe/Moscow}
+    networks:
+      - pilot-prod

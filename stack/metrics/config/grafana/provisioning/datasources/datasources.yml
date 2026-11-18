@@ -1,0 +1,38 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
+
+  # База pilot_metrics на postgres-prod: метрики автоматизаций и статистика отчётов.
+  # Только чтение: роль metrics_reader, пароль из METRICS_READER_PASSWORD (metrics/.env), его обновляет shared/rotate-contour-secrets -Env prod.
+  - name: Pilot metrics (prod)
+    type: grafana-postgresql-datasource
+    uid: pilot-metrics-prod
+    access: proxy
+    url: postgres-prod:5432
+    user: metrics_reader
+    secureJsonData:
+      password: ${METRICS_READER_PASSWORD}
+    jsonData:
+      database: pilot_metrics
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    readOnly: true
+    # Не правится из интерфейса: иначе администратор Grafana может направить подключение на другую базу.
+    editable: false

@@ -1,0 +1,127 @@
+@page "/Migration/Connections"
+@model ProAdmin.Pages.Migration.ConnectionsModel
+@{
+    ViewData["Title"] = "Подключения миграции";
+}
+<div class="crumbs">
+    <a href="/Migration">Миграция</a> <span>/</span> <span>Подключения</span>
+</div>
+<div class="page-head">
+    <div>
+        <h1>Подключения сервиса миграции</h1>
+        <p class="muted">Как сервис <code>pilot-migration</code> видит каждый контур. Адреса - из сети контейнеров
+            (<code>pilot-server-test:5545</code>, <code>postgres-test</code>, <code>rustfs-test:9000</code> - S3-хранилище RustFS), а не <code>localhost</code>.</p>
+    </div>
+</div>
+<partial name="_ProdAdminBanner" model="Model" />
+
+@if (Model.Error is not null)
+{
+    <div class="alert alert-error">@Model.Error</div>
+}
+@if (Model.CheckResults.Count > 0)
+{
+    <section class="card">
+        <h2>Результат проверки <span class="muted small">- настройки сохранены</span></h2>
+        @foreach (var group in Model.CheckResults.GroupBy(r => r.Title))
+        {
+            <h3 class="mig-h"><span class="env-dot env-@group.First().Env"></span>@group.Key</h3>
+            <ul class="checklist">
+                @foreach (var r in group)
+                {
+                    <li class="lvl-@r.Level">@r.Text</li>
+                }
+            </ul>
+        }
+    </section>
+}
+
+<form method="post" class="form" data-busy-form>
+    @for (var i = 0; i < Model.Config.Environments.Count; i++)
+    {
+        var env = Model.Config.Environments[i];
+        var p = $"Config.Environments[{i}]";
+        <section class="card">
+            <input type="hidden" name="@(p).Key" value="@env.Key" />
+            <input type="hidden" name="@(p).Title" value="@env.Title" />
+            <h2><span class="env-dot env-@env.Key"></span>@env.Title @if (string.IsNullOrEmpty(env.PilotUrl)) {<span class="muted small">- не настроен, в миграции не участвует</span>}</h2>
+
+            <div class="grid-3">
+                <label class="field">
+                    <span>Сервер Pilot с базой</span>
+                    <input name="@(p).PilotUrl" value="@env.PilotUrl" placeholder="http://pilot-server-@env.Key:5545/pilot-ice_ru" />
+                </label>
+                <label class="field">
+                    <span>Администратор сервера</span>
+                    <input name="@(p).PilotAdminLogin" value="@env.PilotAdminLogin" placeholder="admin" autocomplete="off" />
+                </label>
+                <label class="field">
+                    <span>Пароль администратора</span>
+                    <input type="password" name="@(p).PilotAdminPassword" value="@env.PilotAdminPassword" autocomplete="new-password" />
+                </label>
+            </div>
+
+            <h3 class="mig-h">Файловые архивы</h3>
+            <label class="field">
+                <span>settings.xml сервера Pilot в контейнере миграции</span>
+                <input name="@(p).SettingsXmlPath" value="@env.SettingsXmlPath" placeholder="/mnt/@env.Key/settings/settings.xml" />
+                <small class="muted">Из него берутся папки и S3-адреса архивов: админский API Pilot адрес S3 не отдаёт. Если Pilot-Server контура работает кластером (у него задан Redis), путь не нужен: настройки читаются из базы конфигурации, а пароль PostgreSQL берётся из переменной <code>@("Migration__PgPasswords__" + env.Key)</code> сервиса миграции. Устаревший путь (файл другого сервера) блокирует перенос - очистите его.</small>
+            </label>
+
+            <div class="mig-rows">
+                <span class="muted small">Папки: путь на сервере Pilot / путь в контейнере миграции</span>
+                @{ var mappings = env.PathMappings.Append(new ProAdmin.Migration.PathMappingDto()).ToList(); }
+                @for (var j = 0; j < mappings.Count; j++)
+                {
+                    <div class="mig-row2">
+                        <input name="@(p).PathMappings[@j].ServerPrefix" aria-label="Путь на сервере Pilot" value="@mappings[j].ServerPrefix" placeholder="/usr/share/ascon/databases" />
+                        <span aria-hidden="true">/</span>
+                        <input name="@(p).PathMappings[@j].LocalPath" aria-label="Путь в контейнере миграции" value="@mappings[j].LocalPath" placeholder="/mnt/@env.Key/databases" />
+                    </div>
+                }
+            </div>
+
+            <div class="mig-rows">
+                <span class="muted small">S3: адрес из settings.xml, адрес для сервиса (пусто - тот же), ключи доступа</span>
+                @{ var s3 = env.S3.Append(new ProAdmin.Migration.S3EndpointDto()).ToList(); }
+                @for (var j = 0; j < s3.Count; j++)
+                {
+                    <div class="mig-row4">
+                        <input name="@(p).S3[@j].ServerUrl" aria-label="Адрес S3 из settings.xml" value="@s3[j].ServerUrl" placeholder="http://rustfs-@env.Key:9000" />
+                        <input name="@(p).S3[@j].Url" aria-label="Адрес S3 для сервиса" value="@s3[j].Url" placeholder="(тот же)" />
+                        <input name="@(p).S3[@j].AccessKey" aria-label="Access key S3" value="@s3[j].AccessKey" placeholder="Access key" autocomplete="off" />
+                        <input type="password" name="@(p).S3[@j].SecretKey" aria-label="Secret key S3" value="@s3[j].SecretKey" placeholder="Secret key" autocomplete="new-password" />
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
+    <section class="card">
+        <h2>Общее</h2>
+        <div class="grid-3">
+            <label class="field">
+                <span>Ждать остановки / запуска базы, мин</span>
+                <input type="number" name="Config.DatabaseStateTimeoutMinutes" value="@Model.Config.DatabaseStateTimeoutMinutes" min="1" max="120" />
+            </label>
+            <label class="field">
+                <span>Хранить запусков в истории</span>
+                <input type="number" name="Config.KeepRuns" value="@Model.Config.KeepRuns" min="10" max="5000" />
+            </label>
+        </div>
+    </section>
+
+    <div class="form-actions">
+        <button class="btn btn-primary" type="submit" data-busy="Сохраняю…">Сохранить</button>
+        <button class="btn" type="submit" asp-page-handler="Check" data-busy="Проверяю подключения…">Сохранить и проверить</button>
+        @if (Model.Config.UpdatedAt is { } at)
+        {
+            <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm"), @Model.Config.UpdatedBy</span>
+        }
+    </div>
+    <p class="muted small">Пароли не показываются. Чтобы сменить пароль, введите новый. Поле, оставленное как есть, сохраняет прежний, но только пока не изменены адрес Pilot и логин администратора (для пароля Pilot) или адрес S3 и адрес для сервиса (для секретного ключа S3): при смене адреса или логина сервис сбрасывает пароль или ключ, и его нужно ввести заново.</p>
+</form>
+
+@section Scripts {
+    <script src="~/js/migration.js" asp-append-version="true"></script>
+}

@@ -1,0 +1,256 @@
+@page "/Automations/{env?}"
+@model ProAdmin.Pages.Automations.IndexModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "Автоматизации";
+    var catalog = Model.Catalog;
+    var dev = Model.DevEnv;
+    var main = Model.MainEnv;
+    string FolderTitle(string? folder) => folder is null
+        ? "Без репозитория - только на серверах"
+        : folder.Length == 0 ? $"{Model.GroupPath}" : $"{Model.GroupPath}/{folder}";
+}
+
+<div class="page-head">
+    <h1>Автоматизации</h1>
+    <div class="head-actions">
+        <a class="action-link" href="/Automations/Usage" title="В каких автоматизациях встречается тип, атрибут, состояние или действие">Где используется</a>
+        <a class="action-link" href="/Compare?kind=automations" title="Чем автоматизации на тесте отличаются от прода">Сравнить тест и прод</a>
+        @if (!Model.AutomationsReadOnly)
+        {
+            <a class="btn btn-primary" href="/Automations/Create">Создать автоматизацию</a>
+        }
+    </div>
+</div>
+
+<div class="catalog-tools">
+    @await Html.PartialAsync("_ActiveWork", "automations")
+    <details class="catalog-guide">
+        <summary>Контуры и GitLab</summary>
+        <ul class="catalog-context">
+            @foreach (var env in Model.AppSettings.Environments)
+            {
+                <li><span class="env-dot env-@env.Key"></span>@env.Title <code>@(env.HasServer ? env.PilotUrl : "сервер не задан")</code>@if (env.Branch.Length > 0) {<text> / <code>@env.Branch</code></text>}</li>
+            }
+            <li>GitLab <code>@Model.GroupPath</code></li>
+        </ul>
+    </details>
+</div>
+
+@await Html.PartialAsync("_GroupAccess", (Model.AutomationsAccess, "автоматизаций"))
+
+@if (!Model.AppSettings.HasAnyServer)
+{
+    <div class="empty">
+        <p>Не указан ни один сервер Pilot.</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+}
+else if (catalog is not null)
+{
+    @if (catalog.GitError is not null)
+    {
+        <div class="alert alert-warn">GitLab: @catalog.GitError</div>
+    }
+    @foreach (var (envKey, error) in catalog.PilotErrors)
+    {
+        var env = Model.AppSettings.Find(envKey)!;
+        <div class="alert alert-error">@env.Title: @error.Message</div>
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        {
+            <section class="card narrow-card">
+                <h2>Учётные данные для сервера «@env.Title»</h2>
+                <p class="muted">Пароль администратора этого сервера отличается от того, с которым вы вошли.</p>
+                @if (Model.CredentialError is not null && Model.CredentialError.StartsWith(env.Title))
+                {
+                    <div class="alert alert-error">@Model.CredentialError</div>
+                }
+                <form method="post" asp-page-handler="Credentials" class="form">
+                    <input type="hidden" name="CredEnv" value="@env.Key" />
+                    <label class="field"><span>Логин</span><input name="EnvLogin" autocomplete="username" required /></label>
+                    <label class="field"><span>Пароль</span><input name="EnvPassword" type="password" autocomplete="current-password" required /></label>
+                    <button class="btn btn-primary" type="submit">Подключиться</button>
+                </form>
+            </section>
+        }
+    }
+
+    <div class="toolbar catalog-toolbar">
+        <input type="search" id="filter" placeholder="Поиск по имени, JSON и C#…" aria-label="Поиск по имени, тексту JSON и C#" />
+        <div class="legend">
+            <span class="badge">всего: @catalog.Rows.Count</span>
+            @{ var pending = catalog.Rows.Count(r => r.PendingPromotion && r.Repo is not null); }
+            @if (pending > 0)
+            {
+                <span class="badge badge-onlypilot" title="В dev версия новее, чем в main">ждут переноса на прод: @pending</span>
+            }
+            @{ var badNames = catalog.Rows.Count(r => r.Repo is null && AutomationFiles.NameError(r.Name) is not null); }
+            @if (badNames > 0)
+            {
+                <span class="badge badge-badname" title="Имена не подходят для репозиториев GitLab - их нужно переименовать">имя недопустимо: @badNames</span>
+            }
+        </div>
+    </div>
+
+    @if (catalog.Rows.Count == 0)
+    {
+        <div class="empty">
+            <p>Автоматизаций нет ни на серверах, ни в GitLab.</p>
+            @if (!Model.AutomationsReadOnly)
+            {
+                <a class="btn btn-primary" href="/Automations/Create">Создать автоматизацию</a>
+            }
+        </div>
+    }
+    else
+    {
+        var columns = 4;
+        <div class="table-wrap catalog-table automation-table" role="region" aria-label="Каталог автоматизаций" tabindex="0">
+            <table class="table table-envs" id="automations" role="table">
+                <thead role="rowgroup">
+                <tr role="row">
+                    <th scope="col" role="columnheader">Имя</th>
+                    <th scope="col" role="columnheader" title="Где сейчас идёт работа: правка / тест (dev) / стейдж / прод (main)">Этап CI/CD</th>
+                    <th scope="col" role="columnheader">C#</th>
+                    <th scope="col" role="columnheader">Ветки и действия</th>
+                </tr>
+                </thead>
+                @foreach (var group in catalog.Rows.GroupBy(r => r.Folder))
+                {
+                    <tbody class="folder" role="rowgroup">
+                    <tr class="folder-row" role="row">
+                        <td colspan="@columns" role="cell">@FolderTitle(group.Key) <span class="muted">· @group.Count()</span></td>
+                    </tr>
+                    @foreach (var row in group)
+                    {
+                        var q = Uri.EscapeDataString(row.Name);
+                        <tr data-name="@row.Name.ToLowerInvariant()" role="row">
+                            <td class="catalog-name" role="cell">
+                                <a class="strong" href="/Automations/Item?name=@q" title="Где сейчас и что дальше">@row.Name</a>
+                                <div class="muted small search-hit" hidden></div>
+                                @if (row.Repo is not null)
+                                {
+                                    <a class="repo-link muted" href="@row.Repo.WebUrl" target="_blank" rel="noopener" title="Репозиторий в GitLab">GitLab</a>
+                                    @if (!string.IsNullOrWhiteSpace(row.Repo.Description))
+                                    {
+                                        <div class="muted small">@row.Repo.Description</div>
+                                    }
+                                }
+                                else if (!Model.AutomationsReadOnly)
+                                {
+                                    var nameProblem = AutomationFiles.NameError(row.Name);
+                                    if (nameProblem is not null)
+                                    {
+                                        <span class="badge badge-badname" title="@nameProblem">имя недопустимо</span>
+                                        <a class="repo-link" href="/Automations/Create?source=@q">переименовать и создать репозиторий</a>
+                                    }
+                                    else
+                                    {
+                                        <a class="repo-link" href="/Automations/Create?source=@q">создать репозиторий</a>
+                                    }
+                                }
+                            </td>
+                            <td class="catalog-stage" role="cell">
+                                @await Html.PartialAsync("_MiniFlow", MiniFlows.ForAutomation(row, catalog.Envs.Any(e => e.Key == "stage")))
+                                @foreach (var env in catalog.Envs.Where(e => row.For(e)?.Pilot?.IsPaused == true))
+                                {
+                                    <span class="badge badge-paused" title="Автоматизация на сервере @env.Title на паузе">пауза: @env.Title</span>
+                                }
+                            </td>
+                            <td class="catalog-code" role="cell">@(row.HasCSharp ? "C#" : "")</td>
+                            <td class="row-actions nowrap" role="cell">
+                                @foreach (var env in new[] { dev, main })
+                                {
+                                    if (env is null) continue;
+                                    var st = row.For(env);
+                                    if (st?.Pilot is null && row.Repo is null) continue;
+                                    <a class="edit-env" href="/Automations/@env.Key/Edit?name=@q"
+                                       title="@(Model.AutomationsReadOnly ? "Просмотр" : "Редактировать") ветку @env.Branch и сервер @env.Title"><span class="env-dot env-@env.Key"></span>@env.Branch</a>
+                                }
+                                @if (!Model.AutomationsReadOnly && row.Repo is not null)
+                                {
+                                    @if (dev is not null && main is not null && (row.PendingPromotion || row.For(main)?.State is not SyncState.Synced))
+                                    {
+                                        <a class="promote" href="/Automations/Promote?name=@q" title="Перенести версию из dev в main и на продовый сервер">На прод /</a>
+                                    }
+                                }
+                                @if (!Model.AutomationsReadOnly)
+                                {
+                                    <details class="row-menu">
+                                        <summary aria-label="Ещё действия: @row.Name" title="Ещё действия">⋯</summary>
+                                        <div class="row-menu-list">
+                                            @if (row.Repo is not null && main is not null)
+                                            {
+                                                <a href="/Automations/Rollback?name=@q" title="Вернуть прод к прошлому релизу">Откатить прод</a>
+                                            }
+                                            <a href="/Automations/Rename?name=@q" title="Переименовать везде">Переименовать</a>
+                                            <a href="/Automations/Create?copyFrom=@q" title="Создать копию под новым именем">Копировать</a>
+                                            <a class="danger" href="/Automations/Delete?name=@q" title="Удалить с серверов и из GitLab">Удалить</a>
+                                        </div>
+                                    </details>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+        <script type="application/json" id="search-index">@Html.Raw(Model.SearchIndexJson())</script>
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            const input = document.getElementById('filter');
+            if (input) {
+                const index = JSON.parse(document.getElementById('search-index')?.textContent || '{}');
+                Object.values(index).flat().forEach(part => part.lower = part.text.toLowerCase());
+
+                // Короткий кусок текста вокруг совпадения, чтобы было видно, почему строка найдена.
+                const snippet = (part, q) => {
+                    const at = part.lower.indexOf(q);
+                    const start = Math.max(0, at - 40);
+                    const end = at + q.length + 40;
+                    const text = part.text.slice(start, end).replace(/\s+/g, ' ').trim();
+                    return (start > 0 ? '…' : '') + text + (end < part.text.length ? '…' : '');
+                };
+
+                input.addEventListener('input', () => {
+                    const q = input.value.trim().toLowerCase();
+                    document.querySelectorAll('#automations tbody.folder').forEach(body => {
+                        let visible = 0;
+                        body.querySelectorAll('tr[data-name]').forEach(tr => {
+                            const byName = q.length === 0 || tr.dataset.name.includes(q);
+                            const parts = byName ? [] : (index[tr.dataset.name] || []).filter(p => p.lower.includes(q));
+                            const hit = tr.querySelector('.search-hit');
+                            hit.hidden = parts.length === 0;
+                            hit.textContent = parts.length === 0 ? ''
+                                : parts.map(p => `${p.kind}: ${p.where}`).join(' · ') + ' - ' + snippet(parts[0], q);
+                            tr.hidden = !byName && parts.length === 0;
+                            if (!tr.hidden) visible++;
+                        });
+                        body.hidden = visible === 0;
+                    });
+                });
+            }
+            // Меню «⋯» позиционируется от окна, чтобы его не обрезала прокрутка таблицы.
+            document.querySelectorAll('details.row-menu').forEach(d => d.addEventListener('toggle', () => {
+                if (!d.open) return;
+                const r = d.querySelector('summary').getBoundingClientRect();
+                const list = d.querySelector('.row-menu-list');
+                list.style.left = Math.max(8, r.right - list.offsetWidth) + 'px';
+                const below = r.bottom + 4;
+                list.style.top = (below + list.offsetHeight > window.innerHeight ? r.top - 4 - list.offsetHeight : below) + 'px';
+            }));
+            window.addEventListener('scroll', () => document.querySelectorAll('details.row-menu[open]').forEach(d => d.removeAttribute('open')), true);
+            // Открыто не больше одного меню «⋯»; клик мимо - закрыть.
+            document.addEventListener('click', e => {
+                document.querySelectorAll('details.row-menu[open]').forEach(d => {
+                    if (!d.contains(e.target)) d.removeAttribute('open');
+                });
+            });
+        })();
+    </script>
+}

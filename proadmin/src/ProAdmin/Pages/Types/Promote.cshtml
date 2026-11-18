@@ -1,0 +1,92 @@
+@page
+@model ProAdmin.Pages.Types.PromoteModel
+@using ProAdmin.Types
+@{
+    ViewData["Title"] = $"Типы / {Model.Target}";
+    var env = Model.Env;
+}
+
+<div class="page-head">
+    <div>
+        <div class="crumbs"><a href="/Types">Типы</a> /</div>
+        <h1>Перенос <code>@Model.Source</code> / <code>@Model.Target</code> <span class="muted">(@(env?.Title ?? "?"))</span></h1>
+        <p class="muted">
+            Выберите коммиты - переносятся только они (cherry-pick с пометкой «cherry picked from commit», поэтому перенесённые больше не предлагаются).
+            Ветка <code>types-promote/…</code> от <code>@Model.Target</code> / Merge Request / pipeline / запись на сервер @env?.Title / merge.
+            Если merge не удастся - сервер откатится.
+        </p>
+    </div>
+    <div class="head-actions">
+        <a class="btn btn-sm @(Model.Target == TypesBranches.Release ? "btn-primary" : "")" href="/Types/Promote?target=release">dev / release</a>
+        <a class="btn btn-sm @(Model.IsMain ? "btn-primary" : "")" href="/Types/Promote?target=main">release / main</a>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Pending.Count == 0)
+{
+    <div class="alert alert-ok">Все коммиты <code>@Model.Source</code> уже перенесены в <code>@Model.Target</code>.</div>
+    return;
+}
+
+<form method="post" class="form" data-confirm="Перенести выбранные коммиты в @Model.Target?">
+    <input type="hidden" name="Target" value="@Model.Target" />
+    <section class="card">
+        <h2>Коммиты @Model.Source, которых нет в @Model.Target <span class="muted small">- старые сверху, переносятся в этом порядке</span></h2>
+        <div class="btn-row small">
+            <a href="#" data-check-all="Selected" data-check-value="true">выбрать все</a>
+            <a href="#" data-check-all="Selected" data-check-value="false">снять все</a>
+        </div>
+        <ul class="checklist">
+            @foreach (var p in Model.Pending)
+            {
+                var c = p.Commit;
+                var url = Model.TaskUrl(c.Title);
+                <li>
+                    <label class="check">
+                        <input type="checkbox" name="Selected" value="@c.Id" checked="@(Model.Selected.Count == 0 || Model.Selected.Contains(c.Id))" data-title="@c.Title" />
+                        <span>
+                            <a class="mono small" href="@c.WebUrl" target="_blank" rel="noopener">@c.ShortId</a> <b>@c.Title</b>
+                            @if (!string.IsNullOrEmpty(url)) { <a class="small" href="@url" target="_blank" rel="noopener">задача</a> }
+                            <span class="muted small">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM HH:mm")</span>
+                            @if (p.Items.Count > 0)
+                            {
+                                <span class="muted small"><br />@string.Join(" · ", p.Items)</span>
+                            }
+                        </span>
+                    </label>
+                </li>
+            }
+        </ul>
+        <p class="muted small">Если коммит меняет тот же файл, что и невыбранный более ранний, cherry-pick не пройдёт - операция остановится, ничего не изменив.</p>
+    </section>
+
+    @if (Model.IsMain)
+    {
+        <section class="card">
+            <h2>Выпуск в прод</h2>
+            <div class="btn-row">
+                <label class="field narrow-field"><span>Версия (сейчас @Model.MainVersion)</span>
+                    <input asp-for="Version" required pattern="\d+\.\d+\.\d+" /></label>
+                <label class="field narrow-field"><span>Задача@(Model.AppSettings.Find(TypesEnv.Prod)?.RequireTaskReference == true ? "" : " (необязательно)")</span>
+                    <input asp-for="TaskId" placeholder="KTN-…" /></label>
+            </div>
+            <label class="field">
+                <span>CHANGELOG - пункты раздела <code>[версия]</code> (строка = пункт)</span>
+                <textarea asp-for="Notes" rows="6"></textarea>
+                <small class="muted">Заполнено заголовками всех коммитов; уберите те, что не переносите. Версия пишется в <code>config.json</code>, на <code>main</code> ставится тег <code>vX.Y.Z</code> и Release.</small>
+            </label>
+
+            <p class="muted small">Изменения, связанные с модулем или автоматизацией, сюда переносить не нужно: они уйдут в прод вместе с их релизом.</p>
+        </section>
+    }
+
+    <div class="form-actions">
+        <button class="btn btn-promote" type="submit">Перенести в @Model.Target</button>
+        <a class="btn btn-ghost" href="/Types">Отмена</a>
+    </div>
+</form>

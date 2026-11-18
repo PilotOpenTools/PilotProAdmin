@@ -1,0 +1,760 @@
+@page "/Modules/Module"
+@model ProAdmin.Pages.Modules.ModuleModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "Модуль " + Model.Name;
+    var git = Model.Git;
+    var ro = Model.ModulesReadOnly;
+    var release = git?.ActiveRelease;
+    var releaseMrs = release is null ? new List<ProAdmin.GitLab.GitLabMergeRequest>() : Model.MergeRequestsTo(release.Name).ToList();
+    var devMrs = Model.MergeRequestsTo(ModuleBranches.Dev).ToList();
+    var mainMrs = Model.MergeRequestsTo(ModuleBranches.Main).ToList();
+    var hasStage = Model.Envs.Any(e => e.Key == ModuleEnv.Stage);
+    var needReview = Model.AppSettings.RequireDevReview;
+
+    string TaskLink(string? text)
+    {
+        var task = Model.TaskOf(text);
+        var url = Model.TaskUrl(task);
+        return url is null ? "" : url;
+    }
+}
+<div class="crumbs"><a href="@(Model.IsServer ? "/Modules?kind=server" : "/Modules")">@(Model.IsServer ? "Серверные модули" : "Модули")</a> <span>/</span> <span>@Model.Name</span></div>
+
+<div class="page-head">
+    <div>
+        <h1>@Model.Name</h1>
+        @if (git is not null)
+        {
+            <p class="muted">
+                <code>@(git.AssemblyName ?? "csproj не найден")</code>
+                @if (git.Product is not null) { <span>· в Pilot: «@git.Product»</span> }
+                · main <b>@(git.MainVersion?.ToString() ?? "-")</b>
+                · последний релиз <b>@(Model.LastProdVersion is { } lv ? "v" + lv : "-")</b>
+            </p>
+        }
+    </div>
+    @if (git is not null)
+    {
+        <div class="head-actions">
+            <a class="btn" href="@git.Repo.WebUrl" target="_blank" rel="noopener">Репозиторий</a>
+            <a class="btn" href="@git.Repo.WebUrl/-/merge_requests" target="_blank" rel="noopener">Merge Requests</a>
+        </div>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@await Html.PartialAsync("_GroupAccess", (Model.ModulesAccess, "модули"))
+
+@if (git is not null)
+{
+    @if (git.Dev is null || !git.HasCi)
+    {
+        <div class="alert alert-warn">
+            Репозиторий не готов к CI/CD:
+            @(git.Dev is null ? "нет ветки dev" : "")@(git.Dev is null && !git.HasCi ? "; " : "")@(!git.HasCi ? "нет .gitlab-ci.yml - модулю нечего выкладывать (zip берётся из артефактов сборки)" : "").
+            @if (!ro)
+            {
+                <form method="post" asp-page-handler="Setup" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                    <button class="btn btn-sm" type="submit">Подключить: dev от main + шаблон .gitlab-ci.yml</button>
+                </form>
+            }
+        </div>
+    }
+
+    else if (!git.Dev.Protected)
+    {
+        <div class="alert alert-warn">
+            Ветка <code>dev</code> не защищена - в неё можно push'ить в обход Code Review.
+            @if (!ro)
+            {
+                <form method="post" asp-page-handler="ProtectDev" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                    <button class="btn btn-sm" type="submit">Защитить dev (только через MR)</button>
+                </form>
+            }
+        </div>
+    }
+
+    @if (Model.CiOutdated || Model.VersionScattered)
+    {
+        <div class="alert alert-info">
+            @if (Model.CiOutdated)
+            {
+                <span><code>.gitlab-ci.yml</code> в <code>dev</code> отличается от шаблона админки (проверка версии, схема веток, сборка, выкладка).</span>
+            }
+            @if (Model.VersionScattered)
+            {
+                <span>Версия модуля записана в нескольких местах (<code>FileVersion</code>, <code>AssemblyInfo.cs</code>) - должна быть только <code>&lt;Version&gt;</code> в csproj.</span>
+            }
+            @if (!ro)
+            {
+                <form method="post" asp-page-handler="UpdateCi" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
+                      data-confirm="MR ci/template-… / dev: .gitlab-ci.yml по шаблону админки и версия только в <Version> csproj. Ручные правки CI в репозитории пропадут. Продолжить?">
+                    <button class="btn btn-sm" type="submit">Обновить CI и версию (MR в dev)</button>
+                </form>
+            }
+        </div>
+    }
+
+    @* ---------------------------------------------------------------- где сейчас и что дальше *@
+    @if (Model.NextStep is { } next)
+    {
+        var current = (int)next.Stage;
+        string EnvCaption(string key)
+        {
+            var st = Model.EnvStates.GetValueOrDefault(key);
+            return st?.Pilot?.Version is { } ver ? $"{ver} · {IndexModel.StateLabel(st.State)}" : st is null ? "" : IndexModel.StateLabel(st.State);
+        }
+        // Линия на каждую задачу: ветка / dev / релиз; выборочный релиз виден как «2 из 3 задач» на стейдже.
+        var lanes = FlowLanes.Build(git.Repo.WebUrl,
+            Model.Work.Select(w => (w.Branch, w.Mr is { } wm ? $"MR !{wm.Iid} / {wm.TargetBranch}" : ModuleBranches.IsHotfix(w.Branch.Name) ? "hotfix / прод" : (string?)null)),
+            Model.Unreleased.AsEnumerable().Reverse(), Model.ReleaseTasks, testColumn: 1, stageColumn: 2);
+        var steps = new FlowStep[]
+        {
+            new("Задача", "ветка / MR", Model.Work.Count > 0 ? $"в работе: {ModuleNextSteps.Plural(Model.Work.Count, "ветка", "ветки", "веток")}" + (devMrs.Count > 0 ? $" · {devMrs.Count} MR" : "") : "веток в работе нет"),
+            new("Тест", "dev", Model.Unreleased.Count > 0 ? $"{EnvCaption(ModuleEnv.Test)} · +{ModuleNextSteps.Plural(Model.Unreleased.Count, "задача", "задачи", "задач")}" : EnvCaption(ModuleEnv.Test)),
+            new("Стейдж", release?.Name ?? "release/X.Y.Z", release is null ? "нет активного релиза"
+                : $"{FlowLanes.Reached(lanes, 2, 1, "задачи", "задач", "задач")} · {EnvCaption(ModuleEnv.Stage)}"),
+            new("Прод", "main", Model.LastProdVersion is { } pv ? $"v{pv} · {IndexModel.StateLabel(Model.EnvStates.GetValueOrDefault(ModuleEnv.Prod)?.State ?? ModuleSync.Unknown)}" : EnvCaption(ModuleEnv.Prod)),
+        };
+        @await Html.PartialAsync("_FlowCard", new FlowCard(steps, current, next, Model.ActiveBranches, git.Repo.WebUrl, lanes))
+    }
+    var focus = Model.NextStep?.Href;
+
+    @* ---------------------------------------------------------------- действия: задача, релиз, hotfix *@
+    var outside = release is null ? new List<ProAdmin.GitLab.GitLabCommit>() : Model.Unreleased.Where(c => !Model.InRelease.Contains(c.Title ?? "")).ToList();
+    // Кнопки «следующего шага» ведут на #tasks / #hotfix: нет такого блока на странице - открывается окно.
+    var hasTasksCard = devMrs.Count > 0 || git.TaskBranches.Any(b => devMrs.All(m => m.SourceBranch != b.Name) && releaseMrs.All(m => m.SourceBranch != b.Name));
+    var taskDialog = hasTasksCard ? "new-task" : "tasks";
+    var hotfixDialog = git.HotfixBranches.Count > 0 ? "new-hotfix" : "hotfix";
+    var releaseBlocked = !hasStage ? "Сначала укажите сервер стейджа в настройках."
+        : release is not null ? (outside.Count == 0 ? $"Идёт релиз {release.Name}, других задач в dev нет." : null)
+        : Model.Unreleased.Count == 0 ? "Переносить нечего: dev совпадает с main." : null;
+    @if (ro && release is not null)
+    {
+        <div class="flow-actions"><button class="btn" type="button" data-dialog="release">Релиз @release.Name</button></div>
+    }
+    @if (!ro)
+    {
+        <div class="flow-actions">
+            <button class="btn" type="button" data-dialog="@taskDialog">+ Создать задачу</button>
+            @if (release is null)
+            {
+                <button class="btn btn-primary" type="button" data-dialog="release" disabled="@(releaseBlocked is not null)" title="@releaseBlocked">Создать релиз@(Model.Unreleased.Count > 0 ? $" · {Model.Unreleased.Count}" : "")</button>
+            }
+            else
+            {
+                <button class="btn btn-primary" type="button" data-dialog="release">Релиз @release.Name / стейдж / прод</button>
+                <button class="btn" type="button" data-dialog="add-to-release" disabled="@(releaseBlocked is not null)" title="@releaseBlocked">Добавить в @release.Name@(outside.Count > 0 ? $" · {outside.Count}" : "")</button>
+            }
+            <button class="btn" type="button" data-dialog="@hotfixDialog">Hotfix</button>
+        </div>
+
+        <dialog class="modal modal-form" id="@taskDialog">
+            <div class="modal-form-body">
+                <div class="modal-form-head"><h2>Новая задача</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                <p class="muted small">
+                    Ветка создаётся от <code>dev</code> и называется номером задачи Kaiten и/или кратким описанием (<code>feature/KTN-1234-export</code>).
+                    Code Review - в GitLab (MR в <code>dev</code>)@(needReview ? ", «Влить» доступно после Approve ревьюера (не автора)" : "").
+                    «Влить» делает <b>squash merge</b> (одна задача = один коммит в <code>dev</code>) и выкладывает <code>dev</code> на тест.
+                </p>
+                <form method="post" asp-page-handler="CreateBranch" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+                    <div class="btn-row">
+                        <label class="field"><span>Тип ветки</span>
+                            <select name="BranchKind">
+                                <option value="feature">feature/ - задача</option>
+                                <option value="bugfix">bugfix/ - доработка</option>
+                            </select></label>
+                        @if (release is not null)
+                        {
+                            <label class="field"><span>От какой ветки</span>
+                                <select name="BaseBranch">
+                                    <option value="dev">от dev</option>
+                                    <option value="@release.Name">от @release.Name (багфикс релиза)</option>
+                                </select></label>
+                        }
+                    </div>
+                    <div class="btn-row">
+                        <label class="field narrow-field"><span>Задача</span><input name="TaskId" value="@Model.TaskId" placeholder="KTN-1234" /></label>
+                        <label class="field grow"><span>Кратко, что делается</span><input name="Slug" value="@Model.Slug" placeholder="export-pdf" /></label>
+                    </div>
+                    <div class="form-actions"><button class="btn btn-primary" type="submit">Создать ветку</button></div>
+                </form>
+            </div>
+        </dialog>
+
+        @if (release is null && releaseBlocked is null)
+        {
+            <dialog class="modal modal-form" id="release">
+                <div class="modal-form-body">
+                    <div class="modal-form-head"><h2>Релиз / стейдж</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                    <p class="muted small">
+                        Задачи <code>dev</code>, которых нет в <code>main</code>. Снимите галочку с задачи, которую не выпускаем, - релиз соберётся
+                        <b>выборочно</b> (cherry-pick нужных коммитов от <code>main</code>). <code>dev</code> не меняется; влитое в <code>dev</code> позже в релиз не попадёт.
+                        Ветка <code>release/X.Y.Z</code> создаётся и сразу выкладывается на стейдж (версия, CHANGELOG, тег rc).
+                    </p>
+                    <form method="post" asp-page-handler="PrepareRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form"
+                          data-confirm-template="Создать релиз {Version} и выложить на стейдж?">
+                        <ul class="checklist">
+                            @foreach (var c in Model.Unreleased)
+                            {
+                                var url = TaskLink(c.Title);
+                                <li>
+                                    <label class="check">
+                                        <input type="checkbox" name="Selected" value="@c.Id" checked />
+                                        <span><span class="mono small">@c.ShortId</span> @c.Title
+                                            @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }
+                                            <span class="muted small">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></span>
+                                    </label>
+                                </li>
+                            }
+                        </ul>
+                        <div class="btn-row">
+                            <label class="field narrow-field"><span>Версия</span><input asp-for="Version" required pattern="\d+\.\d+\.\d+" /></label>
+                            <label class="field grow"><span>Заметки к релизу (необязательно)</span><input asp-for="Notes" /></label>
+                        </div>
+                        <div class="form-actions"><button class="btn btn-primary" type="submit">Релиз / стейдж</button></div>
+                    </form>
+                </div>
+            </dialog>
+        }
+        else if (release is not null && outside.Count > 0)
+        {
+            <dialog class="modal modal-form" id="add-to-release">
+                <div class="modal-form-body">
+                    <div class="modal-form-head"><h2>Добавить в @release.Name</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                    <p class="muted small">Задачи <code>dev</code>, которых нет в релизе. Выбранные переносятся cherry-pick от головы <code>@release.Name</code> / MR в релиз / сборка / стейдж.
+                        Невыбранные остаются в <code>dev</code> до следующего релиза.</p>
+                    <form method="post" asp-page-handler="AddToRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form"
+                          data-confirm="Добавить выбранные задачи в @release.Name и выложить релиз на стейдж?">
+                        <ul class="checklist">
+                            @foreach (var c in outside)
+                            {
+                                var url = TaskLink(c.Title);
+                                <li>
+                                    <label class="check">
+                                        <input type="checkbox" name="Selected" value="@c.Id" />
+                                        <span><span class="mono small">@c.ShortId</span> @c.Title
+                                            @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }
+                                            <span class="muted small">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></span>
+                                    </label>
+                                </li>
+                            }
+                        </ul>
+                        <div class="form-actions"><button class="btn btn-primary" type="submit">Добавить в релиз / стейдж</button></div>
+                    </form>
+                </div>
+            </dialog>
+        }
+
+        <dialog class="modal modal-form" id="@hotfixDialog">
+            <div class="modal-form-body">
+                <div class="modal-form-head"><h2>Hotfix от прода</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                <p class="muted small">
+                    Только для срочных багов прода. Ветка <code>hotfix/KTN-…</code> от <code>main</code>, только критичное исправление, Code Review в GitLab.
+                    «Hotfix в прод» поднимет патч-версию, выложит на прод, поставит тег и вольёт исправление в <code>dev</code>@(release is null ? "" : $" и {release.Name}").
+                </p>
+                <form method="post" asp-page-handler="CreateBranch" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+                    <input type="hidden" name="BranchKind" value="hotfix" />
+                    <div class="btn-row">
+                        <label class="field narrow-field"><span>Задача</span><input name="TaskId" placeholder="KTN-1234" /></label>
+                        <label class="field grow"><span>Кратко, что исправляется</span><input name="Slug" placeholder="null-in-export" /></label>
+                    </div>
+                    <div class="form-actions"><button class="btn btn-promote" type="submit">Создать hotfix-ветку от main</button></div>
+                </form>
+            </div>
+        </dialog>
+    }
+
+
+    @* ---------------------------------------------------------------- серверы *@
+    <div class="promote-flow" id="envs">
+        @foreach (var env in Model.Envs)
+        {
+            var st = Model.EnvStates.TryGetValue(env.Key, out var s) ? s : null;
+            <div class="card promote-step">
+                <div class="muted small"><span class="env-dot env-@env.Key"></span>Сервер @env.Title / <code>@(st?.Branch?.Name ?? env.BranchLabel)</code></div>
+                <div class="h3 mono">@(st?.Pilot?.Version ?? st?.Disabled?.Version ?? "-")</div>
+                @* Версия в dev не поднимается до релиза: на тесте показываем, сколько задач сверх последнего релиза. *@
+                @if (env.Key == ModuleEnv.Test && Model.Unreleased.Count > 0 && st?.State == ModuleSync.Synced)
+                {
+                    <div class="small"><b>@(Model.LastProdVersion is { } lpv ? "v" + lpv : "релиз") + @Model.Unreleased.Count @(Model.Unreleased.Count == 1 ? "задача" : Model.Unreleased.Count < 5 ? "задачи" : "задач")</b>
+                        <span class="muted">- версию выставит релиз</span></div>
+                }
+                else if (env.Key == ModuleEnv.Stage && release is not null && Model.ReleaseTasks.Count > 0)
+                {
+                    <div class="small"><b>релиз @ModuleBranches.ReleaseVersion(release.Name): @Model.ReleaseTasks.Count @(Model.ReleaseTasks.Count == 1 ? "задача" : Model.ReleaseTasks.Count < 5 ? "задачи" : "задач")</b></div>
+                }
+                @if (st is not null)
+                {
+                    @if (Model.Deploying.TryGetValue(env.Key, out var running) && st.State != ModuleSync.Synced)
+                    {
+                        <a class="badge badge-running" href="@running.WebUrl" target="_blank" rel="noopener" title="CI собирает и выкладывает голову @st.Branch?.Name">выкладывается · pipeline #@running.Id</a>
+                    }
+                    else
+                    {
+                        <span class="badge @IndexModel.StateCss(st.State)" title="@IndexModel.StateHint(st)">@IndexModel.StateLabel(st.State)</span>
+                    }
+                    @if (st.Pilot?.DeployedSha is { } sha)
+                    {
+                        <div class="muted small mono" title="@st.Pilot.Reason">@@ @ModuleDeploy.Short(sha) · @st.Pilot.SnapshotCreated?.ToLocalTime().ToString("dd.MM HH:mm")</div>
+                    }
+                    else if (st.Pilot is not null)
+                    {
+                        <div class="muted small">выложен вручную@(st.Pilot.SnapshotCreated is { } d ? " · " + d.ToLocalTime().ToString("dd.MM HH:mm") : "")</div>
+                    }
+                    @if (st.Branch?.Commit is { } head)
+                    {
+                        <div class="muted small">ветка: <span class="mono">@head.ShortId</span> @head.Title</div>
+                    }
+                    @if (!ro && st.Branch is not null && env.Key != ModuleEnv.Prod && st.State is not (ModuleSync.Synced or ModuleSync.Disabled) && git.HasCi && !Model.Deploying.ContainsKey(env.Key))
+                    {
+                        <form method="post" asp-page-handler="Deploy" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
+                              data-confirm="Выложить @st.Branch.Name на сервер @env.Title?">
+                            <input type="hidden" name="Env" value="@env.Key" />
+                            <input type="hidden" name="Ref" value="@st.Branch.Name" />
+                            <button class="btn btn-sm" type="submit">Выложить @st.Branch.Name /</button>
+                        </form>
+                    }
+                    @if (!Model.IsServer)
+                    {
+                        @if (st.Disabled is { } off)
+                        {
+                            <div class="muted small" title="Объект в корзине Pilot">@off.At.ToLocalTime().ToString("dd.MM HH:mm") · @off.By · @off.Reason</div>
+                            @if (!ro) { @await Html.PartialAsync("_ModuleDisabledActions", new ModuleDisabledActions(env.Key, env.Title, off.Id, off.Name, Model.Name)) }
+                        }
+                        else if (!ro && st.Pilot is { } alive)
+                        {
+                            @await Html.PartialAsync("_ModuleDisableForm", new ModuleDisableForm(env.Key, env.Title, alive.Id, alive.Name, Model.ProtectedReason(alive), Model.Name))
+                        }
+                    }
+                }
+            </div>
+            @if (env != Model.Envs.Last())
+            {
+                <div class="promote-arrow">/</div>
+            }
+        }
+    </div>
+
+    <div class="grid-2">
+        @* ---------------------------------------------------------------- MR в dev (влить / тест) *@
+        @if (hasTasksCard)
+        {
+        <section class="card@(focus == "#tasks" ? " is-focus" : "")" id="tasks">
+            <h2>Задачи / <code>dev</code> / тест</h2>
+            @if (devMrs.Count > 0)
+            {
+                <table class="table">
+                    <thead><tr><th>MR</th><th>Ветка</th><th>Pipeline</th>@if (needReview) {<th>Ревью</th>}<th></th></tr></thead>
+                    <tbody>
+                    @foreach (var mr in devMrs)
+                    {
+                        var taskUrl = TaskLink(mr.SourceBranch ?? mr.Title);
+                        var reviewers = Model.DevReviewers.GetValueOrDefault(mr.Iid) ?? new List<string>();
+                        var reviewed = !needReview || reviewers.Count > 0;
+                        <tr>
+                            <td><a href="@mr.WebUrl" target="_blank" rel="noopener">!@mr.Iid</a> @mr.Title
+                                @if (mr.Draft) { <span class="badge badge-differs">Draft</span> }
+                                <div class="muted small">@mr.Author?.Username · @if (Model.TaskOf(mr.SourceBranch) is { } t) { if (taskUrl.Length > 0) { <a href="@taskUrl" target="_blank" rel="noopener">@t</a> } else { @t } } else { <span class="badge badge-differs">нет номера задачи</span> }</div>
+                            </td>
+                            <td class="mono small">@mr.SourceBranch</td>
+                            <td class="small">
+                                @if (mr.HeadPipeline is { } p)
+                                {
+                                    <a class="@(ProAdmin.GitLab.GitLabPipeline.Blocks(p.Status) ? "badge badge-differs" : "")" href="@p.WebUrl" target="_blank" rel="noopener">@ProAdmin.GitLab.GitLabText.PipelineStatus(p.Status)</a>
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </td>
+                            @if (needReview)
+                            {
+                                <td class="small">
+                                    @if (reviewers.Count > 0)
+                                    {
+                                        <span class="badge badge-synced">одобрил @string.Join(", ", reviewers.Select(r => "@" + r))</span>
+                                    }
+                                    else
+                                    {
+                                        <a class="badge badge-differs" href="@mr.WebUrl" target="_blank" rel="noopener" title="Ревьюер (не автор) нажимает Approve в GitLab">ждёт Approve</a>
+                                    }
+                                </td>
+                            }
+                            <td class="nowrap">
+                                @if (!ro && !mr.Draft && mr.HeadPipeline is { } failedPipeline && ProAdmin.GitLab.GitLabPipeline.Blocks(failedPipeline.Status))
+                                {
+                                    @if (failedPipeline.CanRetry)
+                                    {
+                                        <form method="post" asp-page-handler="RetryPipelines" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                                            <input type="hidden" name="Iid" value="@mr.Iid" />
+                                            <button class="btn btn-sm" type="submit">Запустить pipeline заново</button>
+                                        </form>
+                                    }
+                                }
+                                else if (!ro && !mr.Draft && reviewed)
+                                {
+                                    <form method="post" asp-page-handler="MergeToDev" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
+                                          data-confirm="Squash merge !@mr.Iid в dev и выкладка на тест?">
+                                        <input type="hidden" name="Iid" value="@mr.Iid" />
+                                        <button class="btn btn-sm btn-primary" type="submit">Влить / тест</button>
+                                    </form>
+                                }
+                                else if (!ro && !mr.Draft && Model.CanSkipReview)
+                                {
+                                    <details>
+                                        <summary class="small">влить без ревью (админ)</summary>
+                                        <form method="post" asp-page-handler="MergeToDev" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form"
+                                              data-confirm="Влить !@mr.Iid в dev БЕЗ Code Review? Это запишется в журнал.">
+                                            <input type="hidden" name="Iid" value="@mr.Iid" />
+                                            <input name="SkipReviewReason" placeholder="причина (в журнал)" required />
+                                            <button class="btn btn-sm btn-danger" type="submit">Влить без ревью / тест</button>
+                                        </form>
+                                    </details>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+            @if (git.TaskBranches.Where(b => devMrs.All(m => m.SourceBranch != b.Name) && releaseMrs.All(m => m.SourceBranch != b.Name)).ToList() is { Count: > 0 } noMr)
+            {
+                <p class="small"><b>Ветки без MR:</b>
+                    @foreach (var b in noMr)
+                    {
+                        <a class="mono" href="@git.Repo.WebUrl/-/tree/@Uri.EscapeDataString(b.Name)" target="_blank" rel="noopener">@b.Name</a>
+                        <a class="small" href="@git.Repo.WebUrl/-/merge_requests/new?merge_request%5Bsource_branch%5D=@Uri.EscapeDataString(b.Name)&merge_request%5Btarget_branch%5D=@(b.Name.StartsWith(ModuleBranches.BugfixPrefix) && release is not null ? Uri.EscapeDataString(release.Name) : "dev")&merge_request%5Bsquash%5D=1" target="_blank" rel="noopener">(создать MR)</a>
+                        <span>&nbsp;</span>
+                    }
+                </p>
+            }
+        </section>
+        }
+
+        @* ---------------------------------------------------------------- релиз на стейдже *@
+        @if (release is not null)
+        {
+        <dialog class="modal modal-form" id="release">
+            <div class="modal-form-body">
+            <div class="modal-form-head"><h2>Релиз <code>@release.Name</code> / стейдж / прод</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+            @{ var version = ModuleBranches.ReleaseVersion(release.Name); }
+            <p>Голова <span class="mono">@release.Commit?.ShortId</span> @release.Commit?.Title</p>
+                @if (releaseMrs.Count > 0)
+                {
+                    <p class="small"><b>Ждут влития в @release.Name</b> (Code Review в GitLab, затем «На стейдж»):</p>
+                    <table class="table">
+                        <tbody>
+                        @foreach (var mr in releaseMrs)
+                        {
+                            <tr>
+                                <td><a href="@mr.WebUrl" target="_blank" rel="noopener">!@mr.Iid</a> @mr.Title <span class="mono small muted">@mr.SourceBranch</span>
+                                    @if (mr.Draft) { <span class="badge badge-differs">Draft</span> }
+                                    @if (mr.HeadPipeline is { } releasePipeline) { <a class="small" href="@releasePipeline.WebUrl" target="_blank" rel="noopener">pipeline: @ProAdmin.GitLab.GitLabText.PipelineStatus(releasePipeline.Status)</a> }</td>
+                                <td class="nowrap">
+                                    @if (!ro && !mr.Draft && mr.HeadPipeline is { } failedPipeline && ProAdmin.GitLab.GitLabPipeline.Blocks(failedPipeline.Status))
+                                {
+                                    @if (failedPipeline.CanRetry)
+                                    {
+                                        <form method="post" asp-page-handler="RetryPipelines" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                                            <input type="hidden" name="Iid" value="@mr.Iid" />
+                                            <button class="btn btn-sm" type="submit">Запустить pipeline заново</button>
+                                        </form>
+                                    }
+                                }
+                                else if (!ro && !mr.Draft && hasStage)
+                                    {
+                                        <form method="post" asp-page-handler="Stage" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
+                                              data-confirm="Влить !@mr.Iid в @release.Name и выложить на стейдж?">
+                                            <input type="hidden" name="Iid" value="@mr.Iid" />
+                                            <button class="btn btn-sm btn-primary" type="submit">Влить / стейдж</button>
+                                        </form>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+                else if (!ro && hasStage)
+                {
+                    <form method="post" asp-page-handler="Stage" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                        <button class="btn btn-sm" type="submit">Выложить @release.Name на стейдж (версия, CHANGELOG, тег rc)</button>
+                    </form>
+                }
+
+                @if (!ro)
+                {
+                    var stageOk = Model.EnvStates.TryGetValue(ModuleEnv.Stage, out var ss) && ss.State == ModuleSync.Synced;
+                    <form method="post" asp-page-handler="Prod" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form" id="release-prod"
+                          data-confirm="Выпустить релиз @version в прод?">
+                        <h3>Выпуск в прод / <code>v@(version)</code></h3>
+                        <p class="muted small">
+                            MR <code>@release.Name / main</code>, pipeline, на прод - тот же артефакт, что проверен на стейдже, merge,
+                            тег <code>v@(version)</code> и Release, затем обратное слияние <code>@release.Name / dev</code>.
+                            Если merge не удастся - прод откатится.
+                        </p>
+                        @if (!stageOk)
+                        {
+                            <div class="alert alert-warn">На стейдже не голова @release.Name - сначала выложите и проверьте релиз на стейдже.</div>
+                            <label class="check"><input type="checkbox" name="AllowUntested" value="true" /><span>выпустить без проверки на стейдже</span></label>
+                        }
+                        @if (Model.LinkedTypes.Count > 0)
+                        {
+                            <div class="alert alert-info">
+                                С коммитами модуля связаны <b>изменения типов</b>: те, чьи коммиты есть в релизе, запишутся на прод перед модулем
+                                (и откатятся, если модуль выпустить не удастся), их Merge Request вольётся в <code>main</code> репозитория типов.
+                                <ul class="small">
+                                    @foreach (var l in Model.LinkedTypes)
+                                    {
+                                        <li><b>@l.TypesTitle</b> / <span class="mono">@l.TargetRef</span> @l.TargetTitle
+                                            <span class="muted">· @(l.StageAt is null ? "ещё не на стейдже" : "на стейдже")</span></li>
+                                    }
+                                </ul>
+                                <a href="/Types#changes">Вкладка «Типы»</a>
+                            </div>
+                        }
+                        <label class="field narrow-field"><span>Задача@(Model.AppSettings.Find(ModuleEnv.Prod)?.RequireTaskReference == true ? "" : " (необязательно)")</span><input name="TaskId" placeholder="KTN-…" /></label>
+                        <button class="btn btn-promote" type="submit" disabled="@(releaseMrs.Count > 0)">Выпустить в прод</button>
+                    </form>
+
+                    <details class="danger-zone">
+                        <summary>Отменить релиз (критический баг на стейдже)</summary>
+                        <form method="post" asp-page-handler="CancelRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+                            <p class="muted small">MR в релиз закрываются, ветки <code>@release.Name</code> и <code>release-prep/@version</code> удаляются. <code>dev</code> и серверы не меняются. Исправьте баг в <code>dev</code> и подготовьте новый релиз.</p>
+                            <input name="Confirm" placeholder="@release.Name" required />
+                            <button class="btn btn-danger btn-sm" type="submit">Отменить релиз</button>
+                        </form>
+                    </details>
+                }
+            </div>
+        </dialog>
+        }
+
+        @* ---------------------------------------------------------------- hotfix *@
+        @if (git.HotfixBranches.Count > 0)
+        {
+        <section class="card@(focus == "#hotfix" ? " is-focus" : "")" id="hotfix">
+            <h2>Hotfix: <code>main</code> / прод / <code>dev</code> и release</h2>
+            <p class="muted small">
+                Только для срочных багов прода. Ветка <code>hotfix/KTN-…</code> от <code>main</code>, только критичное исправление, Code Review в GitLab.
+                «В прод» поднимет патч-версию, выложит на прод, поставит тег и вольёт исправление в <code>dev</code>@(release is null ? "" : $" и {release.Name}").
+            </p>
+            @foreach (var b in git.HotfixBranches)
+            {
+                var ahead = b.Commit?.Id != git.Main?.Commit?.Id;
+                <div class="card">
+                    <b class="mono">@b.Name</b> <span class="muted small">@b.Commit?.ShortId @b.Commit?.Title</span>
+                    @foreach (var mr in mainMrs.Where(m => m.SourceBranch == b.Name))
+                    {
+                        <div class="small">MR <a href="@mr.WebUrl" target="_blank" rel="noopener">!@mr.Iid</a> в main @(mr.Draft ? "(Draft)" : "")</div>
+                    }
+                    @if (!ro && ahead)
+                    {
+                        <div class="btn-row">
+                            @if (hasStage)
+                            {
+                                <form method="post" asp-page-handler="Deploy" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline">
+                                    <input type="hidden" name="Env" value="@ModuleEnv.Stage" />
+                                    <input type="hidden" name="Ref" value="@b.Name" />
+                                    <button class="btn btn-sm" type="submit" title="Проверить hotfix на стейдже перед продом">На стейдж (проверка)</button>
+                                </form>
+                            }
+                            <form method="post" asp-page-handler="Hotfix" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
+                                  data-confirm="Выпустить @b.Name в прод?">
+                                <input type="hidden" name="Ref" value="@b.Name" />
+                                <input name="Notes" placeholder="Что исправлено" required size="28" />
+                                <button class="btn btn-sm btn-promote" type="submit">Hotfix в прод</button>
+                            </form>
+                        </div>
+                    }
+                    else if (!ahead)
+                    {
+                        <div class="muted small">Коммитов поверх main ещё нет.</div>
+                    }
+                </div>
+            }
+        </section>
+        }
+
+        @* ---------------------------------------------------------------- 4. релизы и откат *@
+        <section class="card@(focus == "#releases" ? " is-focus" : "")" id="releases">
+            <h2>Релизы на проде</h2>
+            @if (Model.ProdReleases.Count == 0)
+            {
+                <p class="muted">Тегов <code>vX.Y.Z</code> пока нет.</p>
+            }
+            else
+            {
+                var prodVersion = Model.EnvStates.GetValueOrDefault(ModuleEnv.Prod)?.Pilot?.Version;
+                var latest = Model.ProdReleases.First().Tag.Name;
+                var onProd = Model.ProdReleases.FirstOrDefault(r => r.Version.ToString() == prodVersion).Tag?.Name;
+                @if (onProd is not null && onProd != latest)
+                {
+                    <div class="alert alert-warn small">Сейчас на проде <b>@onProd</b>, а последний релиз - <b>@latest</b>: прод откачен. Чтобы отменить откат, выберите @latest в форме ниже.</div>
+                }
+                <table class="table">
+                    <thead><tr><th>Релиз</th><th>Коммит</th><th>Дата</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var (v, tag) in Model.ProdReleases)
+                    {
+                        <tr>
+                            <td><a href="@git.Repo.WebUrl/-/releases/@Uri.EscapeDataString(tag.Name)" target="_blank" rel="noopener">@tag.Name</a></td>
+                            <td class="mono small">@tag.Commit?.ShortId</td>
+                            <td class="small">@tag.Commit?.CommittedDate?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</td>
+                            <td class="small nowrap">
+                                @if (tag.Name == onProd) { <span class="badge badge-synced">на проде сейчас</span> }
+                                else if (!ro) { <a href="#rollback" data-rollback-tag="@tag.Name">@(tag.Name == latest ? "вернуть на прод" : "откатить на эту")</a> }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                @if (!ro)
+                {
+                    <details class="danger-zone" id="rollback">
+                        <summary>Откатить прод на другую версию</summary>
+                        <form method="post" asp-page-handler="Rollback" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form"
+                              data-confirm-template="Выложить на прод {Tag}?">
+                            <p class="muted small">На прод выкладывается артефакт сборки выбранного тега. Ветки не меняются - исправление потом выпускается обычным hotfix или релизом. Откат отменяется так же: выберите последний релиз (@latest) - он снова уйдёт на прод.</p>
+                            <select name="Tag">
+                                @foreach (var (_, tag) in Model.ProdReleases.Where(r => r.Tag.Name != onProd))
+                                {
+                                    <option value="@tag.Name" selected="@(onProd is not null && onProd == latest ? tag.Name == Model.ProdReleases.Skip(1).FirstOrDefault().Tag?.Name : tag.Name == latest)">@tag.Name@(tag.Name == latest ? " (последний - отмена отката)" : "")</option>
+                                }
+                            </select>
+                            <input name="Notes" placeholder="Причина (отката или его отмены)" required />
+                            <button class="btn btn-danger btn-sm" type="submit">Выложить на прод</button>
+                        </form>
+                    </details>
+                    <script>
+                        document.querySelectorAll('[data-rollback-tag]').forEach(a => a.addEventListener('click', () => {
+                            const d = document.getElementById('rollback');
+                            d.open = true;
+                            d.querySelector('select[name=Tag]').value = a.dataset.rollbackTag;
+                            d.querySelector('input[name=Notes]').focus();
+                        }));
+                    </script>
+                }
+            }
+            <p class="small"><a href="/Jobs">Журнал операций /</a></p>
+        </section>
+    </div>
+
+    @* ---------------------------------------------------------------- что в работе *@
+    var lastProd = Model.ProdReleases.FirstOrDefault();
+    var taskWork = Model.Work.Where(w => w.Target != ModuleBranches.Main).ToList();
+    var hotfixWork = Model.Work.Where(w => w.Target == ModuleBranches.Main).ToList();
+    var releasedBranches = Model.ReleasedBranches;
+    <section class="card">
+        <h2>В работе с последнего релиза@(lastProd.Tag is { } lt ? $" (v{lastProd.Version})" : "")</h2>
+        <p class="muted small">Слева направо - путь задачи: ветка / <code>dev</code> (тест) / <code>release/X.Y.Z</code> (стейдж) / <code>main</code> (прод).</p>
+        <div class="work-flow">
+            <div class="work-col">
+                <h3>Ветки задач</h3>
+                @if (taskWork.Count == 0)
+                {
+                    <div class="work-empty">Нет веток задач с новыми коммитами.</div>
+                }
+                @foreach (var w in taskWork)
+                {
+                    var task = Model.TaskOf(w.Branch.Name);
+                    var url = Model.TaskUrl(task);
+                    var reviewers = w.Mr is null ? null : Model.DevReviewers.GetValueOrDefault(w.Mr.Iid);
+                    <div class="work-item">
+                        <a class="mono" href="@git.Repo.WebUrl/-/tree/@Uri.EscapeDataString(w.Branch.Name)" target="_blank" rel="noopener">@w.Branch.Name</a>
+                        @if (url is not null) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }
+                        <div class="muted">/ <code>@w.Target</code> · @w.Commits.Count @(w.Commits.Count == 1 ? "коммит" : "коммитов")</div>
+                        <div>
+                            @if (w.Mr is null)
+                            {
+                                <span class="badge badge-onlygit">нет MR</span>
+                            }
+                            else
+                            {
+                                <a href="@w.Mr.WebUrl" target="_blank" rel="noopener">!@w.Mr.Iid</a>
+                                @if (w.Mr.Draft) { <span class="badge badge-differs">Draft</span> }
+                                else if (w.Target == ModuleBranches.Dev && needReview)
+                                {
+                                    @if (reviewers is { Count: > 0 }) { <span class="badge badge-synced">одобрен</span> }
+                                    else { <span class="badge badge-differs">ждёт Approve</span> }
+                                }
+                                @if (w.Mr.HeadPipeline is { } p) { <span class="small muted">· pipeline: @ProAdmin.GitLab.GitLabText.PipelineStatus(p.Status)</span> }
+                            }
+                        </div>
+                        <ul>
+                            @foreach (var c in w.Commits.Take(3)) { <li><span class="mono">@c.ShortId</span> @c.Title</li> }
+                            @if (w.Commits.Count > 3) { <li class="muted">ещё @(w.Commits.Count - 3)…</li> }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <div class="work-col">
+                <h3><code>dev</code> · тест</h3>
+                @if (Model.Unreleased.Count == 0)
+                {
+                    <div class="work-empty"><code>dev</code> = <code>main</code>: новых задач нет.</div>
+                }
+                else
+                {
+                    <div class="work-item">
+                        <b>@Model.Unreleased.Count @(Model.Unreleased.Count == 1 ? "задача" : Model.Unreleased.Count < 5 ? "задачи" : "задач")</b> <span class="muted">- ждут релиза</span>
+                        <ul>
+                            @foreach (var c in Model.Unreleased)
+                            {
+                                var url = TaskLink(c.Title);
+                                <li>@c.Title @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Открыть</a> }
+                                    <span class="muted">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <div class="work-col">
+                <h3><code>release</code> · стейдж</h3>
+                @if (release is null)
+                {
+                    <div class="work-empty">Активного релиза нет@(lastProd.Tag is not null ? $" - v{lastProd.Version} уже на проде" : ""). Следующий - «Релиз / стейдж».</div>
+                }
+                else
+                {
+                    <div class="work-item">
+                        <b class="mono">@release.Name</b>
+                        @if (releaseMrs.Count > 0) { <span class="badge badge-differs">@releaseMrs.Count MR ждут влития</span> }
+                        <ul>
+                            @foreach (var c in Model.ReleaseTasks) { <li>@c.Title</li> }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <div class="work-col">
+                <h3><code>main</code> · прод</h3>
+                @if (lastProd.Tag is { } prodTag)
+                {
+                    <div class="work-item"><b>v@(lastProd.Version)</b> <span class="muted">· @prodTag.Commit?.CommittedDate?.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span></div>
+                }
+                @foreach (var w in hotfixWork)
+                {
+                    <div class="work-item">
+                        <span class="badge badge-failed">hotfix</span> <span class="mono">@w.Branch.Name</span>
+                        <div class="muted">@w.Commits.Count @(w.Commits.Count == 1 ? "коммит" : "коммитов") сверх <code>main</code>@(w.Mr is not null ? " · MR !" + w.Mr.Iid : "")</div>
+                    </div>
+                }
+            </div>
+        </div>
+        @await Html.PartialAsync("_BranchesPanel", new ProAdmin.GitLab.BranchesPanel(Model.ActiveBranches,
+            new[]
+            {
+                new ProAdmin.GitLab.BranchGroup("Ветки задач без новых коммитов (уже влиты)", Model.MergedBranches),
+                new ProAdmin.GitLab.BranchGroup("Выпущенные релизы (история - в тегах vX.Y.Z)", releasedBranches),
+                new ProAdmin.GitLab.BranchGroup("Вне схемы, без своих коммитов", Model.IdleOtherBranches, Deletable: false),
+            },
+            git.Repo.WebUrl, !ro,
+            new Dictionary<string, string> { ["name"] = Model.Name, ["kind"] = Model.ModuleKind.Query() ?? "" },
+            b => TaskLink(b) is { Length: > 0 } u ? u : null))
+    </section>
+}

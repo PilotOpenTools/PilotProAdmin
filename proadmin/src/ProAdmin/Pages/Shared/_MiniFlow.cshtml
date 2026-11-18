@@ -1,0 +1,17 @@
+@model ProAdmin.Modules.MiniFlow
+@using ProAdmin.Modules
+@* Схема пути в строке списка: Задача / Тест / Стейдж / Прод, подсвечены этапы, где сейчас идёт работа. *@
+<ol class="mini-flow" aria-label="Этапы CI/CD">
+    @foreach (var s in Model.Stages)
+    {
+        <li class="mini-stage mini-@s.State.ToString().ToLowerInvariant()">
+            <span class="mini-title">@s.Title</span>
+            @if (s.Badge is not null) { <code class="mini-version">@s.Badge</code> }
+            @if (s.State != MiniState.Idle)
+            {
+                <span class="visually-hidden">@(s.State == MiniState.Active ? " - в работе" : " - пройден")</span>
+            }
+        </li>
+    }
+</ol>
+<div class="mini-note mini-note-@Model.Kind.ToString().ToLowerInvariant()">@Model.Note</div>

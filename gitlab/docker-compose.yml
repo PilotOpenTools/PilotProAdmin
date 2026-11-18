@@ -1,0 +1,75 @@
+name: gitlab
+
+services:
+  gitlab:
+    image: ${GITLAB_IMAGE:-gitlab/gitlab-ce:19.3.0-ce.0@sha256:f7e453ff51d1910235365085fe836e4589716d26b44d99a8aa3e2c41377f034f}
+    container_name: gitlab
+    restart: unless-stopped
+    hostname: "${GITLAB_HOSTNAME:-gitlab.local}"
+    shm_size: "256m"
+    # Корректная остановка Postgres и Sidekiq: по умолчанию Docker убивает контейнер через 10 с.
+    stop_grace_period: 10m
+    # Встроенная проверка образа всегда «healthy»; здесь - настоящая готовность (как в compose установщика).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost/-/readiness >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15m
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://${GITLAB_HOST_IP}:${GITLAB_HTTP_PORT}'
+        # ВАЖНО: nginx внутри контейнера должен слушать порт 80 - именно его
+        # пробрасывает docker-compose (см. ports: "${GITLAB_HTTP_PORT}:80" ниже).
+        # Без этой строки GitLab заставит nginx слушать порт из external_url
+        # (8080), который занят внутренним TCP-портом Puma - из-за этого
+        # nginx/puma конфликтуют за порт и всё падает по кругу.
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT}
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+        # Отключаем встроенный Prometheus-мониторинг, чтобы снизить нагрузку
+        # на слабых машинах. Уберите строку ниже, если он вам нужен.
+        # (Grafana сюда специально не добавлена - в текущих версиях GitLab
+        # этот параметр омнибуса удалён и ломает reconfigure.)
+        prometheus_monitoring['enable'] = false
+        # Без телеметрии и запросов к Gravatar (как в compose установщика).
+        gitlab_rails['usage_ping_enabled'] = false
+        gitlab_rails['gravatar_enabled'] = false
+    ports:
+      - "${GITLAB_HTTP_PORT}:80"
+      - "${GITLAB_SSH_PORT}:22"
+    volumes:
+      - ./config:/etc/gitlab
+      - ./logs:/var/log/gitlab
+      - ./data:/var/opt/gitlab
+      # Артефакты CI - на Docker-томе: на папке Windows (NTFS) GitLab не может сделать chmod/rename
+      # загруженного артефакта и отвечает runner'у 500 (Errno::ENOENT в carrierwave).
+      - gitlab_artifacts:/var/opt/gitlab/gitlab-rails/shared/artifacts
+      # Загрузки (вложения задач и MR, файлы релизов) - тоже на томе: та же ошибка chmod, API uploads отвечает 500.
+      - gitlab_uploads:/var/opt/gitlab/gitlab-rails/uploads
+    networks:
+      - gitlab-net
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v19.3.6@sha256:b08430867b0978bab7a30427d984c6f053d72b5f4dabbdbae4537f8f7878bff1
+    container_name: gitlab-runner
+    restart: unless-stopped
+    depends_on:
+      - gitlab
+    volumes:
+      - ./runner-config:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - gitlab-net
+
+volumes:
+  gitlab_artifacts:
+    name: gitlab_gitlab_artifacts
+  gitlab_uploads:
+    name: gitlab_gitlab_uploads
+
+networks:
+  gitlab-net:
+    name: gitlab_gitlab-net
+    driver: bridge

@@ -1,0 +1,268 @@
+@page "/Automations/Item"
+@model ProAdmin.Pages.Automations.ItemModel
+@using ProAdmin.Automations
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "Автоматизация " + Model.Name;
+    var repo = Model.Repo;
+    var ro = Model.AutomationsReadOnly;
+    var q = Model.Q;
+    string StateLabel(SyncState s) => s switch
+    {
+        SyncState.Synced => "совпадает",
+        SyncState.Differs => "отличается",
+        SyncState.OnlyPilot => "нет в ветке",
+        SyncState.OnlyGit => "нет на сервере",
+        SyncState.NoBranch => "нет ветки",
+        _ => "-",
+    };
+    string StateCss(SyncState s) => s switch
+    {
+        SyncState.Synced => "badge-synced",
+        SyncState.Differs => "badge-differs",
+        SyncState.OnlyPilot => "badge-onlypilot",
+        SyncState.OnlyGit => "badge-onlygit",
+        _ => "badge-nobranch",
+    };
+    string Caption(ItemModel.EnvState? st, ProAdmin.Automations.AutomationVersion? version)
+    {
+        if (st is null) return "сервер не задан";
+        var v = AutomationVersion.Find(st.Pilot?.Triggers) ?? version;
+        return (v is not null ? $"v{v} · " : "") + StateLabel(st.State);
+    }
+    var editing = Model.Branches.Active.Count(b => b.Kind is "правка" or "задача");
+}
+<div class="crumbs"><a href="/Automations">Автоматизации</a> <span>/</span> <span>@Model.Name</span></div>
+
+<div class="page-head">
+    <div>
+        <h1>@Model.Name</h1>
+        <p class="muted">
+            dev <b>@(Model.DevVersion is { } dv ? "v" + dv : "-")</b>
+            · main <b>@(Model.MainVersion is { } mv ? "v" + mv : "-")</b>
+            · последний релиз <b>@(Model.LastRelease ?? "-")</b>@(Model.RollbackTo is { } rb ? $" (откат на {rb})" : "")
+        </p>
+    </div>
+    <div class="head-actions">
+        @if (Model.Test is not null)
+        {
+            <a class="btn btn-primary" href="/Automations/@Model.Test.Key/Edit?name=@q" title="Редактор автоматизации: ветка dev и сервер «@Model.Test.Title»">@(ro ? "Открыть в редакторе" : "Редактировать")</a>
+        }
+        @if (repo is not null) { <a class="btn" href="@repo.WebUrl" target="_blank" rel="noopener">Репозиторий</a> }
+        <a class="btn" href="/Compare/Automation?name=@q">Сравнить тест / прод</a>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@await Html.PartialAsync("_GroupAccess", (Model.AutomationsAccess, "автоматизаций"))
+
+@if (Model.NextStep is { } next)
+{
+    var steps = new List<FlowStep>
+    {
+        new("Правка", "редактор / MR", editing > 0 ? $"в работе: {ModuleNextSteps.Plural(editing, "ветка", "ветки", "веток")}" : "в редакторе админки"),
+        new("Тест", "dev", Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Test), Model.DevVersion)),
+    };
+    if (Model.AutoStage)
+        steps.Add(new("Стейдж", "= dev", "вместе с тестом · " + Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Stage), null)));
+    else if (Model.Stage is not null)
+        steps.Add(new("Стейдж", Model.ActiveRelease?.Name ?? "release/X.Y.Z",
+            Model.ActiveRelease is null ? "нет активного релиза" : Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Stage), null)));
+    steps.Add(new("Прод", "main", Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Prod), Model.MainVersion)));
+    // Линии задач: ветки / dev (тест) / релиз (стейдж); в режиме «вместе» dev сразу на стейдже.
+    var stageColumn = Model.Stage is null ? 1 : 2;
+    var lanes = FlowLanes.Build(repo?.WebUrl ?? "",
+        Model.Branches.Active.Where(a => a.Kind is "задача" or "hotfix").Select(a => (a.Branch, a.Mr is { } am ? $"MR !{am.Iid}" : a.Kind == "hotfix" ? "hotfix / прод" : (string?)null)),
+        Model.DevCommits, Model.AutoStage ? Model.DevCommits : Model.ReleaseCommits, testColumn: 1, stageColumn: stageColumn);
+    if (Model.ActiveRelease is not null && !Model.AutoStage && Model.Stage is not null)
+        steps[2] = steps[2] with { Caption = $"{FlowLanes.Reached(lanes, 2, 1, "изменения", "изменений", "изменений")} · {steps[2].Caption}" };
+    // В режиме «вместе» тест и стейдж проходятся одним шагом.
+    var current = Model.Stage is null ? FlowCard.WithoutStage(next.Stage)
+        : Model.AutoStage && next.Stage == FlowStage.Test ? 1
+        : (int)next.Stage;
+    @await Html.PartialAsync("_FlowCard", new FlowCard(steps, current, next, Model.Branches.Active, repo?.WebUrl ?? "", lanes))
+}
+
+
+@* ---------------------------------------------------------------- действия: задача, релиз, hotfix *@
+@if (!ro && repo is not null && Model.Test is not null)
+{
+    var canRelease = !Model.AutoStage && Model.Stage is not null && Model.ActiveRelease is null;
+    var releaseWhy = Model.AutoStage ? "Режим «тест и стейдж вместе»: релизов нет, dev сразу на стейдже."
+        : Model.Stage is null ? "Сервер стейджа не задан в настройках."
+        : Model.ActiveRelease is not null ? $"Уже идёт релиз {Model.ActiveRelease.Name}."
+        : Model.ReleaseBlocked;
+    <div class="flow-actions">
+        <a class="btn" href="/Automations/@Model.Test.Key/Edit?name=@q" title="Правка в редакторе сохраняется в новую ветку feature/… от dev">+ Создать задачу</a>
+        @if (Model.ActiveRelease is not null && !Model.AutoStage && Model.Stage is not null)
+        {
+            <button class="btn btn-primary" type="button" data-dialog="release">Релиз @Model.ActiveRelease.Name / стейдж / прод</button>
+        }
+        else if (!Model.AutoStage && Model.Stage is not null)
+        {
+            <button class="btn btn-primary" type="button" data-dialog="new-release" disabled="@(!canRelease || releaseWhy is not null)" title="@releaseWhy">Создать релиз</button>
+        }
+        @if (Model.Prod is not null)
+        {
+            <a class="btn" href="/Automations/@Model.Prod.Key/Edit?name=@q" title="Правка на проде сохраняется в ветку hotfix/… от main">Hotfix</a>
+        }
+    </div>
+    @if (canRelease && releaseWhy is null)
+    {
+        <dialog class="modal modal-form" id="@(Model.ActiveRelease is null ? "release" : "new-release")">
+            <div class="modal-form-body">
+                <div class="modal-form-head"><h2>Релиз v@(Model.DevVersion) / стейдж</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                <p class="muted small">
+                    Создаётся ветка <code>release/@(Model.DevVersion)</code> от <code>dev</code> и записывается на сервер @Model.Stage!.Title.
+                    Версия берётся из dev и должна быть выше, чем на проде (dev <b>v@(Model.DevVersion)</b>, прод <b>@(Model.MainVersion is { } m ? "v" + m : "-")</b>).
+                    Автоматизация хранится одним файлом, поэтому в релиз идёт весь <code>dev</code>.
+                </p>
+                <form method="post" asp-page-handler="Release" asp-route-name="@Model.Name" class="form-actions">
+                    <button class="btn btn-primary" type="submit">Релиз / стейдж</button>
+                </form>
+            </div>
+        </dialog>
+    }
+}
+
+<div class="promote-flow" id="envs">
+    @foreach (var st in Model.Envs)
+    {
+        var env = st.Env;
+        var version = AutomationVersion.Find(st.Pilot?.Triggers);
+        <div class="card promote-step">
+            <div class="muted small"><span class="env-dot env-@env.Key"></span>Сервер @env.Title / <code>@(env.Branch.Length > 0 ? env.Branch : Model.AutoStage ? "dev" : Model.ActiveRelease?.Name ?? "release/X.Y.Z")</code></div>
+            <div class="h3 mono">@(version is not null ? "v" + version : st.Pilot is null ? "-" : "без версии")</div>
+            <span class="badge @StateCss(st.State)">@StateLabel(st.State)</span>
+            @if (st.Pilot?.IsPaused == true) { <span class="badge badge-paused">на паузе</span> }
+            @if (!ro && env.IsEditable)
+            {
+                <div class="small" style="margin-top:8px"><a href="/Automations/@env.Key/Edit?name=@q">Изменить на сервере «@env.Title» /</a></div>
+            }
+        </div>
+    }
+</div>
+
+@if (repo is not null && Model.Test is not null && Model.Work.Count > 0)
+{
+    var prodEnv = Model.Prod;
+    <section class="card@(Model.NextStep?.Href == "#tasks" ? " is-focus" : "")" id="tasks">
+        <h2>Ветки задач и hotfix</h2>
+        <p class="muted small">
+            Правка начинается в редакторе: «Сохранить в ветку» коммитит в <code>feature/…</code> (от dev) или, на проде, в <code>hotfix/…</code> (от main) -
+            серверы при этом не меняются. «Влить / тест» отправляет ветку в dev и на тестовый сервер, «Hotfix в прод» - в main и на прод.
+        </p>
+        {
+            <table class="table branches">
+                <thead><tr><th>Ветка</th><th>Новых коммитов</th><th>Последний коммит</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var w in Model.Work)
+                {
+                    var b = w.Branch;
+                    var isHotfix = b.Kind == "hotfix";
+                    var editEnv = isHotfix ? prodEnv : Model.Test;
+                    <tr>
+                        <td><a class="mono" href="@repo.WebUrl/-/commits/@Uri.EscapeDataString(b.Branch.Name)" target="_blank" rel="noopener">@b.Branch.Name</a>
+                            <div class="muted small">/ <code>@b.Base</code>@(w.Behind > 0 ? $" · отстаёт от {b.Base} на {w.Behind}" : "")</div></td>
+                        <td>@(b.Ahead == 0 ? "нет" : "+" + b.Ahead)</td>
+                        <td>@if (b.Branch.Commit is { } lc) { <span>@lc.Title</span><div class="muted small">@lc.AuthorName · @ProAdmin.GitLab.BranchActivity.Ago(lc.CommittedDate)</div> }</td>
+                        <td>
+                            <div class="btn-row">
+                                @if (editEnv is not null)
+                                {
+                                    <a class="btn btn-sm" href="/Automations/@editEnv.Key/Edit?name=@q&branch=@Uri.EscapeDataString(b.Branch.Name)">Открыть в редакторе</a>
+                                }
+                                @if (!ro && b.Ahead > 0)
+                                {
+                                    @if (isHotfix)
+                                    {
+                                        <a class="btn btn-sm btn-primary" href="/Automations/Promote?name=@q&from=@Uri.EscapeDataString(b.Branch.Name)">Hotfix в прод /</a>
+                                    }
+                                    else if (w.Behind > 0)
+                                    {
+                                        <form method="post" asp-page-handler="UpdateFromDev" asp-route-name="@Model.Name" class="inline">
+                                            <input type="hidden" name="Branch" value="@b.Branch.Name" />
+                                            <button class="btn btn-sm" type="submit">Обновить из dev</button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <form method="post" asp-page-handler="MergeTask" asp-route-name="@Model.Name" class="inline"
+                                              data-confirm="Влить @b.Branch.Name в dev? MR, pipeline, запись на тестовый сервер; ветка будет удалена.">
+                                            <input type="hidden" name="Branch" value="@b.Branch.Name" />
+                                            <button class="btn btn-sm btn-primary" type="submit">Влить / тест</button>
+                                        </form>
+                                    }
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@if (Model.AutoStage && repo is not null)
+{
+    <section class="card" id="release">
+        <h2>Стейдж вместе с тестом</h2>
+        <p class="muted small">Режим CI/CD в настройках: «Влить / тест» сразу записывает автоматизацию и на сервер @Model.Stage!.Title, на прод переносится <code>dev</code>. Веток <code>release/*</code> нет.</p>
+    </section>
+}
+else if (Model.Stage is not null && repo is not null && Model.ActiveRelease is not null)
+{
+    var release = Model.ActiveRelease;
+    <dialog class="modal modal-form" id="release">
+        <div class="modal-form-body">
+        <div class="modal-form-head"><h2>Релиз <code>@release.Name</code> / стейдж / прод</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+        @{ var stage = Model.Envs.FirstOrDefault(e => e.Env == Model.Stage); }
+            <p>
+                Активный релиз <a class="mono" href="@repo.WebUrl/-/tree/@Uri.EscapeDataString(release.Name)" target="_blank" rel="noopener">@release.Name</a>
+                · на стейдже: <span class="badge @StateCss(stage?.State ?? SyncState.Unknown)">@StateLabel(stage?.State ?? SyncState.Unknown)</span>
+            </p>
+            @if (!ro)
+            {
+                <div class="btn-row" id="release-prod">
+                    <a class="btn btn-primary" href="/Automations/Promote?name=@q">Выпустить в прод /</a>
+                    <form method="post" asp-page-handler="Release" asp-route-name="@Model.Name" class="inline">
+                        <button class="btn" type="submit">Выложить на стейдж заново</button>
+                    </form>
+                </div>
+            }
+        </div>
+    </dialog>
+}
+
+<section class="card">
+    <h2>Перенос и история</h2>
+    <div class="btn-row">
+        @if (!ro)
+        {
+            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Automations/Promote") == true ? "btn-primary" : "")" href="/Automations/Promote?name=@q">На прод /</a>
+            <a class="btn" href="/Automations/Rollback?name=@q">Откатить прод</a>
+            @if (Model.RollbackTo is not null && Model.UndoRollbackTag is not null)
+            {
+                <a class="btn" href="/Automations/Rollback?name=@q&tag=@Uri.EscapeDataString(Model.UndoRollbackTag)" title="Вернуть на прод то, что было до отката">Отменить откат (@Model.UndoRollbackTag)</a>
+            }
+        }
+        @if (repo is not null)
+        {
+            <a class="btn" href="@repo.WebUrl/-/releases" target="_blank" rel="noopener">Релизы</a>
+            <a class="btn" href="@repo.WebUrl/-/blob/main/CHANGELOG.md" target="_blank" rel="noopener">CHANGELOG</a>
+        }
+    </div>
+</section>
+
+@if (repo is not null)
+{
+    <section class="card">
+        @await Html.PartialAsync("_BranchesPanel", new ProAdmin.GitLab.BranchesPanel(Model.Branches.Active,
+            new[] { new ProAdmin.GitLab.BranchGroup("Без новых коммитов, MR уже влит", Model.Branches.Removable), new ProAdmin.GitLab.BranchGroup("Выпущенные релизы (история - в тегах vX.Y.Z)", Model.ReleasedReleases) },
+            repo.WebUrl, !ro, new Dictionary<string, string> { ["name"] = Model.Name }))
+    </section>
+}

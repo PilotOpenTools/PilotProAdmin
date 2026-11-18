@@ -1,0 +1,55 @@
+@page
+@model ProAdmin.Pages.Types.GitHubModel
+@{
+    ViewData["Title"] = "Типы из GitHub";
+}
+<div class="page-head">
+    <div>
+        <h1>Типы из GitHub</h1>
+        @if (Model.Repository is { } repo)
+        {
+            <p><a href="@($"https://github.com/{repo}")">@repo</a> · <code>dev</code> / тестовый Pilot</p>
+        }
+    </div>
+    @if (Model.CanPublish)
+    {
+        <a asp-page-handler="Export" class="btn">Экспорт типов и workflow</a>
+    }
+</div>
+@if (Model.Error is { } error)
+{
+    <div class="alert alert-error" role="alert">@error</div>
+}
+@if (Model.Deployment is { } deployment)
+{
+    <p class="muted small">Последняя запись на тест <code>@deployment.Sha</code> · @deployment.At.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</p>
+}
+@if (Model.Repository is null)
+{
+    <div class="alert alert-error">Задайте адрес репозитория https://github.com/владелец/репозиторий в GITHUB_TYPES_REPOSITORY.</div>
+}
+else if (!Model.CanPublish)
+{
+    <div class="alert alert-warn">Для записи типов войдите администратором тестового Pilot.</div>
+}
+else
+{
+    <form method="post" class="form">
+        <section class="card">
+            <h2>Записать типы на тест</h2>
+            <p>Влейте Pull Request в dev и дождитесь успешного <code>pilot-types.yml</code> на коммите слияния.</p>
+            <label class="field narrow-field">
+                <span>Номер Pull Request</span>
+                <input asp-for="PullRequest" type="number" min="1" required />
+            </label>
+            <label class="field">
+                <span>Токен GitHub</span>
+                <input name="Token" type="password" autocomplete="off" required />
+                <small class="muted">Доступ к этому репозиторию и права чтения Contents, Pull requests и Actions.</small>
+            </label>
+        </section>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Проверить CI и записать на тест</button>
+        </div>
+    </form>
+}

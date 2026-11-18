@@ -1,0 +1,304 @@
+@page
+@model ProAdmin.Pages.Types.EditModel
+@using Ascon.Pilot.DataClasses
+@using ProAdmin.Types
+@{
+    ViewData["Title"] = $"{Model.KindTitle} {Model.Name}";
+    var snap = Model.Snapshot;
+    var ro = ProAdmin.GitLab.GitLabGroupAccess.CannotChange(Model.Access);
+    string AttrTypeTitle(MAttrType t) => t switch
+    {
+        MAttrType.Integer => "Целое", MAttrType.Double => "Дробное", MAttrType.Decimal => "Десятичное",
+        MAttrType.DateTime => "Дата", MAttrType.String => "Строка", MAttrType.Numerator => "Нумератор",
+        MAttrType.Array => "Массив", MAttrType.UserState => "Состояние", MAttrType.OrgUnit => "Орг. структура",
+        MAttrType.ElementBook => "Справочник", _ => t.ToString()
+    };
+    string UniquenessTitle(AttributeUniquenessType u) => u switch
+    {
+        AttributeUniquenessType.NotUnique => "Не проверять", AttributeUniquenessType.Warning => "Предупреждать о дублях",
+        AttributeUniquenessType.Prohibition => "Запрещать дубли", _ => u.ToString()
+    };
+    var link = $"/Types/Edit?kind={Model.Kind}&name={Uri.EscapeDataString(Model.Name ?? "")}" + (Model.Branch is null ? "" : $"&branch={Uri.EscapeDataString(Model.Branch)}");
+}
+
+<div class="page-head">
+    <div>
+        <div class="crumbs"><a href="/Types">Типы</a> /</div>
+        <h1>@(Model.IsNew ? $"{Model.KindTitle}: новый" : $"{Model.KindTitle} {Model.Name}")@(Model.IsDeleted ? " (удалён)" : "")</h1>
+        <p class="muted">
+            Открыто из <code>@Model.SourceRef</code>. «Сохранить» - коммит в ветку изменения <code>types/…</code>;
+            на тестовый сервер правка попадёт после «Влить / тест» на вкладке «Типы».
+        </p>
+    </div>
+    @if (!Model.IsNew)
+    {
+        <div class="head-actions">
+            <a class="btn btn-sm @(Model.Mode == "form" ? "btn-primary" : "")" href="@link">Форма</a>
+            <a class="btn btn-sm @(Model.Mode == "json" ? "btn-primary" : "")" href="@(link)&mode=json">JSON</a>
+        </div>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@foreach (var w in Model.Warnings)
+{
+    <div class="alert alert-warn">@w</div>
+}
+@if (snap is null)
+{
+    return;
+}
+
+<form method="post" class="form" id="edit-form">
+    <input type="hidden" name="Kind" value="@Model.Kind" />
+    <input type="hidden" name="Name" value="@Model.Name" />
+    <input type="hidden" name="Mode" value="@Model.Mode" />
+
+    @if (Model.Mode == "json")
+    {
+        <section class="card">
+            <label class="field">
+                <span>Содержимое файла (JSON)</span>
+                <textarea name="Json" rows="30" class="mono" spellcheck="false">@Model.Json</textarea>
+                <small class="muted">Ссылки на состояния и группы внутри конфигураций - <code>{{state:имя}}</code> и <code>{{machine:заголовок}}</code>.</small>
+            </label>
+        </section>
+    }
+    else if (Model.Kind == "state")
+    {
+        <section class="card">
+            <div class="grid-3">
+                @if (Model.IsNew)
+                {
+                    <label class="field"><span>Имя (латиница)</span><input name="NewName" value="@Model.NewName" required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label>
+                }
+                <label class="field"><span>Заголовок</span><input asp-for="Form.Title" required /></label>
+                <label class="field"><span>Цвет</span>
+                    <select asp-for="Form.Color" asp-items="Html.GetEnumSelectList<UserStateColors>()"></select></label>
+                <label class="check"><input type="checkbox" asp-for="Form.IsCompletionState" /><span>Завершающее</span></label>
+            </div>
+        </section>
+    }
+    else if (Model.Kind == "machine")
+    {
+        <section class="card">
+            <label class="field"><span>Заголовок группы</span><input asp-for="Form.Title" required /></label>
+            <p class="muted small">Переименование меняет и типы, которые используют группу, - тем же коммитом.</p>
+            <h3>Переходы</h3>
+            <p class="muted small">Строка без «В» - состояние без переходов. <code>@TypesSnapshot.NoState</code> - объект ещё без состояния. Должности - через запятую (например <code>&amp;initiator, &amp;executor</code>).</p>
+            <table class="table" id="rows">
+                <thead><tr><th>Из состояния</th><th>В состояние</th><th>Кнопка</th><th>Должности</th><th></th></tr></thead>
+                <tbody>
+                @for (var i = 0; i < Model.Form.Transitions.Count; i++)
+                {
+                    var r = Model.Form.Transitions[i];
+                    <tr>
+                        <td><select name="Form.Transitions[@i].From">@foreach (var s in Model.StateNames) { <option selected="@(s == r.From)">@s</option> }</select></td>
+                        <td><select name="Form.Transitions[@i].To"><option value="">-</option>@foreach (var s in Model.StateNames) { <option selected="@(s == r.To)">@s</option> }</select></td>
+                        <td><input name="Form.Transitions[@i].DisplayName" value="@r.DisplayName" /></td>
+                        <td><input name="Form.Transitions[@i].Positions" value="@r.Positions" /></td>
+                        <td><button type="button" class="btn btn-sm btn-ghost" data-remove-row>Закрыть</button></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+            <template id="row-template">
+                <tr>
+                    <td><select name="Form.Transitions[__i__].From">@foreach (var s in Model.StateNames) { <option>@s</option> }</select></td>
+                    <td><select name="Form.Transitions[__i__].To"><option value="">-</option>@foreach (var s in Model.StateNames) { <option>@s</option> }</select></td>
+                    <td><input name="Form.Transitions[__i__].DisplayName" /></td>
+                    <td><input name="Form.Transitions[__i__].Positions" /></td>
+                    <td></td>
+                </tr>
+            </template>
+            <button type="button" class="btn btn-sm" data-add="rows">+ Переход</button>
+        </section>
+    }
+    else
+    {
+        <section class="card">
+            <div class="grid-3">
+                @if (Model.IsNew)
+                {
+                    <label class="field"><span>Имя (латиница, не меняется)</span><input name="NewName" value="@Model.NewName" required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label>
+                }
+                <label class="field"><span>Заголовок</span><input asp-for="Form.Title" required /></label>
+                <label class="field"><span>Вид</span><select asp-for="Form.TypeKind" asp-items="Html.GetEnumSelectList<TypeKind>()"></select></label>
+                <label class="field"><span>Порядок</span><input asp-for="Form.Sort" type="number" /></label>
+                <label class="field"><span>Группа состояний</span>
+                    <select asp-for="Form.StateMachine">
+                        <option value="">- нет -</option>
+                        @foreach (var m in snap.Machines.Where(m => !m.IsDeleted))
+                        {
+                            <option value="@m.Title">@m.Title</option>
+                        }
+                    </select></label>
+                <label class="field"><span>Дочерние типы</span>
+                    <select name="Form.Children" multiple size="6">
+                        @foreach (var t in snap.Types.Values.Where(t => !t.IsDeleted).OrderBy(t => t.Title ?? t.Name))
+                        {
+                            <option value="@t.Name" selected="@Model.Form.Children.Contains(t.Name)">@t.Title (@t.Name)</option>
+                        }
+                    </select></label>
+            </div>
+            <div class="btn-row">
+                <label class="check"><input type="checkbox" asp-for="Form.HasFiles" /><span>Есть файлы</span></label>
+                <label class="check"><input type="checkbox" asp-for="Form.IsMountable" /><span>Монтируемый</span></label>
+                <label class="check"><input type="checkbox" asp-for="Form.IsService" /><span>Служебный</span></label>
+                <label class="check"><input type="checkbox" asp-for="Form.IsProject" /><span>Проект</span></label>
+                <label class="check"><input type="checkbox" asp-for="Form.IsVisibleOnStorage" /><span>Виден в хранилище</span></label>
+            </div>
+            <details>
+                <summary>Конфигурация типа (XML)</summary>
+                <textarea name="Form.Configuration" rows="8" class="mono" spellcheck="false">@Model.Form.Configuration</textarea>
+            </details>
+        </section>
+
+        <section class="card">
+            <h2>Атрибуты</h2>
+            <p class="muted small">
+                Имя атрибута не меняется: переименование = удаление и создание, значения в объектах <b>не переносятся</b>.
+                Удалённый атрибут скрывает значения, но не стирает их. Смена типа данных сервером не проверяется.
+            </p>
+            <div class="attr-list" id="attrs">
+                @for (var i = 0; i < Model.Form.Attributes.Count; i++)
+                {
+                    var a = Model.Form.Attributes[i];
+                    var isOld = !Model.IsNew && snap.Types.TryGetValue(Model.Name!, out var src) && src.Attributes.Any(x => x.Name == a.Name);
+                    <div class="attr @(a.Remove ? "attr-removed" : "")" data-old="@(isOld ? "1" : "0")">
+                        <input type="hidden" name="Form.Attributes[@i].Remove" value="@(a.Remove ? "true" : "false")" data-remove />
+                        <div class="attr-head">
+                            @if (isOld) { <code class="attr-name" title="Имя атрибута не меняется">@a.Name</code><input type="hidden" name="Form.Attributes[@i].Name" value="@a.Name" /> }
+                            else { <input name="Form.Attributes[@i].Name" value="@a.Name" class="mono attr-name-input" placeholder="имя (латиница)" /> }
+                            <input name="Form.Attributes[@i].Title" value="@a.Title" class="attr-title" placeholder="Заголовок" title="Заголовок" />
+                            <select name="Form.Attributes[@i].Type" class="attr-type" title="Тип данных">@foreach (var t in Enum.GetValues<MAttrType>()) { <option value="@((int)t)" selected="@(t == a.Type)">@AttrTypeTitle(t)</option> }</select>
+                            <span class="badge badge-failed attr-removed-mark">удалится при сохранении</span>
+                            <button type="button" class="btn btn-sm btn-ghost attr-del" data-attr-del title="Удалить атрибут">Удалить</button>
+                            <button type="button" class="btn btn-sm attr-undo" data-attr-undo>Вернуть</button>
+                        </div>
+                        <div class="attr-body">
+                            <div class="attr-fields">
+                                <label class="field"><span>Порядок</span><input name="Form.Attributes[@i].DisplaySortOrder" value="@a.DisplaySortOrder" type="number" /></label>
+                                <label class="field"><span>Высота, строк</span><input name="Form.Attributes[@i].DisplayHeight" value="@a.DisplayHeight" type="number" /></label>
+                                <label class="field"><span>Группа на карточке</span><input name="Form.Attributes[@i].GroupTitle" value="@a.GroupTitle" placeholder="-" /></label>
+                                <label class="field"><span>Уникальность</span><select name="Form.Attributes[@i].Uniqueness">@foreach (var u in Enum.GetValues<AttributeUniquenessType>()) { <option value="@((int)u)" selected="@(u == a.Uniqueness)">@UniquenessTitle(u)</option> }</select></label>
+                                <label class="field attr-wide"><span>Редактируют (должности)</span><input name="Form.Attributes[@i].Positions" value="@a.Positions" placeholder="&amp;initiator, &amp;executor - пусто: все" /></label>
+                            </div>
+                            <div class="attr-flags">
+                                <label class="check"><input type="checkbox" name="Form.Attributes[@i].Obligatory" value="true" checked="@a.Obligatory" /><span>Обязательный</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[@i].ShowInTree" value="true" checked="@a.ShowInTree" /><span>Показывать в дереве</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[@i].IsService" value="true" checked="@a.IsService" /><span>Служебный</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[@i].JoinWithPrevious" value="true" checked="@a.JoinWithPrevious" /><span>В одну строку с предыдущим</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[@i].IgnoreIndex" value="true" checked="@a.IgnoreIndex" /><span>Не индексировать</span></label>
+                            </div>
+                            <details class="attr-config">
+                                <summary>Конфигурация (XML)@(string.IsNullOrEmpty(a.Configuration) ? " - пусто" : "")</summary>
+                                <textarea name="Form.Attributes[@i].Configuration" rows="4" class="mono" spellcheck="false">@a.Configuration</textarea>
+                            </details>
+                        </div>
+                    </div>
+                }
+            </div>
+            <template id="attr-template">
+                <div class="attr" data-old="0">
+                    <input type="hidden" name="Form.Attributes[__i__].Remove" value="false" data-remove />
+                    <div class="attr-head">
+                        <input name="Form.Attributes[__i__].Name" class="mono attr-name-input" placeholder="имя (латиница)" />
+                        <input name="Form.Attributes[__i__].Title" class="attr-title" placeholder="Заголовок" title="Заголовок" />
+                        <select name="Form.Attributes[__i__].Type" class="attr-type" title="Тип данных">@foreach (var t in Enum.GetValues<MAttrType>()) { <option value="@((int)t)" selected="@(t == MAttrType.String)">@AttrTypeTitle(t)</option> }</select>
+                        <span class="badge badge-onlypilot">новый</span>
+                        <button type="button" class="btn btn-sm btn-ghost attr-del" data-attr-del>Убрать</button>
+                    </div>
+                    <div class="attr-body">
+                            <div class="attr-fields">
+                                <label class="field"><span>Порядок</span><input name="Form.Attributes[__i__].DisplaySortOrder" type="number" /></label>
+                                <label class="field"><span>Высота, строк</span><input name="Form.Attributes[__i__].DisplayHeight" value="1" type="number" /></label>
+                                <label class="field"><span>Группа на карточке</span><input name="Form.Attributes[__i__].GroupTitle" placeholder="-" /></label>
+                                <label class="field"><span>Уникальность</span><select name="Form.Attributes[__i__].Uniqueness">@foreach (var u in Enum.GetValues<AttributeUniquenessType>()) { <option value="@((int)u)">@UniquenessTitle(u)</option> }</select></label>
+                                <label class="field attr-wide"><span>Редактируют (должности)</span><input name="Form.Attributes[__i__].Positions" placeholder="&amp;initiator, &amp;executor - пусто: все" /></label>
+                            </div>
+                            <div class="attr-flags">
+                                <label class="check"><input type="checkbox" name="Form.Attributes[__i__].Obligatory" value="true" /><span>Обязательный</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[__i__].ShowInTree" value="true" /><span>Показывать в дереве</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[__i__].IsService" value="true" /><span>Служебный</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[__i__].JoinWithPrevious" value="true" /><span>В одну строку с предыдущим</span></label>
+                                <label class="check"><input type="checkbox" name="Form.Attributes[__i__].IgnoreIndex" value="true" /><span>Не индексировать</span></label>
+                            </div>
+                            <details class="attr-config">
+                                <summary>Конфигурация (XML)</summary>
+                                <textarea name="Form.Attributes[__i__].Configuration" rows="4" class="mono" spellcheck="false"></textarea>
+                            </details>
+                    </div>
+                </div>
+            </template>
+            <button type="button" class="btn btn-sm" data-add="attrs">+ Атрибут</button>
+        </section>
+    }
+
+    @if (!ro)
+    {
+        <section class="card">
+            <div class="btn-row">
+                <label class="field">
+                    <span>Изменение (ветка)</span>
+                    <select name="Branch" id="save-branch" data-show-target="new-change" data-show-when="">
+                        <option value="" selected="@(Model.Branch is null)">+ новое изменение…</option>
+                        @foreach (var b in Model.Branches)
+                        {
+                            <option value="@b.Name" selected="@(Model.Branch == b.Name)">@b.Name</option>
+                        }
+                    </select>
+                </label>
+                <label class="field grow" id="new-change" hidden="@(Model.Branch is not null)"><span>Название нового изменения (задача и суть)</span>
+                    <input name="NewChange" value="@Model.NewChange" placeholder="KTN-123 Договор: срок действия" /></label>
+            </div>
+            <div class="btn-row">
+                <label class="field grow"><span>Сообщение коммита (необязательно)</span>
+                    <input name="CommitMessage" value="@Model.CommitMessage" placeholder="@(Model.IsNew ? $"{Model.KindTitle}: создан" : $"{Model.KindTitle} {Model.Name}: изменения")" /></label>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" type="submit">Сохранить в ветку</button>
+                <a class="btn btn-ghost" href="/Types?view=@(Model.Kind == "state" ? "states" : Model.Kind == "machine" ? "machines" : "types")@(Model.Branch is null ? "" : "&branch=" + Uri.EscapeDataString(Model.Branch))">Отмена</a>
+                @if (!Model.IsNew && !Model.IsDeleted)
+                {
+                    <button class="btn btn-danger btn-sm" type="submit" asp-page-handler="Delete"
+                            data-confirm="Пометить удалённым? Тип в Pilot нельзя удалить совсем - он будет помечен удалённым на серверах.">Удалить</button>
+                }
+            </div>
+        </section>
+    }
+</form>
+
+<script>
+    // Новые строки таблицы: индекс - следующий после последнего (ASP.NET связывает списки по сплошным индексам).
+    document.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
+        const kind = btn.dataset.add;
+        const table = document.getElementById(kind);
+        const template = document.getElementById(kind === 'attrs' ? 'attr-template' : 'row-template');
+        const prefix = kind === 'attrs' ? 'Form.Attributes[' : 'Form.Transitions[';
+        const used = [...table.querySelectorAll('[name^="' + prefix + '"]')].map(e => parseInt(e.name.slice(prefix.length)));
+        const next = used.length ? Math.max(...used) + 1 : 0;
+        const html = template.innerHTML.replaceAll('__i__', next);
+        (table.querySelector('tbody') || table).insertAdjacentHTML('beforeend', html);
+    }));
+
+    // Удаление атрибута: блок остаётся в форме с Remove=true - индексы списка должны идти подряд.
+    document.getElementById('attrs')?.addEventListener('click', e => {
+        const attr = e.target.closest('.attr');
+        if (!attr) return;
+        const remove = attr.querySelector('[data-remove]');
+        if (e.target.closest('[data-attr-del]')) {
+            if (attr.dataset.old !== '1') { remove.value = 'true'; attr.hidden = true; return; }
+            const name = attr.querySelector('.attr-name').textContent;
+            if (!confirm(`Удалить атрибут ${name}?\n\nЗначения в объектах скроются, но не сотрутся. Удаление попадёт в ветку после «Сохранить в ветку».`)) return;
+            remove.value = 'true';
+            attr.classList.add('attr-removed');
+        } else if (e.target.closest('[data-attr-undo]')) {
+            remove.value = 'false';
+            attr.classList.remove('attr-removed');
+        }
+    });
+</script>

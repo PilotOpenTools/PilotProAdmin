@@ -1,0 +1,83 @@
+@model ProAdmin.Modules.FlowCard
+@using ProAdmin.Modules
+@using ProAdmin.GitLab
+@* Где сейчас и что дальше: этапы пути, активные ветки, следующий шаг (страницы модуля, отчёта, автоматизации). *@
+@{
+    var next = Model.Next;
+    var repo = Model.RepoUrl;
+}
+<section class="card next-step next-@next.Kind.ToString().ToLowerInvariant()">
+    <ol class="stage-track" aria-label="Этапы CI/CD" style="--steps: @Model.Steps.Count">
+        @for (var i = 0; i < Model.Steps.Count; i++)
+        {
+            var step = Model.Steps[i];
+            var cls = i < Model.Current ? "done" : i == Model.Current ? "current" : "todo";
+            <li class="stage stage-@cls" aria-current="@(i == Model.Current ? "step" : null)">
+                <span class="stage-mark">@(i < Model.Current ? "" : (i + 1).ToString())</span>
+                <span class="stage-body">
+                    <b>@step.Title</b> <code>@step.Branch</code>
+                    <span class="stage-caption">@step.Caption</span>
+                </span>
+            </li>
+        }
+    </ol>
+    @if (Model.Lanes is { Count: > 0 } lanes)
+    {
+        const int shown = 10;
+        <div class="flow-lanes" style="--steps: @Model.Steps.Count">
+            @foreach (var lane in lanes.Take(shown))
+            {
+                var col = Math.Clamp(lane.Column, 0, Model.Steps.Count - 1);
+                <div class="lane">
+                    @for (var i = 0; i < col; i++)
+                    {
+                        <span class="lane-pass"></span>
+                    }
+                    <span class="lane-here" style="grid-column: @(col + 1) / -1">
+                        <span class="lane-stage">@Model.Steps[col].Title:</span>
+                        @if (lane.Url is not null) { <a class="mono" href="@lane.Url" target="_blank" rel="noopener">@lane.Ref</a> }
+                        else { <span class="mono">@lane.Ref</span> }
+                        <span class="lane-title" title="@lane.Title">@lane.Title</span>
+                        @if (lane.Note is not null) { <span class="muted">· @lane.Note</span> }
+                    </span>
+                </div>
+            }
+            @if (lanes.Count > shown)
+            {
+                <div class="muted small">и ещё @(lanes.Count - shown)</div>
+            }
+        </div>
+    }
+    else if (Model.Branches.Count > 0)
+    {
+        <ul class="next-branches">
+            @foreach (var a in Model.Branches)
+            {
+                <li>
+                    <a class="mono" href="@repo/-/commits/@Uri.EscapeDataString(a.Branch.Name)" target="_blank" rel="noopener">@a.Branch.Name</a>
+                    <span class="muted">/ <code>@a.Base</code></span>
+                    @if (a.Ahead == 0) { <span class="badge badge-onlygit">нет коммитов</span> }
+                    else { <a class="badge badge-differs" href="@repo/-/compare/@Uri.EscapeDataString(a.Base)...@Uri.EscapeDataString(a.Branch.Name)" target="_blank" rel="noopener">+@ModuleNextSteps.Plural(a.Ahead, "коммит", "коммита", "коммитов")</a> }
+                    @if (a.Mr is not null) { <a class="small" href="@a.Mr.WebUrl" target="_blank" rel="noopener">MR !@a.Mr.Iid</a> }
+                    else if (a.Kind is "задача" or "hotfix") { <span class="small muted">MR нет</span> }
+                    @if (a.Branch.Commit is { } lc) { <span class="small muted next-branch-last">· @lc.AuthorName, @BranchActivity.Ago(lc.CommittedDate)</span> }
+                </li>
+            }
+        </ul>
+    }
+    <div class="next-body">
+        <div>
+            <div class="next-label">@(next.Kind switch { NextStepKind.Wait => "Ждём", NextStepKind.Done => "Готово", NextStepKind.Warn => "Внимание", _ => "Следующий шаг" })</div>
+            <div class="next-title">@next.Title</div>
+            @if (next.Text is not null) { <p class="muted small">@next.Text</p> }
+        </div>
+        @if (next.AltLabel is not null && next.AltHref is not null)
+        {
+            <a class="btn" href="@next.AltHref">@next.AltLabel</a>
+        }
+        @if (next.ActionLabel is not null && next.Href is not null)
+        {
+            <a class="btn @(next.Kind == NextStepKind.Action ? "btn-primary" : "")" href="@next.Href" target="@(next.External ? "_blank" : null)" rel="@(next.External ? "noopener" : null)">@next.ActionLabel</a>
+        }
+    </div>
+</section>

@@ -1,0 +1,17 @@
+{
+  "server": "http://localhost:5547/pilot-ice_ru",
+  "login": "ivanov",
+  "licenseType": 100,
+  "module": "bin/Debug/TestServerAction.servext.dll",
+  "activity": "TestServerAction",
+  "sourceId": "4a912f46-a397-42a8-a8a3-ebf7572cd1d0",
+  "when": "StateAttributeChanged",
+  "sourceTypes": [
+    "task_toReviewDocument"
+  ],
+  "params": {},
+  "automations": [
+    "TestServerAction · StateAttributeChanged"
+  ],
+  "apply": false
+}

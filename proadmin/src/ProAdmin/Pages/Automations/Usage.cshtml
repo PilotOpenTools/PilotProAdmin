@@ -1,0 +1,116 @@
+@page "/Automations/Usage"
+@model ProAdmin.Pages.Automations.UsageModel
+@{
+    ViewData["Title"] = "Где используется";
+    var catalog = Model.Catalog;
+    var open = !string.IsNullOrWhiteSpace(Model.Name) && Model.Found.Count <= UsageModel.OpenLimit;
+}
+
+<div class="page-head">
+    <div>
+        <h1>Где используется</h1>
+        <p class="muted">Типы, атрибуты, состояния и действия в сценариях автоматизаций: на серверах и в ветках <code>dev</code> и <code>main</code>.</p>
+    </div>
+    <div class="head-actions">
+        <a class="btn" href="/Automations">Автоматизации</a>
+    </div>
+</div>
+
+@if (!Model.AppSettings.HasAnyServer)
+{
+    <div class="empty">
+        <p>Не указан ни один сервер Pilot.</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+}
+else if (catalog is not null && Model.Index is not null)
+{
+    @* Пока часть источников не прочитана, отсутствие имени в списке ничего не доказывает. *@
+    @if (catalog.GitError is not null || catalog.PilotErrors.Count > 0)
+    {
+        <div class="alert alert-warn">
+            <b>Результат неполный, не все источники прочитаны.</b>
+            @if (catalog.GitError is not null)
+            {
+                <div>GitLab: @catalog.GitError</div>
+            }
+            @foreach (var (envKey, error) in catalog.PilotErrors)
+            {
+                <div>@(Model.AppSettings.Find(envKey)?.Title ?? envKey): @error.Message</div>
+            }
+        </div>
+    }
+    @if (Model.Index.Unparsed.Count > 0)
+    {
+        <div class="alert alert-warn">
+            <b>JSON не разбирается, эти сценарии в сводку не попали:</b>
+            @string.Join(", ", Model.Index.Unparsed.Select(u => $"{u.Automation} ({u.Source})")).
+            Проверьте их <a href="/Automations">поиском по тексту</a>.
+        </div>
+    }
+
+    <form method="get" class="toolbar">
+        <select name="kind" aria-label="Что искать">
+            <option value="">Всё</option>
+            @foreach (var kind in new[] { UsageKind.Type, UsageKind.Attribute, UsageKind.State, UsageKind.Activity })
+            {
+                <option value="@kind" selected="@(Model.Kind == kind)">@UsageModel.KindTitle(kind)</option>
+            }
+        </select>
+        <input type="search" name="name" value="@Model.Name" placeholder="Имя или его часть…" aria-label="Имя" />
+        <button class="btn btn-primary" type="submit">Найти</button>
+        <div class="legend"><span class="badge">найдено: @Model.Found.Count</span></div>
+    </form>
+
+    @if (Model.Found.Count == 0)
+    {
+        <div class="empty">
+            <p>
+                @if (string.IsNullOrWhiteSpace(Model.Name))
+                {
+                    <text>В сценариях нет таких имён.</text>
+                }
+                else
+                {
+                    <text>«@Model.Name» не найдено в разобранных параметрах сценариев и в C#-вставках.</text>
+                }
+            </p>
+            <p class="muted small">Имя всё равно может встретиться в параметре произвольной структуры. Проверьте <a href="/Automations">поиском по тексту</a>.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table" id="usage">
+                <thead><tr><th>Имя</th><th>Что это</th><th>Автоматизации</th></tr></thead>
+                <tbody>
+                @foreach (var entry in Model.Found)
+                {
+                    <tr>
+                        <td class="mono nowrap">@entry.Name</td>
+                        <td><span class="badge">@UsageModel.KindTitle(entry.Kind)</span></td>
+                        <td>
+                            <details open="@open">
+                                <summary>@entry.Automations.Count: @string.Join(", ", entry.Automations.Take(3).Select(a => a.Name))@(entry.Automations.Count > 3 ? ", …" : "")</summary>
+                                <ul class="usage-list">
+                                    @foreach (var automation in entry.Automations)
+                                    {
+                                        <li>
+                                            <a class="strong" href="/Automations/Item?name=@Uri.EscapeDataString(automation.Name)">@automation.Name</a>
+                                            <span class="muted small">@string.Join(", ", automation.Sources)</span>
+                                            <div class="muted small">@string.Join("; ", automation.Places)</div>
+                                        </li>
+                                    }
+                                </ul>
+                            </details>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    <p class="muted small">
+        Имена берутся из известных параметров сценария и из выражений вида <code>new.attr.executor</code>. В C#-вставках имя ищется как отдельное слово, поэтому там возможны случайные совпадения. C# читается только с серверов. Параметры произвольной структуры, например <code>completionStateConfig</code>, не разбираются: их проверяйте <a href="/Automations">поиском по тексту</a>.
+    </p>
+}

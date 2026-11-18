@@ -1,0 +1,20 @@
+@model (ProAdmin.GitLab.GitLabGroupAccess? Access, string What)
+@* Предупреждение над списком, если прав в группе GitLab не хватает на изменения (или их не удалось узнать). *@
+@if (Model.Access is { } access)
+{
+    if (access.Error is not null)
+    {
+        <details class="access-notice">
+            <summary>Только просмотр · не удалось проверить права в GitLab</summary>
+            <p>Группа <code>@access.GroupPath</code>. Пока роль не определена, изменения запрещены.</p>
+            <p>@access.Error</p>
+        </details>
+    }
+    else if (access.ReadOnly)
+    {
+        <details class="access-notice">
+            <summary>Только просмотр · @access.LevelTitle</summary>
+            <p>Ваш доступ к группе <code>@access.GroupPath</code>. Создавать, изменять и переносить на прод @Model.What можно с уровнем Developer и выше.</p>
+        </details>
+    }
+}

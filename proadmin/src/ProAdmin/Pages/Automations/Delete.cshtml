@@ -1,0 +1,72 @@
+@page "/Automations/Delete"
+@model ProAdmin.Pages.Automations.DeleteModel
+@using ProAdmin.Automations
+@{
+    ViewData["Title"] = "Удалить";
+}
+<div class="crumbs">
+    <a href="/Automations">Автоматизации</a> <span>/</span> <span>@Model.Name</span> <span>/</span> <span>Удаление</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Удалить <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">Автоматизация удаляется с отмеченных серверов Pilot сразу. Репозиторий по умолчанию уходит в архив: его можно восстановить в GitLab.</p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Presence is not null)
+{
+    <form method="post" class="grid-2">
+        <input type="hidden" asp-for="Name" />
+        <section class="card">
+            <h2>Серверы Pilot</h2>
+            @if (!Model.Presence.ServersWithAutomation.Any())
+            {
+                <p class="muted">Ни на одном сервере этой автоматизации нет.</p>
+            }
+            <div class="btn-col">
+                @foreach (var env in Model.Presence.ServersWithAutomation)
+                {
+                    <label class="check">
+                        <input type="checkbox" name="Servers" value="@env.Key" @(Model.Servers.Contains(env.Key) ? "checked" : "") />
+                        <span><span class="env-dot env-@env.Key"></span>Удалить с сервера @env.Title</span>
+                    </label>
+                }
+            </div>
+
+            <h2 style="margin-top:18px">Репозиторий GitLab</h2>
+            @if (Model.Presence.Repo is null)
+            {
+                <p class="muted">Репозитория нет.</p>
+            }
+            else
+            {
+                <p class="small"><a href="@Model.Presence.Repo.WebUrl" target="_blank" rel="noopener">@Model.Presence.Repo.ProjectPath</a></p>
+                <div class="btn-col">
+                    <label class="check"><input type="radio" asp-for="RepoAction" value="@AutomationOperations.RepoAction.Archive" /> <span>В архив (рекомендуется)</span></label>
+                    <label class="check"><input type="radio" asp-for="RepoAction" value="@AutomationOperations.RepoAction.Keep" /> <span>Оставить как есть</span></label>
+                    <label class="check"><input type="radio" asp-for="RepoAction" value="@AutomationOperations.RepoAction.Delete" /> <span>Удалить репозиторий вместе с историей</span></label>
+                </div>
+            }
+        </section>
+
+        <section class="card">
+            <h2>Подтверждение</h2>
+            <partial name="_Presence" model="Model.Presence" />
+            <label class="field" style="margin-top:14px">
+                <span>Введите имя автоматизации: <code>@Model.Name</code></span>
+                <input asp-for="Confirm" autocomplete="off" required />
+            </label>
+            <div class="form-actions" style="margin-top:14px">
+                <button class="btn btn-danger" type="submit">Удалить</button>
+                <a class="btn btn-ghost" href="/Automations">Отмена</a>
+            </div>
+        </section>
+    </form>
+}

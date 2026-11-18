@@ -1,0 +1,998 @@
+{
+  "uid": "pilot-server-modules",
+  "title": "Pilot - серверные модули",
+  "tags": [
+    "pilot",
+    "modules",
+    "server"
+  ],
+  "timezone": "browser",
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "env",
+        "label": "Контур",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "pilot-metrics-prod"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "definition": "SELECT DISTINCT env FROM metrics.module_events WHERE client_type = 'pilot-server' ORDER BY 1",
+        "query": "SELECT DISTINCT env FROM metrics.module_events WHERE client_type = 'pilot-server' ORDER BY 1"
+      },
+      {
+        "type": "query",
+        "name": "module",
+        "label": "Модуль",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "pilot-metrics-prod"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "definition": "SELECT DISTINCT module_title FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) ORDER BY 1",
+        "query": "SELECT DISTINCT module_title FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) ORDER BY 1"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Вызовов",
+      "description": "Сколько раз сценарии автоматизаций вызывали активности серверных модулей.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 1,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Успешных",
+      "description": "",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) FILTER (WHERE is_success) AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 2,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Доля успешных",
+      "description": "Успешные / все, кроме отменённых пользователем.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT round(100.0 * count(*) FILTER (WHERE is_success) / NULLIF(count(*) FILTER (WHERE status <> 'cancelled'), 0), 1) AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "green",
+                "value": 98
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 3,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Ошибок",
+      "description": "Исключения в действиях модулей - это то, что надо чинить.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) FILTER (WHERE status = 'error') AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 4,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Модулей",
+      "description": "Сколько разных серверных модулей загружалось или вызывалось за период.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT module_title) AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 5,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Серверов",
+      "description": "Сколько серверов Pilot загрузили серверные модули (ServerHost).",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT machine) AS value FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'load'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 6,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Сводка по модулям",
+      "description": "Действия, ошибки и пользователи за период. Версии - какие версии модуля присылали события.",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  module_title                                                            AS \"Модуль\",\n  count(*) FILTER (WHERE kind = 'action')                                 AS \"Вызовов\",\n  count(*) FILTER (WHERE kind = 'action' AND is_success)                  AS \"Успешно\",\n  count(*) FILTER (WHERE kind = 'action' AND status = 'error')            AS \"Ошибок\",\n  count(*) FILTER (WHERE kind = 'action' AND status = 'cancelled')        AS \"Отменено\",\n  round(100.0 * count(*) FILTER (WHERE kind = 'action' AND is_success)\n        / NULLIF(count(*) FILTER (WHERE kind = 'action' AND status <> 'cancelled'), 0), 1) AS \"Успешных, %\",\n  round(avg(duration_ms) FILTER (WHERE kind = 'action' AND is_success) / 1000.0, 2)       AS \"Среднее время, с\",\n  sum(items) FILTER (WHERE kind = 'action')                               AS \"Обработано объектов\",\n  count(DISTINCT login) FILTER (WHERE kind = 'action')                    AS \"Пользователей\",\n  count(DISTINCT machine) FILTER (WHERE kind = 'load')                    AS \"Серверов\",\n  string_agg(DISTINCT module_version, ', ')                               AS \"Версии\",\n  max(ts) FILTER (WHERE kind = 'action')                                  AS \"Последнее действие\"\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module)\nGROUP BY module_title\nORDER BY \"Вызовов\" DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ошибок"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Успешных, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 90
+                    },
+                    {
+                      "color": "green",
+                      "value": 98
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "Вызовов",
+            "Успешно",
+            "Ошибок",
+            "Отменено"
+          ]
+        },
+        "sortBy": [
+          {
+            "displayName": "Вызовов",
+            "desc": true
+          }
+        ]
+      },
+      "id": 7,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Вызовов по статусам",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(ts, $__interval), status AS metric, count(*) AS value\nFROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'\nGROUP BY 1, 2 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cancelled"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "gray"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Вызовов по модулям (топ-10 за период)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "WITH top AS (\n  SELECT module_title FROM metrics.module_events WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'\n  GROUP BY module_title ORDER BY count(*) DESC LIMIT 10\n)\nSELECT $__timeGroupAlias(ts, $__interval), module_title AS metric, count(*) AS value\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action' AND module_title IN (SELECT module_title FROM top)\nGROUP BY 1, 2 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Активности серверных модулей",
+      "description": "Какие активности вызывают сценарии и насколько они надёжны.",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  module_title                                         AS \"Модуль\",\n  action                                               AS \"Действие\",\n  count(*)                                             AS \"Раз\",\n  count(*) FILTER (WHERE status = 'error')             AS \"Ошибок\",\n  round(avg(duration_ms) FILTER (WHERE is_success) / 1000.0, 2)                                    AS \"Среднее, с\",\n  round((percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::numeric / 1000.0, 2)          AS \"p95, с\",\n  count(DISTINCT login)                                AS \"Пользователей\"\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'\nGROUP BY module_title, action\nORDER BY \"Раз\" DESC\nLIMIT 300"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ошибок"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Раз",
+            "desc": true
+          }
+        ]
+      },
+      "id": 10,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Версии модулей на серверах",
+      "description": "По событию загрузки модуля в ServerHost (старт сервера, установка, перезагрузка, откат). ",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH latest AS (\n  SELECT DISTINCT ON (module_title, machine, env) module_title, env, machine, module_version, ts\n  FROM metrics.module_events\n  WHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'load'\n  ORDER BY module_title, machine, env, ts DESC\n)\nSELECT\n  module_title          AS \"Модуль\",\n  env                   AS \"Контур\",\n  module_version        AS \"Версия\",\n  count(*)              AS \"Серверов\",\n  max(ts)               AS \"Последний запуск\"\nFROM latest\nGROUP BY module_title, env, module_version\nORDER BY \"Модуль\", \"Контур\", \"Версия\" DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "id": 11,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Вызовы по контурам и серверам",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  env                                       AS \"Контур\",\n  server                                    AS \"Сервер\",\n  count(*)                                  AS \"Вызовов\",\n  count(*) FILTER (WHERE status = 'error')  AS \"Ошибок\",\n  count(DISTINCT module_title)              AS \"Разных модулей\",\n  max(ts)                                   AS \"Последний вызов\"\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action'\nGROUP BY env, server\nORDER BY \"Вызовов\" DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Вызовов",
+            "desc": true
+          }
+        ]
+      },
+      "id": 12,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Самые долгие действия (p95)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  module_title || ' · ' || action AS \"Действие\",\n  round((percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::numeric / 1000.0, 2) AS \"p95, с\"\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action' AND is_success AND duration_ms IS NOT NULL\nGROUP BY module_title, action\nORDER BY 2 DESC\nLIMIT 15"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        }
+      },
+      "id": 13,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Последние ошибки",
+      "description": "Исключения активностей, перехваченные ServerHost.",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pilot-metrics-prod"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  ts               AS \"Время\",\n  module_title     AS \"Модуль\",\n  module_version   AS \"Версия\",\n  action           AS \"Действие\",\n  error_type       AS \"Тип ошибки\",\n  error_message    AS \"Текст ошибки\",\n  login            AS \"Логин\",\n  env              AS \"Контур\",\n  server           AS \"Сервер\"\nFROM metrics.module_events\nWHERE $__timeFilter(ts) AND client_type = 'pilot-server' AND env IN ($env) AND module_title IN ($module) AND kind = 'action' AND status = 'error'\nORDER BY ts DESC\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Текст ошибки"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      },
+      "id": 14,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      }
+    }
+  ]
+}

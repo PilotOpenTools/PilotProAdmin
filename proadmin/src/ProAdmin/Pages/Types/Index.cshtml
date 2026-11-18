@@ -1,0 +1,438 @@
+@page
+@model ProAdmin.Pages.Types.IndexModel
+@using ProAdmin.GitLab
+@using ProAdmin.Modules
+@using ProAdmin.Types
+@{
+    ViewData["Title"] = "Типы";
+    var ro = Model.ReadOnly;
+    var snap = Model.Snapshot;
+    var repo = Model.Project?.WebUrl;
+    var branchQuery = Model.Branch is null ? "" : "&branch=" + Uri.EscapeDataString(Model.Branch);
+    string[] stageTitles = { "Ветка", "Тест", "Стейдж", "Прод" };
+}
+
+<div class="page-head">
+    <div>
+        <h1>Типы</h1>
+        <p class="muted">
+            Типы, атрибуты, состояния и группы состояний - тем же путём, что и модули:
+            ветка изменения <code>types/…</code> / <code>dev</code> (тест) / <code>release</code> (стейдж) / <code>main</code> (прод).
+            @if (Model.MainVersion is not null) { <span>На проде <b class="mono">v@(Model.MainVersion)</b>.</span> }
+        </p>
+    </div>
+    <div class="head-actions">
+        @if (repo is not null)
+        {
+            <a class="btn btn-sm" href="@repo" target="_blank" rel="noopener">Репозиторий</a>
+        }
+        <a class="btn btn-sm" href="/Types/Compare">Сравнить серверы</a>
+    </div>
+</div>
+
+@if (TempData["Flash"] is string flash)
+{
+    <div class="alert alert-ok">@flash</div>
+}
+@if (TempData["FlashError"] is string flashError)
+{
+    <div class="alert alert-error">@flashError</div>
+}
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@await Html.PartialAsync("_AccessLine", Model.Access)
+
+@if (Model.ProjectPath is null)
+{
+    <div class="card">
+        <h2>Репозиторий не настроен</h2>
+        <p>Укажите <b>«Репозиторий с типами»</b> в <a href="/Settings">общих настройках</a> - пустой проект GitLab, например
+            <code>http://localhost:8080/pilot-config/types</code>. Пока его нет, доступно только <a href="/Types/Compare">сравнение серверов</a>.</p>
+    </div>
+    return;
+}
+@if (Model.Project is null)
+{
+    return;
+}
+
+@if (!Model.Initialized)
+{
+    <section class="card">
+        <h2>Инициализация репозитория</h2>
+        <p class="muted">
+            В <code>main</code> записывается снимок типов выбранного сервера (версия <code>1.0.0</code>, тег <code>v1.0.0</code>, <code>CHANGELOG.md</code>),
+            от него создаются <code>release</code> и <code>dev</code>, ветки защищаются (только Merge Request), добавляется CI-проверка <code>ci/validate.py</code>.
+            Источник - обычно прод: <code>main</code> должна совпадать с продом. Отличия теста и стейджа потом видны на этой странице.
+        </p>
+        @if (!ro)
+        {
+            <form method="post" asp-page-handler="Init" class="btn-row" data-confirm="Заполнить репозиторий типов снимком выбранного сервера?">
+                <label class="field narrow-field">
+                    <span>Источник</span>
+                    <select name="SourceEnv">
+                        @foreach (var env in TypesEnv.All(Model.AppSettings).Where(e => e.HasServer).Reverse())
+                        {
+                            <option value="@env.Key">@env.Title (@env.PilotUrl)</option>
+                        }
+                    </select>
+                </label>
+                <button class="btn btn-primary" type="submit">Инициализировать</button>
+            </form>
+        }
+    </section>
+    return;
+}
+
+<div class="toolbar">
+    <nav class="seg" aria-label="Раздел">
+        <a class="seg-btn @(Model.View == "overview" ? "active" : "")" href="/Types">Изменения · @Model.Active.Count()</a>
+        <a class="seg-btn @(Model.View == "types" ? "active" : "")" href="/Types?view=types@(branchQuery)">Типы</a>
+        <a class="seg-btn @(Model.View == "states" ? "active" : "")" href="/Types?view=states@(branchQuery)">Состояния</a>
+        <a class="seg-btn @(Model.View == "machines" ? "active" : "")" href="/Types?view=machines@(branchQuery)">Группы состояний</a>
+    </nav>
+</div>
+
+@if (Model.View == "overview")
+{
+    @if (Model.Flow is { } flow)
+    {
+        @await Html.PartialAsync("_FlowCard", flow)
+    }
+    @if (!ro)
+    {
+        var toStage = Model.Changes.Count(c => c.Stage == TypesChangeStage.Test);
+        var toProd = Model.Changes.Count(c => c.Stage == TypesChangeStage.Stage);
+        <div class="flow-actions">
+            <button class="btn" type="button" data-dialog="new-change">+ Создать изменение</button>
+            <a class="btn btn-primary @(toStage == 0 ? "disabled" : "")" href="/Types/Promote?target=release" aria-disabled="@(toStage == 0)"
+               title="@(toStage == 0 ? "В dev нет изменений, которых нет на стейдже" : "Выбрать изменения dev для стейджа")">На стейдж@(toStage > 0 ? $" · {toStage}" : "")</a>
+            <a class="btn btn-promote @(toProd == 0 ? "disabled" : "")" href="/Types/Promote?target=main" aria-disabled="@(toProd == 0)"
+               title="@(toProd == 0 ? "На стейдже нет изменений, которых нет на проде" : "Выпустить изменения стейджа в прод")">На прод@(toProd > 0 ? $" · {toProd}" : "")</a>
+        </div>
+        <dialog class="modal modal-form" id="new-change">
+            <div class="modal-form-body">
+                <div class="modal-form-head"><h2>Новое изменение типов</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                <p class="muted small">Создастся ветка <code>types/KTN-123-…</code> от <code>dev</code>. Правки из редактора сохраняются в неё,
+                    на тест она попадёт после «Влить / тест». Потом изменение можно связать с коммитом модуля или автоматизации.</p>
+                <form method="post" asp-page-handler="CreateBranch" class="form">
+                    <label class="field"><span>Задача и суть изменения</span>
+                        <input name="NewChange" required placeholder="KTN-123 Договор: срок действия" /></label>
+                    <div class="form-actions"><button class="btn btn-primary" type="submit">Создать ветку</button></div>
+                </form>
+            </div>
+        </dialog>
+    }
+
+    @* ---------------------------------------------------------------- изменения *@
+    <section class="card" id="changes">
+        <div class="card-head">
+            <h2>Изменения <span class="muted small">- ветки в работе и коммиты <code>dev</code>, которых ещё нет на проде; свежие сверху</span></h2>
+        </div>
+
+        @if (!Model.Active.Any())
+        {
+            <div class="work-empty">Активных изменений нет: всё, что есть в <code>dev</code>, уже на проде.</div>
+        }
+        else
+        {
+            <table class="table changes">
+                <thead><tr><th>Где</th><th>Изменение</th><th>Едет вместе с</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var c in Model.Active)
+                {
+                    var stage = (int)c.Stage;
+                    var url = Model.TaskUrl(c.Branch?.Name ?? c.Title);
+                    <tr id="change-@(c.Commit?.ShortId ?? c.Branch!.Name.Replace('/', '-'))">
+                        <td class="nowrap">
+                            <span class="mini-track" title="@stageTitles[stage]">
+                                @for (var i = 0; i < 4; i++)
+                                {
+                                    <span class="mini-dot @(i < stage ? "done" : i == stage ? "current" : "")"></span>
+                                }
+                            </span>
+                            <div class="small @(stage == 0 ? "muted" : "")">@stageTitles[stage]</div>
+                        </td>
+                        <td>
+                            <b>@c.Title</b>
+                            @if (url is not null) { <a class="small" href="@url" target="_blank" rel="noopener">задача</a> }
+                            <div class="muted small">
+                                @if (c.Branch is { } b)
+                                {
+                                    <a class="mono" href="@repo/-/commits/@Uri.EscapeDataString(b.Name)" target="_blank" rel="noopener">@b.Name</a>
+                                    @if (c.Ahead == 0) { <span class="badge badge-onlygit">нет правок</span> }
+                                    else { <a href="@repo/-/compare/dev...@Uri.EscapeDataString(b.Name)" target="_blank" rel="noopener">+@ModuleNextSteps.Plural(c.Ahead, "коммит", "коммита", "коммитов")</a> }
+                                    @if (c.Mr is not null) { <a href="@c.Mr.WebUrl" target="_blank" rel="noopener">MR !@c.Mr.Iid</a> }
+                                }
+                                else
+                                {
+                                    <a class="mono" href="@c.Commit!.WebUrl" target="_blank" rel="noopener">@c.Commit.ShortId</a>
+                                }
+                                · @c.Author, @BranchActivity.Ago(c.Date)
+                            </div>
+                            @if (c.Items.Count > 0)
+                            {
+                                <div class="change-items">@foreach (var item in c.Items.Take(8)) { <span class="item-chip">@item</span> }
+                                    @if (c.Items.Count > 8) { <span class="muted small">ещё @(c.Items.Count - 8)</span> }</div>
+                            }
+                        </td>
+                        <td>
+                            @foreach (var l in c.Links)
+                            {
+                                <div class="link-row">
+                                    <a href="@l.TargetKind.PageUrl(l.TargetName)" title="@l.TargetKind.Title()"><b>@l.TargetName</b></a>
+                                    <span class="mono small">@l.TargetRef</span>
+                                    <span class="small">@l.TargetTitle</span>
+                                    @if (l.ProdAt is not null) { <span class="badge badge-synced">на проде</span> }
+                                    else if (l.StageAt is not null) { <span class="badge badge-running">на стейдже</span> }
+                                    else { <span class="badge badge-onlygit">ждёт стейджа</span> }
+                                    @if (l.Error is not null) { <span class="badge badge-failed" title="@l.Error">ошибка</span> }
+                                    @if (!ro)
+                                    {
+                                        <form method="post" asp-page-handler="Unlink" class="inline" data-confirm="Удалить связь? Изменение типов останется в dev, его надо будет перенести вручную или связать заново.">
+                                            <input type="hidden" name="LinkId" value="@l.Id" />
+                                            <button class="btn-link small" type="submit" title="Удалить связь">Закрыть</button>
+                                        </form>
+                                    }
+                                </div>
+                            }
+                            @if (!ro)
+                            {
+                                <a class="btn btn-sm btn-ghost" href="/Types/Link?change=@Uri.EscapeDataString(c.Key)">+ Связать с модулем / автоматизацией</a>
+                            }
+                        </td>
+                        <td class="nowrap actions">
+                            @if (ro)
+                            {
+                            }
+                            else if (c.Branch is { } br)
+                            {
+                                <a class="btn btn-sm" href="/Types?view=types&branch=@Uri.EscapeDataString(br.Name)">Править</a>
+                                @if (c.Ahead > 0)
+                                {
+                                    <details class="merge-form">
+                                        <summary class="btn btn-sm btn-primary">Влить / тест</summary>
+                                        <form method="post" asp-page-handler="MergeBranch" class="form">
+                                            <input type="hidden" name="Branch" value="@br.Name" />
+                                            <label class="field"><span>Что изменено (коммит в dev, пункт CHANGELOG)</span>
+                                                <input name="Message" required value="@c.Title" /></label>
+                                            <p class="muted small">MR <code>@br.Name / dev</code> (squash) / pipeline / merge / запись <code>dev</code> на тестовый сервер.</p>
+                                            <button class="btn btn-sm btn-primary" type="submit">Влить</button>
+                                        </form>
+                                    </details>
+                                }
+                                <form method="post" asp-page-handler="DeleteBranch" class="inline" data-confirm="Удалить ветку @br.Name со всеми правками?">
+                                    <input type="hidden" name="Branch" value="@br.Name" />
+                                    <button class="btn btn-sm btn-ghost" type="submit">Удалить</button>
+                                </form>
+                            }
+                            else if (c.Links.Any(l => !l.Done))
+                            {
+                                <span class="muted small">поедет с модулем</span>
+                            }
+                            else if (c.Stage == TypesChangeStage.Test)
+                            {
+                                <a class="btn btn-sm" href="/Types/Promote?target=release&selected=@c.Commit!.Id" title="Перенести только это изменение в release и на стейдж">/ стейдж</a>
+                            }
+                            else if (c.Stage == TypesChangeStage.Stage)
+                            {
+                                <a class="btn btn-sm btn-promote" href="/Types/Promote?target=main&selected=@c.Commit!.Id" title="Выпустить это изменение в main и на прод">/ прод</a>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+
+        @if (Model.Released.Any())
+        {
+            <details class="cleanup-details">
+                <summary>Выпущенные изменения · последние @Model.Released.Count()</summary>
+                <ul class="released">
+                    @foreach (var c in Model.Released)
+                    {
+                        <li><a class="mono small" href="@c.Commit!.WebUrl" target="_blank" rel="noopener">@c.Commit.ShortId</a> @c.Title
+                            <span class="muted small">· @c.Author, @BranchActivity.Ago(c.Date)</span>
+                            @foreach (var l in c.Links) { <span class="small muted">· вместе с @l.TargetName @l.TargetRef</span> }</li>
+                    }
+                </ul>
+            </details>
+        }
+    </section>
+
+    @* ---------------------------------------------------------------- серверы *@
+    <section class="card" id="servers">
+        <div class="card-head">
+            <h2>Серверы / ветки <span class="muted small">- совпадает ли сервер с головой своей ветки</span></h2>
+            @if (!ro)
+            {
+                <form method="post" asp-page-handler="Capture" class="inline"
+                      data-confirm="Записать в новую ветку изменения то, чем тестовый сервер отличается от dev (если типы правили на сервере напрямую)?">
+                    <button class="btn btn-sm btn-ghost" type="submit" title="Отличия сервера Тест от dev - в новую ветку types/test-server-…">Сервер Тест / ветка изменения</button>
+                </form>
+            }
+        </div>
+        <div class="types-envs">
+            @foreach (var card in Model.Cards)
+            {
+                <div class="types-env">
+                    <div class="types-env-head"><span class="env-dot env-@card.Env.Key"></span><b>@card.Env.Title</b> <code>@card.Env.Branch</code></div>
+                    @if (!card.Env.HasServer)
+                    {
+                        <p class="muted small">Сервер не задан в настройках.</p>
+                    }
+                    else if (card.Error is not null)
+                    {
+                        <span class="badge badge-failed">ошибка</span>
+                        <div class="small">@card.Error</div>
+                    }
+                    else if (card.Plan is { } plan)
+                    {
+                        if (!plan.CanApply)
+                        {
+                            <span class="badge badge-failed" title="@string.Join("\n", plan.Errors)">ветку нельзя записать: @plan.Errors.Count</span>
+                        }
+                        else if (!plan.HasChanges)
+                        {
+                            <span class="badge badge-synced">совпадает с веткой</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-differs">отличается: @plan.Changes.Count</span>
+                            <details>
+                                <summary class="small">что запишется</summary>
+                                <ul class="small">
+                                    @foreach (var ch in plan.Changes)
+                                    {
+                                        <li class="@(ch.Danger ? "lvl-warn" : "")">@(ch.Danger ? "Внимание " : "")@ch.Line</li>
+                                    }
+                                </ul>
+                            </details>
+                        }
+                        @if (plan.Unmanaged.Count > 0)
+                        {
+                            <div class="muted small" title="@string.Join("\n", plan.Unmanaged)">не из репозитория: @plan.Unmanaged.Count</div>
+                        }
+                    }
+                    @if (card.Branch?.Commit is { } head)
+                    {
+                        <div class="muted small">ветка: <span class="mono">@head.ShortId</span> @head.Title</div>
+                    }
+                    @if (card.Deployment is { } d)
+                    {
+                        <div class="muted small">записано: <span class="mono">@ModuleDeploy.Short(d.Sha)</span> (@d.Reference) · @d.At.ToLocalTime().ToString("dd.MM HH:mm") · @d.By</div>
+                    }
+                    @if (!ro && card.Plan is { CanApply: true, HasChanges: true } && card.Branch is not null)
+                    {
+                        <form method="post" asp-page-handler="Sync" class="inline"
+                              data-confirm="Записать @card.Env.Branch на сервер @card.Env.Title? Изменений: @card.Plan.Changes.Count.">
+                            <input type="hidden" name="Branch" value="@card.Env.Branch" />
+                            @if (card.Env.Key == TypesEnv.Prod)
+                            {
+                                <input name="Confirm" placeholder="введите «прод»" required class="narrow-field" />
+                            }
+                            <button class="btn btn-sm" type="submit">Записать @card.Env.Branch на сервер</button>
+                        </form>
+                    }
+                </div>
+            }
+        </div>
+        <p class="muted small">Перенос вручную, без модуля: <a href="/Types/Promote?target=release">dev / release (стейдж)</a> ·
+            <a href="/Types/Promote?target=main">release / main (прод, с версией)</a>.</p>
+    </section>
+}
+else if (snap is not null)
+{
+    <div class="toolbar">
+        <form method="get" class="inline">
+            <input type="hidden" name="view" value="@Model.View" />
+            <label class="small muted">Содержимое
+                <select name="branch" data-autosubmit>
+                    <option value="" selected="@(Model.Branch is null)">dev (тест)</option>
+                    @foreach (var b in Model.TaskBranches)
+                    {
+                        <option value="@b.Name" selected="@(Model.Branch == b.Name)">@b.Name</option>
+                    }
+                </select>
+            </label>
+        </form>
+        <input type="search" id="filter" placeholder="Поиск по имени или заголовку…" aria-label="Поиск" />
+        @if (!ro)
+        {
+            <span class="btn-row">
+                <a class="btn btn-sm" href="/Types/Edit?kind=type@(branchQuery)">+ Тип</a>
+                <a class="btn btn-sm" href="/Types/Edit?kind=state@(branchQuery)">+ Состояние</a>
+                <a class="btn btn-sm" href="/Types/Edit?kind=machine@(branchQuery)">+ Группа состояний</a>
+            </span>
+        }
+    </div>
+    @if (Model.Branch is not null)
+    {
+        <div class="alert alert-info">Ветка изменения <code>@Model.Branch</code>: правки сохраняются в неё. На тест - «Влить / тест» на вкладке <a href="/Types#changes">«Изменения»</a>.</div>
+    }
+    else if (!ro)
+    {
+        <p class="muted small">Показано содержимое <code>dev</code>. Сохранение из редактора создаст ветку изменения (или выберите существующую в списке выше).</p>
+    }
+    <div class="table-wrap">
+        <table class="table" id="items">
+            @if (Model.View == "types")
+            {
+                <thead><tr><th>Имя</th><th>Заголовок</th><th>Атрибутов</th><th>Группа состояний</th><th>Дочерние</th></tr></thead>
+                <tbody>
+                @foreach (var t in snap.Types.Values.OrderBy(t => t.IsDeleted).ThenBy(t => t.Title ?? t.Name))
+                {
+                    <tr data-name="@((t.Name + " " + t.Title).ToLowerInvariant())" class="@(t.IsDeleted ? "muted" : "")">
+                        <td><a class="mono" href="/Types/Edit?kind=type&name=@Uri.EscapeDataString(t.Name)@(branchQuery)">@t.Name</a>@(t.IsDeleted ? " (удалён)" : "") <a class="small muted" href="/Automations/Usage?kind=Type&name=@Uri.EscapeDataString(t.Name)" title="В каких автоматизациях встречается">где используется</a></td>
+                        <td>@t.Title</td>
+                        <td>@t.Attributes.Count</td>
+                        <td>@t.StateMachine</td>
+                        <td class="small">@string.Join(", ", t.Children)</td>
+                    </tr>
+                }
+                </tbody>
+            }
+            else if (Model.View == "states")
+            {
+                <thead><tr><th>Имя</th><th>Заголовок</th><th>Цвет</th><th>Завершающее</th></tr></thead>
+                <tbody>
+                @foreach (var s in snap.States.Values.OrderBy(s => s.IsDeleted).ThenBy(s => s.Title ?? s.Name))
+                {
+                    <tr data-name="@((s.Name + " " + s.Title).ToLowerInvariant())" class="@(s.IsDeleted ? "muted" : "")">
+                        <td>
+                            @if (s.IsSystem) { <span class="mono">@s.Name</span> <span class="muted small">системное</span> }
+                            else { <a class="mono" href="/Types/Edit?kind=state&name=@Uri.EscapeDataString(s.Name)@(branchQuery)">@s.Name</a>@(s.IsDeleted ? " (удалено)" : "") <a class="small muted" href="/Automations/Usage?kind=State&name=@Uri.EscapeDataString(s.Name)" title="В каких автоматизациях встречается">где используется</a> }
+                        </td>
+                        <td>@s.Title</td>
+                        <td>@s.Color</td>
+                        <td>@(s.IsCompletionState ? "да" : "")</td>
+                    </tr>
+                }
+                </tbody>
+            }
+            else
+            {
+                <thead><tr><th>Заголовок</th><th>Переходов</th><th>Используют типы</th></tr></thead>
+                <tbody>
+                @foreach (var m in snap.Machines.OrderBy(m => m.IsDeleted).ThenBy(m => m.Title))
+                {
+                    <tr data-name="@m.Title.ToLowerInvariant()" class="@(m.IsDeleted ? "muted" : "")">
+                        <td><a href="/Types/Edit?kind=machine&name=@Uri.EscapeDataString(m.Title)@(branchQuery)">@m.Title</a>@(m.IsDeleted ? " (удалена)" : "")</td>
+                        <td>@m.States.Sum(s => s.Transitions.Count)</td>
+                        <td class="small">@string.Join(", ", snap.Types.Values.Where(t => !t.IsDeleted && t.StateMachine == m.Title).Select(t => t.Name))</td>
+                    </tr>
+                }
+                </tbody>
+            }
+        </table>
+    </div>
+    <script>
+        document.getElementById('filter')?.addEventListener('input', e => {
+            const q = e.target.value.trim().toLowerCase();
+            document.querySelectorAll('#items tbody tr').forEach(r => r.hidden = q && !r.dataset.name.includes(q));
+        });
+    </script>
+}

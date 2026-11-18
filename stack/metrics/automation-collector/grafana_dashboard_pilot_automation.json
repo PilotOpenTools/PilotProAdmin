@@ -1,0 +1,401 @@
+{
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      },
+      "description": "Срабатывания - сценарий отработал до конца (ENDED). Ошибки - битый JSON сценария и ссылки на несуществующую активность. Отфильтровано - штатный пропуск по условию, не ошибка.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ошибок"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля ошибок, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "footer": {
+          "fields": [
+            "Срабатываний",
+            "Ошибок"
+          ],
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Ошибок"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  script                                                   AS \"Сценарий\",\n  count(*) FILTER (WHERE kind = 'ended')                   AS \"Срабатываний\",\n  count(*) FILTER (WHERE is_error)                         AS \"Ошибок\",\n  count(*) FILTER (WHERE kind = 'skipped')                 AS \"Отфильтровано\",\n  count(*) FILTER (WHERE kind = 'started')                 AS \"Запусков триггера\",\n  round(\n    100.0 * count(*) FILTER (WHERE is_error)\n    / NULLIF(count(*) FILTER (WHERE kind IN ('ended','started')) , 0)\n  , 1)                                                     AS \"Доля ошибок, %\",\n  max(ts)                                                  AS \"Последнее событие\"\nFROM metrics.automation_events\nWHERE $__timeFilter(ts)\n  AND env IN ($env)\nGROUP BY script\nHAVING count(*) FILTER (WHERE kind IN ('ended','started','activity_not_found','error')) > 0\nORDER BY \"Ошибок\" DESC, \"Срабатываний\" DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Сводка по автоматизациям за выбранный период",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      },
+      "description": "Текущий период - выбранный на панели времени. Предыдущий - тот же интервал, сдвинутый назад на выбранную величину. Дельта и прирост в процентах считаются по срабатываниям и по ошибкам.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Δ.*"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "text",
+                      "value": 0
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 2,
+      "options": {
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Δ ошибок"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH cur AS (\n  SELECT script,\n         count(*) FILTER (WHERE kind = 'ended') AS runs,\n         count(*) FILTER (WHERE is_error)       AS errs\n  FROM metrics.automation_events\n  WHERE ts >= $__timeFrom() AND ts < $__timeTo()\n    AND env IN ($env)\n  GROUP BY script\n),\nprev AS (\n  SELECT script,\n         count(*) FILTER (WHERE kind = 'ended') AS runs,\n         count(*) FILTER (WHERE is_error)       AS errs\n  FROM metrics.automation_events\n  WHERE ts >= $__timeFrom()::timestamptz - INTERVAL '$offset'\n    AND ts <  $__timeTo()::timestamptz   - INTERVAL '$offset'\n    AND env IN ($env)\n  GROUP BY script\n)\nSELECT\n  COALESCE(c.script, p.script)                       AS \"Сценарий\",\n  COALESCE(c.runs, 0)                                AS \"Срабатываний сейчас\",\n  COALESCE(p.runs, 0)                                AS \"Срабатываний ранее\",\n  COALESCE(c.runs, 0) - COALESCE(p.runs, 0)          AS \"Δ срабатываний\",\n  COALESCE(c.errs, 0)                                AS \"Ошибок сейчас\",\n  COALESCE(p.errs, 0)                                AS \"Ошибок ранее\",\n  COALESCE(c.errs, 0) - COALESCE(p.errs, 0)          AS \"Δ ошибок\",\n  CASE WHEN COALESCE(p.runs, 0) = 0 THEN NULL\n       ELSE round(100.0 * (COALESCE(c.runs,0) - p.runs) / p.runs, 1)\n  END                                                AS \"Прирост срабатываний, %\"\nFROM cur c\nFULL OUTER JOIN prev p ON p.script = c.script\nORDER BY \"Δ ошибок\" DESC, \"Срабатываний сейчас\" DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Сравнение с предыдущим периодом (сдвиг: $offset)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      },
+      "description": "Число завершившихся сценариев (ENDED) в каждом интервале.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroupAlias(ts, $__interval),\n  script AS metric,\n  count(*) AS value\nFROM metrics.automation_events\nWHERE $__timeFilter(ts)\n  AND env IN ($env)\n  AND kind = 'ended'\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Количество применений по автоматизациям",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      },
+      "description": "Ошибки разбора JSON сценария и ссылки на несуществующие активности.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroupAlias(ts, $__interval),\n  script || ' [' || kind || ']' AS metric,\n  count(*) AS value\nFROM metrics.automation_events\nWHERE $__timeFilter(ts)\n  AND env IN ($env)\n  AND is_error\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Количество ошибок по автоматизациям",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pilot-metrics-prod"
+      },
+      "description": "Отпечаток (fp) позволяет отличить разные поломки друг от друга. Для ошибок разбора JSON имени сценария в логе нет - ищите сценарий в myAdmin по триггеру и составу активностей.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 5,
+      "options": {
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Повторов"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  kind                 AS \"Тип\",\n  script               AS \"Сценарий\",\n  trigger_name         AS \"Триггер\",\n  detail               AS \"Подробности\",\n  count(*)             AS \"Повторов\",\n  min(ts)              AS \"Впервые\",\n  max(ts)              AS \"Последний раз\"\nFROM metrics.automation_events\nWHERE $__timeFilter(ts)\n  AND env IN ($env)\n  AND is_error\nGROUP BY 1, 2, 3, 4\nORDER BY 5 DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Детализация ошибок",
+      "type": "table"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "pilot-metrics-prod"
+        },
+        "includeAll": true,
+        "label": "Контур",
+        "multi": true,
+        "name": "env",
+        "options": [],
+        "definition": "SELECT DISTINCT env FROM metrics.automation_events ORDER BY 1",
+        "query": "SELECT DISTINCT env FROM metrics.automation_events ORDER BY 1",
+        "refresh": 1,
+        "sort": 1,
+        "type": "query",
+        "description": "Контуры, по которым есть события автоматизаций."
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "7 days",
+          "value": "7 days"
+        },
+        "hide": 0,
+        "label": "Сравнить с периодом назад",
+        "name": "offset",
+        "options": [
+          {
+            "selected": false,
+            "text": "1 day",
+            "value": "1 day"
+          },
+          {
+            "selected": true,
+            "text": "7 days",
+            "value": "7 days"
+          },
+          {
+            "selected": false,
+            "text": "14 days",
+            "value": "14 days"
+          },
+          {
+            "selected": false,
+            "text": "30 days",
+            "value": "30 days"
+          }
+        ],
+        "query": "1 day, 7 days, 14 days, 30 days",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Pilot - автоматизации",
+  "uid": "pilot-automation",
+  "description": "Статистика сценариев автоматизации тестового и стейдж-контуров (automation.log / pilot_metrics). Прод не собирается."
+}

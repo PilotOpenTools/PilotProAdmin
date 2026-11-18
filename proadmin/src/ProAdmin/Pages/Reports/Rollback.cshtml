@@ -1,0 +1,121 @@
+@page "/Reports/Rollback"
+@model ProAdmin.Pages.Reports.RollbackModel
+@{
+    ViewData["Title"] = "Откат отчёта";
+    var main = Model.Main;
+    var q = Uri.EscapeDataString(Model.Name);
+}
+<div class="crumbs">
+    <a href="/Reports">Отчёты</a> <span>/</span> <span>@Model.Name</span> <span>/</span> <span>Откат</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Откатить прод <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">
+            Отчёт из выбранного релиза вернётся в <code>main</code> и на сервер @(main?.Title ?? "прод") <b>новой версией</b>
+            с сегодняшним номером (временная ветка / MR / pipeline / сервер / merge / релиз). Номера только растут,
+            в истории будет видно «откат на v…». Ветка <code>dev</code> не меняется.
+        </p>
+    </div>
+    @if (Model.Repo is not null)
+    {
+        <a class="btn" href="@Model.Repo.WebUrl/-/releases" target="_blank" rel="noopener">Релизы в GitLab</a>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Releases.Count > 0)
+{
+    @if (Model.Releases.Count == 1)
+    {
+        <div class="alert alert-warn">У отчёта пока один релиз (@Model.Releases[0].Tag.Name) - откатываться не к чему. Откат станет доступен после следующего переноса на прод.</div>
+    }
+    else if (!Model.CanRollback && Model.Errors.Count == 0)
+    {
+        <div class="alert alert-warn">Выбран релиз, который уже на проде. Выберите в таблице другую версию - кнопка «выбрать».</div>
+    }
+    <div class="grid-2">
+        <section class="card">
+            <h2>Релизы (что было на проде)</h2>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead><tr><th>Версия</th><th>Дата</th><th>Что изменилось</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var (tag, version) in Model.Releases)
+                    {
+                        var isCurrent = tag.Name == Model.CurrentTag;
+                        var isSelected = tag.Name == Model.Tag;
+                        <tr class="@(isSelected ? "row-selected" : "")">
+                            <td class="mono nowrap"><a href="@Model.Repo!.WebUrl/-/releases/@tag.Name" target="_blank" rel="noopener">@tag.Name</a></td>
+                            <td class="nowrap muted">@(tag.Commit?.CommittedDate?.ToLocalTime().ToString("dd.MM.yyyy HH:mm") ?? "")</td>
+                            <td class="small">@(tag.Message ?? tag.Release?.Name ?? tag.Commit?.Title)</td>
+                            <td class="nowrap">
+                                @if (isCurrent)
+                                {
+                                    <span class="badge badge-synced">в main сейчас</span>
+                                }
+                                @if (isSelected)
+                                {
+                                    <span class="badge badge-onlypilot">выбран</span>
+                                }
+                                else
+                                {
+                                    <a href="/Reports/Rollback?name=@q&tag=@Uri.EscapeDataString(tag.Name)">выбрать</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card">
+            @if (Model.Tag is not null && Model.NewVersion is not null && main is not null && Model.ProdReport is not null)
+            {
+                <h2>Откат на <span class="mono">@Model.Tag</span> / версия <span class="mono">@Model.NewVersion</span></h2>
+                @if (Model.ProdEqualsTag)
+                {
+                    <p class="muted">На сервере @main.Title уже содержимое @Model.Tag@(Model.Tag == Model.CurrentTag ? " - откатывать нечего." : " - изменится только ветка main.")</p>
+                }
+                <form method="post" class="form" style="margin-top:12px" data-confirm="Откатить прод на @Model.Tag (новая версия @Model.NewVersion)?">
+                    <input type="hidden" asp-for="Name" />
+                    <input type="hidden" asp-for="Tag" />
+                    @if (main.RequireTaskReference)
+                    {
+                        <label class="field">
+                            <span>Задача</span>
+                            <input asp-for="Task" placeholder="TASK-123" autocomplete="off" required />
+                        </label>
+                    }
+                    <label class="field">
+                        <span>Причина отката</span>
+                        <textarea asp-for="Description" rows="3" placeholder="Что сломалось в текущей версии" required></textarea>
+                        <small class="muted">Попадёт в <code>CHANGELOG.md</code>, Release и историю версий отчёта в Pilot: «@Model.NewVersion - Откат на @Model.Tag: …».</small>
+                    </label>
+                    <button class="btn btn-danger" type="submit" disabled="@(!Model.CanRollback)">Откатить прод на @Model.Tag</button>
+                </form>
+            }
+        </section>
+    </div>
+
+    @if (Model.ScriptDiff is not null && Model.MarkupDiff is not null)
+    {
+        <section class="card">
+            <h2>Что изменится на сервере @main?.Title</h2>
+            @{
+                var labelA = "сейчас на проде";
+                var labelB = Model.Tag ?? "";
+                var scriptTitle = "Скрипт";
+                var markupTitle = "Разметка";
+            }
+            <partial name="/Pages/Compare/_Diff.cshtml" model="(scriptTitle, Model.ScriptDiff, labelA, labelB)" />
+            <partial name="/Pages/Compare/_Diff.cshtml" model="(markupTitle, Model.MarkupDiff, labelA, labelB)" />
+        </section>
+    }
+}

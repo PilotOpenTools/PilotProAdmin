@@ -1,0 +1,16 @@
+@model JobStatus
+@switch (Model)
+{
+    case JobStatus.Succeeded:
+        <span class="badge badge-synced">успешно</span>
+        break;
+    case JobStatus.Failed:
+        <span class="badge badge-failed">ошибка</span>
+        break;
+    case JobStatus.WaitingPipeline:
+        <span class="badge badge-running"><span class="spinner"></span>ждёт pipeline</span>
+        break;
+    default:
+        <span class="badge badge-running"><span class="spinner"></span>выполняется</span>
+        break;
+}

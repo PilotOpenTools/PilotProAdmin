@@ -1,0 +1,13 @@
+* text=auto
+
+# Скрипты монтируются в Linux-контейнеры: CRLF ломает bash
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.conf text eol=lf
+
+*.docx binary
+*.zip binary
+*.png binary
+*.dll binary

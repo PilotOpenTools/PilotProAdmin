@@ -1,0 +1,42 @@
+# Проверка автоматизаций Pilot: веб-админка записывает автоматизацию на сервер только после успеха этого pipeline.
+# Подключается к проекту настройкой CI/CD / «CI/CD configuration file»: automation.yml@pilot-ci/checks
+# Лежит отдельно от проектов: правка действует сразу на все, из своей ветки проверку не отключить.
+
+workflow:
+  rules:
+    # Pipeline для Merge Request
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Не дублировать branch-pipeline, если по ветке уже открыт MR
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    # Push в ветку (в т.ч. dev/main после merge)
+    - if: $CI_COMMIT_BRANCH
+
+variables:
+  # Образ с python3 и git. В закрытой сети соберите свой и задайте переменную в группе: тогда apk add не нужен.
+  CHECKS_IMAGE: python:3.12.16-alpine@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
+  # Откуда брать скрипты: проект и ревизия (ветка, тег или SHA). Для надёжности закрепите тег или SHA.
+  CHECKS_PROJECT: pilot-ci/checks
+  CHECKS_REF: main
+  GIT_DEPTH: "0"
+  PYTHONUTF8: "1"
+  # Папка с автоматизациями внутри репозитория (пусто - корень).
+  AUTOMATION_DIR: ""
+  # 1 - в одном изменении только одна автоматизация.
+  SINGLE_AUTOMATION: "1"
+
+stages:
+  - validate
+
+validate-automations:
+  stage: validate
+  image: $CHECKS_IMAGE
+  before_script:
+    - command -v git > /dev/null || apk add --no-cache git > /dev/null
+    # Адрес GitLab - как у клона этого проекта (внутри сети runner'а он не совпадает с внешним).
+    - GITLAB=$(git remote get-url origin | sed -E 's#^(https?://)([^@/]*@)?([^/]+)/.*#\1\3#')
+    - git init --quiet /tmp/checks
+    - git -C /tmp/checks fetch --quiet --depth 1 "$GITLAB/$CHECKS_PROJECT.git" "$CHECKS_REF"
+    - git -C /tmp/checks checkout --quiet FETCH_HEAD
+  script:
+    - python3 /tmp/checks/check_automations.py

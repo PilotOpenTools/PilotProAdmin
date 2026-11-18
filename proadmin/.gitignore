@@ -1,0 +1,16 @@
+# Секреты: в git только .env.example
+.env
+*.env
+.env.*
+!.env.example
+
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+
+# Рабочие данные сервисов (настройки, ключи cookie, журналы операций, состояние)
+data/
+migration/data/
+src/ProAdmin/wwwroot/downloads/

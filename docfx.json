@@ -1,0 +1,21 @@
+{
+  "build": {
+    "content": [
+      { "src": "docs", "files": ["*.md", "toc.yml"] }
+    ],
+    "resource": [
+      { "src": "docs", "files": ["images/banner.svg"] },
+      { "src": "proadmin/src/ProAdmin/wwwroot", "files": ["icon.svg"], "dest": "images" }
+    ],
+    "output": "_site",
+    "globalMetadata": {
+      "_appTitle": "PilotProAdmin",
+      "_appName": "PilotProAdmin",
+      "_appLogoPath": "images/icon.svg",
+      "_appFaviconPath": "images/icon.svg",
+      "_enableSearch": true,
+      "_lang": "ru"
+    },
+    "template": ["default", "modern"]
+  }
+}

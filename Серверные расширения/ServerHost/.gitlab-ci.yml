@@ -1,0 +1,25 @@
+# Проверка ServerHost: сборка и тесты в Release на каждой ветке и в каждом MR.
+# Образ закреплён по digest, как в ci-template.
+
+stages:
+  - test
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  NUGET_CLI_TELEMETRY_OPTOUT: "1"
+  SDK_IMAGE: "mcr.microsoft.com/dotnet/sdk:10.0.404@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+test:
+  stage: test
+  image: $SDK_IMAGE
+  variables:
+    DOTNET_ROLL_FORWARD: Major          # в образе SDK 10 нет среды .NET 8, а тесты net8.0 - запускаются на 10, собираются под 8
+  script:
+    - dotnet test ServerHost.sln -c Release

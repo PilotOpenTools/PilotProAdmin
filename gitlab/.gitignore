@@ -1,0 +1,11 @@
+# Секреты: в git только .env.example
+.env
+*.env
+.env.*
+!.env.example
+
+# Конфиг с секретами, данные, логи, токен runner'а - бэкапятся отдельно (stack/backup)
+config/
+data/
+logs/
+runner-config/

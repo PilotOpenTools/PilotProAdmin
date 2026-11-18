@@ -1,0 +1,172 @@
+@page
+@model ProAdmin.Pages.Servers.IndexModel
+@using ProAdmin.Servers
+@{
+    ViewData["Title"] = "Серверы";
+}
+<div class="page-head">
+    <div>
+        <h1>Настройки серверов Pilot</h1>
+        <p class="muted">Параметры <code>settings.xml</code> каждого контура: логирование автоматизаций, отладка, поведение сервера.</p>
+    </div>
+</div>
+<partial name="_ProdAdminBanner" model="Model" />
+
+<div class="alert alert-warn">
+    <b>Изменения вступают в силу только после перезапуска контейнера сервера Pilot</b> контура
+    (<code>docker restart pilot-server-&lt;контур&gt;</code>). Админка сервер не перезапускает: при старте контейнер
+    сам переносит заданные здесь значения в <code>settings.xml</code>. Перезапуск отключает пользователей контура примерно на минуту -
+    на проде делайте его в согласованное окно.
+    @if (Model.Envs.Any(e => e.State.IsCluster))
+    {
+        <br /><b>Контуры-кластеры:</b> @ServerSettingsStore.ClusterRestartHint
+    }
+</div>
+
+@if (!Model.Configured)
+{
+    <section class="card">
+        <h2>Каталоги настроек не подключены</h2>
+        <p>Смонтируйте в контейнер админки каталоги <code>server-settings</code> контуров и укажите корень:</p>
+        <pre class="small">environment:
+  App__ServerSettings__Root: /servers
+volumes:
+  - &lt;корень данных&gt;/test/server-settings:/servers/test
+  - &lt;корень данных&gt;/stage/server-settings:/servers/stage
+  - &lt;корень данных&gt;/prod/server-settings:/servers/prod</pre>
+        <p class="muted small">Корень данных - <code>DATA_ROOT</code> установщика или <code>TEST_ROOT</code> / <code>STAGE_ROOT</code> / <code>PROD_ROOT</code> автономного compose админки (на Windows по умолчанию <code>C:/Ascon-Docker/&lt;контур&gt;</code>).</p>
+        <p class="muted small">Те же каталоги смонтированы в <code>pilot-server-*</code> как <code>/server-settings</code>; их читает <code>wait-for-postgres.sh</code>.</p>
+    </section>
+}
+else
+{
+    @foreach (var env in Model.Envs)
+    {
+        var state = env.State;
+        var cluster = state.IsCluster;
+        var container = ServerSettingsStore.ContainerName(env.Key);
+        <section class="card" id="env-@env.Key">
+            <h2>
+                <span class="env-dot env-@env.Key"></span>@env.Title
+                <span class="muted small">- @if (cluster) { <text>кластер</text> } else { <text>контейнер <code>@container</code></text> }@(env.PilotUrl.Length > 0 ? ", " + env.PilotUrl : "")</span>
+            </h2>
+
+            @if (!state.Available)
+            {
+                <div class="alert alert-error">
+                    Каталог <code>@state.Directory</code> не найден в контейнере админки. Смонтируйте
+                    каталог <code>server-settings</code> контура «@env.Key» (<code>&lt;корень данных&gt;/@env.Key/server-settings</code>) / <code>@state.Directory</code>.
+                </div>
+                continue;
+            }
+
+            @if (state.RestartRequired)
+            {
+                <div class="alert alert-warn">
+                    <b>Ожидает перезапуска.</b> Заданные значения ещё не применены сервером
+                    (@string.Join(", ", state.PendingKeys.Select(k => ServerSettingCatalog.Find(k)?.Title ?? k))).
+                    @if (cluster)
+                    {
+                        @ServerSettingsStore.ClusterRestartHint
+                    }
+                    else
+                    {
+                        <text>Чтобы они вступили в силу, перезапустите контейнер: <code>docker restart @container</code></text>
+                    }
+                    @if (state.Applied is null)
+                    {
+                        <br /><span class="small">Сервер ещё ни разу не стартовал с этим механизмом (нет <code>applied.conf</code>). Если после перезапуска файл не появился - контейнер создан без тома <code>/server-settings</code>, пересоздайте его: <code>docker compose up -d @container</code>.</span>
+                    }
+                </div>
+            }
+
+            <form method="post" class="form">
+                <input type="hidden" name="env" value="@env.Key" />
+                <div class="table-wrap">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Параметр</th>
+                                <th>@(cluster ? "В конфигурации кластера" : "Сейчас на сервере")</th>
+                                <th>Задать</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var def in ServerSettingCatalog.All)
+                            {
+                                var desired = state.Desired.TryGetValue(def.Key, out var d) ? d : (bool?)null;
+                                var applied = state.AppliedValue(def.Key);
+                                var recommended = def.Recommended(env.Key);
+                                var pending = state.PendingKeys.Contains(def.Key);
+                                <tr>
+                                    <td>
+                                        <b>@def.Title</b> <code class="small">@def.Key</code>
+                                        <div class="muted small">@def.Description</div>
+                                        <div class="muted small">
+                                            @(def.Scope == ServerSettingScope.Contour
+                                                ? "Свой у каждого контура - миграция не копирует."
+                                                : "Поведение сервера - миграция копирует при отмеченном «Настройки сервера».")
+                                            @if (recommended is { } r)
+                                            {
+                                                <span>Рекомендуется для этого контура: <b>@(r ? "включено" : "выключено")</b>.</span>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td>
+                                        @if (applied is { } a)
+                                        {
+                                            <span class="chip @(pending ? "chip-warn" : "")">@(a ? "включено" : "выключено")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted small">неизвестно</span>
+                                        }
+                                        @if (pending)
+                                        {
+                                            <div class="small" style="color: var(--warn)">после перезапуска@(cluster ? " узла" : ""): @(desired == true ? "включено" : "выключено")</div>
+                                        }
+                                    </td>
+                                    <td>
+                                        <select name="values[@def.Key]" aria-label="@def.Title">
+                                            <option value="@ProAdmin.Pages.Servers.IndexModel.Keep" selected="@(desired is null)">не управлять</option>
+                                            <option value="true" selected="@(desired == true)">включить</option>
+                                            <option value="false" selected="@(desired == false)">выключить</option>
+                                        </select>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">Сохранить @env.Title.ToLowerInvariant()</button>
+                    <span class="muted small">
+                        @if (state.UpdatedAt is { } at)
+                        {
+                            <span>Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm")@(state.UpdatedBy is { Length: > 0 } by ? ", " + by : "").</span>
+                        }
+                        @if (state.AppliedAt is { } appliedAt)
+                        {
+                            <span>@(cluster ? "Узел кластера записал настройки при старте" : "Сервер применил настройки при старте") @appliedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm").@(cluster ? " Остальные узлы получат значения только после своего перезапуска." : "")</span>
+                        }
+                    </span>
+                </div>
+            </form>
+            @if (Model.SavedEnv == env.Key && cluster)
+            {
+                <p class="small"><b>Следующий шаг:</b> @ServerSettingsStore.ClusterRestartHint</p>
+            }
+            else if (Model.SavedEnv == env.Key && state.RestartRequired)
+            {
+                <p class="small"><b>Следующий шаг:</b> <code>docker restart @container</code></p>
+            }
+        </section>
+    }
+
+    <p class="muted small">
+        «Не управлять» - админка параметр не трогает, остаётся значение из <code>settings.xml</code> сервера.
+        Значения хранятся в <code>&lt;корень данных&gt;/&lt;контур&gt;/server-settings/server-settings.conf</code>;
+        <code>applied.conf</code> рядом пишет сервер при старте - по нему видно, что применено.
+        В кластере вместо <code>settings.xml</code> параметры хранятся в конфигурации кластера (база <code>configurationdb</code>), их записывает узел при старте.
+    </p>
+}

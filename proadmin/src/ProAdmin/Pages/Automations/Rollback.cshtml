@@ -1,0 +1,165 @@
+@page "/Automations/Rollback"
+@model ProAdmin.Pages.Automations.RollbackModel
+@using System.Text.Json
+@{
+    ViewData["Title"] = "Откат прода";
+    var dst = Model.Target;
+    var data = JsonSerializer.Serialize(new
+    {
+        current = Model.MainJson is null ? null : new { triggers = Model.MainJson.Text, csharp = Model.MainCs?.Text ?? "" },
+        rollback = Model.TagContent is null ? null : new { triggers = Model.RollbackTriggers, csharp = Model.TagContent.CSharpCode },
+    });
+    var q = Uri.EscapeDataString(Model.Name);
+}
+<div class="crumbs">
+    <a href="/Automations/@(dst?.Key)">@(dst?.Title ?? "Автоматизации")</a> <span>/</span>
+    <a href="/Automations/@(dst?.Key)/Edit?name=@q">@Model.Name</a> <span>/</span> <span>Откат</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Откатить прод <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">
+            Содержимое выбранного релиза вернётся в <code>@dst?.Branch</code> и на сервер @dst?.Title <b>новой версией</b>
+            (обычным путём: MR / pipeline / сервер / merge / тег). Версии только растут, в истории будет видно «откат на vX.Y.Z».
+        </p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+<div class="meta-row" style="margin-bottom:16px">
+    <span class="meta">Сейчас в <code>main</code>: <b class="mono">@(Model.MainVersion?.ToString() ?? "-")</b></span>
+    <span class="meta">На сервере @dst?.Title: <b class="mono">@(Model.ProdServer?.Version?.ToString() ?? "-")</b></span>
+    <span class="meta">В <code>dev</code>: <b class="mono">@(Model.DevVersion?.ToString() ?? "-")</b></span>
+    @if (Model.Repo is not null)
+    {
+        <a class="meta" href="@Model.Repo.WebUrl/-/releases" target="_blank" rel="noopener">Релизы в GitLab</a>
+    }
+</div>
+
+@if (Model.Releases.Count > 0)
+{
+    <div class="grid-2">
+        <section class="card">
+            <h2>Релизы (что было на проде)</h2>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead><tr><th>Версия</th><th>Дата</th><th>Описание</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var (tag, version) in Model.Releases)
+                    {
+                        var isCurrent = Model.MainVersion is { } mv && mv == version;
+                        var isSelected = tag.Name == Model.Tag;
+                        <tr class="@(isSelected ? "row-selected" : "")">
+                            <td class="mono nowrap">@tag.Name</td>
+                            <td class="nowrap muted">@(tag.Commit?.CommittedDate?.ToLocalTime().ToString("dd.MM.yyyy HH:mm") ?? "")</td>
+                            <td class="small">@(tag.Release?.Name ?? tag.Message ?? tag.Commit?.Title)</td>
+                            <td class="nowrap">
+                                @if (isCurrent)
+                                {
+                                    <span class="badge badge-synced">текущая</span>
+                                }
+                                else if (isSelected)
+                                {
+                                    <span class="badge badge-onlypilot">выбрана</span>
+                                }
+                                else
+                                {
+                                    <a href="/Automations/Rollback?name=@q&tag=@Uri.EscapeDataString(tag.Name)">выбрать</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card">
+            @if (Model.TagContent is not null && Model.NewVersion is not null && dst is not null)
+            {
+                <h2>Откат на <span class="mono">@Model.Tag</span> / новая версия <span class="mono">v@(Model.NewVersion)</span></h2>
+                @if (Model.Lint.Count > 0)
+                {
+                    <ul class="checklist">
+                        @foreach (var i in Model.Lint.Where(i => i.Level != "info"))
+                        {
+                            <li class="lvl-@i.Level">Строка @i.Line: @i.Message</li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p class="lint-ok">Сценарий релиза проверен по базе сервера @dst.Title - замечаний нет.</p>
+                }
+
+                <form method="post" class="form" style="margin-top:12px" data-confirm="Откатить прод на @Model.Tag (новая версия v@(Model.NewVersion))?">
+                    <input type="hidden" asp-for="Name" />
+                    <input type="hidden" asp-for="Tag" />
+                    <input type="hidden" asp-for="BasePilotHash" />
+                    <input type="hidden" asp-for="BaseMainJsonBlob" />
+                    <input type="hidden" asp-for="BaseMainCsBlob" />
+                    @if (dst.RequireTaskReference)
+                    {
+                        <label class="field">
+                            <span>Задача</span>
+                            <input asp-for="TaskReference" placeholder="TASK-123" autocomplete="off" required />
+                        </label>
+                    }
+                    <label class="field">
+                        <span>Причина отката</span>
+                        <textarea asp-for="Description" rows="3" placeholder="Что сломалось в текущей версии" required></textarea>
+                    </label>
+                    <button class="btn btn-danger" type="submit" disabled="@(!Model.CanRollback)">Откатить прод на @Model.Tag</button>
+                    <p class="muted small">
+                        После отката <code>main</code> (v@(Model.NewVersion)) будет выше <code>dev</code>@(Model.DevVersion is { } d ? $" (v{d})" : "").
+                        Верните тест к этой версии: в редакторе теста «Из ветки main (Прод)» / +patch / «Отправить», затем исправляйте ошибку.
+                    </p>
+                </form>
+            }
+        </section>
+    </div>
+
+    @if (Model.TagContent is not null)
+    {
+        <section class="card">
+            <h2>Что изменится в <code>main</code></h2>
+            <div id="rollback-diff" class="diff"></div>
+        </section>
+        <script type="application/json" id="rollback-data">@Html.Raw(data)</script>
+    }
+}
+
+@section Scripts {
+    <script src="~/js/diff.js" asp-append-version="true"></script>
+    <script>
+        (function () {
+            const el = document.getElementById('rollback-data');
+            if (!el) return;
+            const d = JSON.parse(el.textContent);
+            const out = document.getElementById('rollback-diff');
+            const norm = s => (s || '').replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+            let any = false;
+            [['JSON', 'triggers'], ['C#', 'csharp']].forEach(([title, key]) => {
+                const a = d.current ? d.current[key] : '';
+                const b = d.rollback ? d.rollback[key] : '';
+                if (norm(a) === norm(b)) return;
+                any = true;
+                const h = document.createElement('div');
+                h.className = 'diff-title';
+                h.textContent = title;
+                out.append(h, window.lineDiff(a, b));
+            });
+            if (!any) {
+                const p = document.createElement('p');
+                p.className = 'muted';
+                p.textContent = 'Отличий нет.';
+                out.appendChild(p);
+            }
+        })();
+    </script>
+}

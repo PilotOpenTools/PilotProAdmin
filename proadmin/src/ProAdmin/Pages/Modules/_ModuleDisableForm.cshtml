@@ -1,0 +1,19 @@
+@model ProAdmin.Pages.Modules.ModuleDisableForm
+@if (Model.Protected is not null)
+{
+    <div class="muted small" title="@Model.Protected">не отключается</div>
+}
+else
+{
+    <details class="small">
+        <summary>Отключить</summary>
+        <form method="post" asp-page-handler="DisableModule" asp-route-name="@Model.Page" class="form"
+              data-confirm="Отключить модуль на сервере @Model.EnvTitle? У пользователей он пропадёт сразу.">
+            <input type="hidden" name="AvailabilityEnv" value="@Model.Env" />
+            <input type="hidden" name="ModuleId" value="@Model.Id" />
+            <input name="AvailabilityReason" placeholder="Причина" required />
+            <p class="muted small">Объект уйдёт в корзину Pilot, права и версии сохранятся. Меню и команды пропадут сразу, полностью модуль выгрузится при перезапуске клиента. Выкладка на этот контур будет запрещена, пока модуль не включён.</p>
+            <button class="btn btn-danger btn-sm" type="submit">Отключить на сервере @Model.EnvTitle</button>
+        </form>
+    </details>
+}

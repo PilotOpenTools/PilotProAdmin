@@ -1,0 +1,218 @@
+@page
+@model ProAdmin.Pages.Types.CompareModel
+@using ProAdmin.Compare
+@using ProAdmin.Types
+@{
+    ViewData["Title"] = "Типы";
+    var a = Model.EnvA;
+    var b = Model.EnvB;
+    string StateLabel(CompareState s) => s switch
+    {
+        CompareState.Same => "одинаково",
+        CompareState.Differs => "различается",
+        CompareState.OnlyA => $"только на {a?.Title}",
+        _ => $"только на {b?.Title}",
+    };
+    string StateClass(CompareState s) => s switch
+    {
+        CompareState.Same => "badge-synced",
+        CompareState.Differs => "badge-differs",
+        CompareState.OnlyA => "badge-onlypilot",
+        _ => "badge-onlygit",
+    };
+    var childTitle = Model.Kind == "machines" ? "Переходы" : "Атрибуты";
+    var childKey = Model.Kind == "machines" ? "Переход" : "Атрибут";
+    var childLabel = Model.Kind == "machines" ? "Кнопка" : "Заголовок";
+}
+
+<div class="page-head">
+    <div>
+        <div class="crumbs"><a href="/Types">Типы</a> /</div>
+        <h1>Сравнение типов на серверах</h1>
+        <p class="muted">Конфигурация баз: чем типы, их атрибуты, состояния и группы состояний на @(a?.Title ?? "тесте") отличаются от @(b?.Title ?? "прода"). Сопоставление - по имени.</p>
+    </div>
+    @if (a is not null && b is not null)
+    {
+        <div class="head-actions">
+            <a class="btn btn-sm" href="@Model.Link(a: b.Key, b: a.Key)" title="Поменять стороны местами">Поменять местами</a>
+        </div>
+    }
+</div>
+
+<div class="toolbar">
+    <nav class="seg" aria-label="Что сравнивать">
+        @foreach (var (kind, title, rows) in new[] { ("types", "Типы", Model.Result?.Types), ("states", "Состояния", Model.Result?.States), ("machines", "Группы состояний", Model.Result?.StateMachines) })
+        {
+            var n = rows is null ? 0 : Model.CountDiffs(rows);
+            <a class="seg-btn @(Model.Kind == kind ? "active" : "")" href="@Model.Link(kind)">@title@(n > 0 ? $" · {n}" : "")</a>
+        }
+    </nav>
+    <form method="get" class="compare-pair">
+        <input type="hidden" name="kind" value="@Model.Kind" />
+        <select name="a" aria-label="Контур A" data-autosubmit>
+            @foreach (var e in Model.Servers)
+            {
+                <option value="@e.Key" selected="@(e.Key == a?.Key)">@e.Title</option>
+            }
+        </select>
+        <span class="muted">/</span>
+        <select name="b" aria-label="Контур B" data-autosubmit>
+            @foreach (var e in Model.Servers)
+            {
+                <option value="@e.Key" selected="@(e.Key == b?.Key)">@e.Title</option>
+            }
+        </select>
+    </form>
+    @if (Model.Result is not null && Model.Result.ErrorA is null && Model.Result.ErrorB is null)
+    {
+        var rows = Model.Rows;
+        <div class="legend">
+            <span class="badge badge-differs">различается: @rows.Count(x => x.State == CompareState.Differs)</span>
+            <span class="badge badge-onlypilot">только на @a!.Title: @rows.Count(x => x.State == CompareState.OnlyA)</span>
+            <span class="badge badge-onlygit">только на @b!.Title: @rows.Count(x => x.State == CompareState.OnlyB)</span>
+            <span class="badge badge-synced">одинаково: @rows.Count(x => x.State == CompareState.Same)</span>
+        </div>
+    }
+</div>
+
+@if (Model.Problem is not null)
+{
+    <div class="alert alert-warn">@Model.Problem</div>
+}
+else if (Model.Result is { } result)
+{
+    @if (result.ErrorA is not null)
+    {
+        <div class="alert alert-error">@a!.Title: @result.ErrorA</div>
+    }
+    @if (result.ErrorB is not null)
+    {
+        <div class="alert alert-error">@b!.Title: @result.ErrorB</div>
+    }
+
+    @if (result.ErrorA is null && result.ErrorB is null)
+    {
+        var rows = Model.Rows;
+        <div class="toolbar">
+            <input type="search" id="filter" placeholder="Поиск по имени или заголовку…" aria-label="Поиск" />
+            <label class="check"><input type="checkbox" id="only-diff" checked /> <span>Только различия</span></label>
+            <button type="button" class="btn btn-sm btn-ghost" id="expand-all">Раскрыть все</button>
+        </div>
+
+        @if (rows.All(x => x.State == CompareState.Same))
+        {
+            <div class="alert alert-ok">На @a!.Title и @b!.Title всё совпадает (@rows.Count).</div>
+        }
+
+        <div class="table-wrap">
+            <table class="table meta-table" id="meta">
+                <thead>
+                <tr>
+                    <th class="meta-toggle-col"></th>
+                    <th>Имя</th>
+                    <th>Заголовок</th>
+                    <th>Состояние</th>
+                    <th>Что отличается</th>
+                </tr>
+                </thead>
+                @foreach (var row in rows)
+                {
+                    var hasDetails = row.Differences.Count > 0 || row.Children.Count > 0 || row.UsedBy.Count > 0;
+                    <tbody class="meta-item" data-name="@((row.Key + " " + row.TitleA + " " + row.TitleB).ToLowerInvariant())" data-same="@(row.State == CompareState.Same ? "1" : "0")">
+                    <tr class="meta-head @(hasDetails ? "clickable" : "")">
+                        <td class="meta-toggle-col">@(hasDetails ? "▸" : "")</td>
+                        <td class="mono strong">@row.Key</td>
+                        <td>@row.Title @if (row.TitleA is not null && row.TitleB is not null && row.TitleA != row.TitleB) { <span class="muted small">/ @row.TitleB</span> }</td>
+                        <td class="nowrap"><span class="badge @StateClass(row.State)">@StateLabel(row.State)</span></td>
+                        <td class="small">@string.Join(", ", row.Summary()).Replace("только на A", $"только на {a!.Title}").Replace("только на B", $"только на {b!.Title}")</td>
+                    </tr>
+                    @if (hasDetails)
+                    {
+                        <tr class="meta-detail" hidden>
+                            <td></td>
+                            <td colspan="4">
+                                @if (row.Differences.Count > 0)
+                                {
+                                    <partial name="_PropDiffs" model="(row.Differences, a!.Title, b!.Title)" />
+                                }
+                                @if (row.UsedBy.Count > 0)
+                                {
+                                    <p class="small"><span class="muted">Используют типы:</span> <span class="mono">@string.Join(", ", row.UsedBy)</span></p>
+                                }
+                                @if (row.Children.Count > 0)
+                                {
+                                    <div class="meta-sub-title">@childTitle
+                                        <span class="muted small">(@row.Children.Count; различий: @row.Children.Count(c => c.State != CompareState.Same))</span>
+                                    </div>
+                                    <table class="table meta-sub">
+                                        <thead>
+                                        <tr><th>@childKey</th><th>@childLabel</th><th>Состояние</th><th>Отличия</th></tr>
+                                        </thead>
+                                        <tbody>
+                                        @foreach (var c in row.Children)
+                                        {
+                                            <tr class="meta-child" data-same="@(c.State == CompareState.Same ? "1" : "0")">
+                                                <td class="mono">@c.Key</td>
+                                                <td>@c.Title @if (c.TitleA is not null && c.TitleB is not null && c.TitleA != c.TitleB) { <span class="muted small">/ @c.TitleB</span> }</td>
+                                                <td class="nowrap"><span class="badge @StateClass(c.State)">@StateLabel(c.State)</span></td>
+                                                <td>
+                                                    @if (c.Differences.Count > 0)
+                                                    {
+                                                        <partial name="_PropDiffs" model="(c.Differences, a!.Title, b!.Title)" />
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                        </tbody>
+                                    </table>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            const input = document.getElementById('filter');
+            const onlyDiff = document.getElementById('only-diff');
+            const expandAll = document.getElementById('expand-all');
+            if (!input) return;
+
+            function toggle(item, open) {
+                const detail = item.querySelector('tr.meta-detail');
+                if (!detail) return;
+                detail.hidden = open === undefined ? !detail.hidden : !open;
+                item.querySelector('.meta-toggle-col').textContent = detail.hidden ? '▸' : '▾';
+            }
+
+            document.querySelectorAll('#meta tbody.meta-item tr.meta-head.clickable').forEach(tr =>
+                tr.addEventListener('click', () => toggle(tr.closest('tbody'))));
+
+            let expanded = false;
+            expandAll.addEventListener('click', () => {
+                expanded = !expanded;
+                document.querySelectorAll('#meta tbody.meta-item:not([hidden])').forEach(item => toggle(item, expanded));
+                expandAll.textContent = expanded ? 'Свернуть все' : 'Раскрыть все';
+            });
+
+            function apply() {
+                const q = input.value.trim().toLowerCase();
+                document.querySelectorAll('#meta tbody.meta-item').forEach(item => {
+                    item.hidden = (q.length > 0 && !item.dataset.name.includes(q)) || (onlyDiff.checked && item.dataset.same === '1');
+                });
+                document.querySelectorAll('#meta tr.meta-child').forEach(tr => {
+                    tr.hidden = onlyDiff.checked && tr.dataset.same === '1';
+                });
+            }
+            input.addEventListener('input', apply);
+            onlyDiff.addEventListener('change', apply);
+            apply();
+        })();
+    </script>
+}

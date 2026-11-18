@@ -1,0 +1,26 @@
+@model AutomationPresence
+<ul class="checklist">
+    @if (Model.Repo is not null)
+    {
+        <li class="lvl-ok">Репозиторий <a href="@Model.Repo.WebUrl" target="_blank" rel="noopener">@Model.Repo.ProjectPath</a></li>
+    }
+    else
+    {
+        <li class="lvl-info">Репозитория в GitLab нет</li>
+    }
+    @foreach (var s in Model.Servers)
+    {
+        if (s.Error is not null)
+        {
+            <li class="lvl-error">Сервер @s.Env.Title: @s.Error</li>
+        }
+        else if (s.Automation is not null)
+        {
+            <li class="lvl-ok">Сервер @s.Env.Title: есть@(s.Automation.Version is { } v ? $", версия {v}" : "")@(s.Automation.IsPaused ? ", на паузе" : "")</li>
+        }
+        else
+        {
+            <li class="lvl-info">Сервер @s.Env.Title: нет</li>
+        }
+    }
+</ul>

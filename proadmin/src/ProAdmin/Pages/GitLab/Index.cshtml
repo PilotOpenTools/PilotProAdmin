@@ -1,0 +1,75 @@
+@page "/GitLab"
+@model ProAdmin.Pages.GitLab.IndexModel
+@{
+    ViewData["Title"] = "GitLab";
+    var connected = Model.GitLabConnected;
+}
+<div class="page-head">
+    <div>
+        <h1>Подключение GitLab</h1>
+        <p class="muted">Коммиты, Merge Request и влития выполняются от вашего имени. Сервер:
+            <b>@(Model.Location?.BaseUrl ?? "не задан")</b> · <a href="/Settings">изменить в настройках</a></p>
+    </div>
+</div>
+
+@if (Model.Error is not null)
+{
+    <div class="alert alert-error">@Model.Error</div>
+}
+
+@if (connected && Model.CurrentSession.GitLabUser is { } user)
+{
+    <section class="card">
+        <div class="row gap">
+            @if (!string.IsNullOrEmpty(user.AvatarUrl))
+            {
+                <img class="avatar" src="@user.AvatarUrl" alt="" width="48" height="48" />
+            }
+            <div class="grow">
+                <div class="h3">@user.Name</div>
+                <div class="muted">@@@user.Username · @(Model.CurrentSession.GitLabToken!.IsOAuth ? "вход через OAuth" : "Personal Access Token")</div>
+            </div>
+            <form method="post" asp-page-handler="Disconnect">
+                <button class="btn btn-ghost" type="submit">Отключить</button>
+            </form>
+            <a class="btn btn-primary" href="@(string.IsNullOrEmpty(Model.ReturnUrl) ? "/" : Model.ReturnUrl)">Продолжить</a>
+        </div>
+    </section>
+}
+else if (Model.Location is not null)
+{
+    <div class="grid-2">
+        <section class="card">
+            <h2>Войти через GitLab</h2>
+            @if (Model.OAuthEnabled)
+            {
+                <p class="muted">Откроется страница GitLab, где нужно разрешить доступ приложению.</p>
+                <form method="post" asp-page-handler="OAuth">
+                    <input type="hidden" asp-for="ReturnUrl" />
+                    <button class="btn btn-primary" type="submit">Войти в @Model.Location.BaseUrl</button>
+                </form>
+            }
+            else
+            {
+                <p class="muted">OAuth не настроен. Чтобы включить вход через GitLab:</p>
+                <ol class="steps">
+                    <li>В GitLab: <b>Admin Area / Applications / New application</b> (или User Settings / Applications).</li>
+                    <li>Callback URL: <code>@Model.RedirectUri</code>, флажок <i>Confidential</i>, scope <code>api</code>.</li>
+                    <li>Передайте Application ID и Secret контейнеру: <code>GITLAB_OAUTH_CLIENT_ID</code>, <code>GITLAB_OAUTH_CLIENT_SECRET</code> в <code>.env</code>, перезапустите.</li>
+                </ol>
+            }
+        </section>
+        <section class="card">
+            <h2>Personal Access Token</h2>
+            <p class="muted">GitLab / User Settings / Access Tokens, scope <code>api</code>. Токен хранится только в памяти сервиса до выхода.</p>
+            <form method="post" asp-page-handler="Token" class="form">
+                <input type="hidden" asp-for="ReturnUrl" />
+                <label class="field">
+                    <span>Токен</span>
+                    <input asp-for="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" />
+                </label>
+                <button class="btn" type="submit">Подключить</button>
+            </form>
+        </section>
+    </div>
+}

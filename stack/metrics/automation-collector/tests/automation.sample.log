@@ -1,0 +1,89 @@
+2026-09-26 09:36:07,386 [10] INFO  [AutomationLog] Activity InheritAccessRights from Remarks Photo360 access management (Server and Client) has not been found.
+External Activities: AutomationActivityAdapter, AutomationActivity, AddVirtualSignatureRequests, ClearAccessRecords, ClearAttributeValue, CopyAccessRights, CopySignatureRequestsFromPreviousVersion, DeleteVirtualSignatureRequests, ExtensionActivityAdapter, ManageTaskAndWorkflowState, ReplaceVirtualSignatureRequest, SetAccessLevel, SetDateTimeAttributeValue, SetOrgUnitAttributeValue, SetOrgUnitAttributeValueBasedOnState, SetSignatureRequestRelatedObjectStateAttribute, SetStateAttributeValue, SetStateAttributeValueIfDepartment, SetStateAttributeValueIfNotSigned, SetStateAttributeValueIfSigned, SetStateAttributeValueSignCondition, SetSystemStateValue, WorkflowProcessingActivity, RecalculateWorkflowStates, SendEmail, SendNotifications, SendMessageBase
+Sdk Activities: DocumentVersionsStateManager
+
+2026-09-26 09:36:15,779 [21] INFO  [AutomationLog] Started activity - 'SetOrgUnitAttributeValueBasedOnState'(sourceTypes='<Empty>', attributeName='state', stateToOrgUnitConfig='System.Collections.Generic.Dictionary`2[System.String,System.Object]', target='Self', targetAttributeName='actualFor')
+2026-09-26 09:36:15,785 [21] INFO  [AutomationLog] ENDED 'AttributeChanged' TRIGGER FROM 'actualFor attribute management (Server and Client)' SCRIPT
+2026-09-26 09:36:15,786 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'ManageTaskAndWorkflowState (Server and Client)' SCRIPT
+2026-09-26 09:36:15,786 [21] INFO  [AutomationLog] Started activity - 'ManageTaskAndWorkflowState'(sourceTypes='<Empty>', completionStateConfig='System.Collections.Generic.Dictionary`2[System.String,System.Object]')
+2026-09-26 09:36:15,790 [21] INFO  [AutomationLog] ENDED 'AttributeChanged' TRIGGER FROM 'ManageTaskAndWorkflowState (Server and Client)' SCRIPT
+2026-09-26 09:36:15,790 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,791 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='auditors', but was='state'
+2026-09-26 09:36:15,791 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,791 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='deadlineDate', but was='state'
+2026-09-26 09:36:15,792 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,792 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='title,description', but was='state'
+2026-09-26 09:36:15,792 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks access management (Server and Client)' SCRIPT
+2026-09-26 09:36:15,792 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,792 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,793 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_remark'
+2026-09-26 09:36:15,793 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,793 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,793 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,793 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_remark'
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks Photo360 notifications' SCRIPT
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='photo360_remark,doc_photo360,photo360_issue'
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks Photo360 notifications' SCRIPT
+2026-09-26 09:36:15,794 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_remark,photo360_remark,doc_photo360'
+2026-09-26 09:36:15,795 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'actualFor attribute management (Server and Client)' SCRIPT
+2026-09-26 09:36:15,795 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='state,initiator,executor,responsible', but was='actualFor'
+2026-09-26 09:36:15,795 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'ManageTaskAndWorkflowState (Server and Client)' SCRIPT
+2026-09-26 09:36:15,795 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='state', but was='actualFor'
+2026-09-26 09:36:15,795 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='auditors', but was='actualFor'
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='deadlineDate', but was='actualFor'
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Task notifications (Server)' SCRIPT
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] Failed to evaluate 'attributeNames' parameter, expected='title,description', but was='actualFor'
+2026-09-26 09:36:15,796 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks access management (Server and Client)' SCRIPT
+2026-09-26 09:36:15,797 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,797 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,797 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_remark'
+2026-09-26 09:36:15,797 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,797 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_remark'
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks notifications (Server)' SCRIPT
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='doc_issue'
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] STARTED 'AttributeChanged' TRIGGER FROM 'Remarks Photo360 notifications' SCRIPT
+2026-09-26 09:36:15,798 [21] INFO  [AutomationLog] Failed to evaluate 'sourceTypes' parameter, expected='task_simple', but was='photo360_remark,doc_photo360,photo360_issue'
+2026-09-26 10:05:28,878 [14] ERROR [AutomationLog] '{
+  "when": "OrgUnitAttributeChanged",
+  "params": {
+    "triggerType": "Client",
+    "sourceTypes": [],
+    "oldOrgUnitKind": "Position",
+    "newOrgUnitKind": "Position",
+    "attributeNames": [
+      "executor"
+    ],
+    "itemChangeKind": "Create,Modify"
+  },
+  "then": [
+    {
+      "activity": "SetStateAttributeValue",
+      "params": {
+        "sourceTypes": [],
+        "attributeName": "UserState",
+        "target": "self",
+        "targetTypes": [],
+        "initialStateNames": [
+          "inProgress",
+          "approved",
+          "onValidation",
+          "notApproved",
+          "unableToComplete",
+          "hasRemarks"
+        ],
+        "toStateName": "assigned",
+        "relationType": ""
+      }
+    }
+  ]
+}'
+ cannot be parsed because of error
+ 'Cannot deserialize the current JSON object (e.g. {"name":"value"}) into type 'Ascon.Pilot.AutomationScripts.AutomationDefinition[]' because the type requires a JSON array (e.g. [1,2,3]) to deserialize correctly.
+To fix this error either change the JSON to a JSON array (e.g. [1,2,3]) or change the deserialized type so that it is a normal .NET type (e.g. not a primitive type like integer, not a collection type like an array or List<T>) that can be deserialized from a JSON object. JsonObjectAttribute can also be added to the type to force it to deserialize from a JSON object.
+Path 'when', line 2, position 9.'

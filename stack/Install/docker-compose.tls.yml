@@ -1,0 +1,28 @@
+# Надстройка HTTPS для админки и Grafana: те же порты, но по TLS. Подключается установщиком (COMPOSE_FILE в .env) только тогда,
+# когда есть сертификат и ключ (TLS_CERT_FILE, TLS_KEY_FILE; по умолчанию certs/tls.crt и certs/tls.key). Без них не используется.
+# TLS_ADMIN_* и TLS_GRAFANA_* установщик записывает в .env сам: на Linux это копии с правами своего пользователя контейнера.
+services:
+  proadmin:
+    environment:
+      # Кроме HTTPS на 8080 - HTTP на loopback внутри контейнера, только для проверки состояния: в образе нет curl, а проверка по TLS без него невозможна.
+      ASPNETCORE_URLS: "https://+:8080;http://127.0.0.1:8081"
+      Kestrel__Certificates__Default__Path: /certs/tls.crt
+      Kestrel__Certificates__Default__KeyPath: /certs/tls.key
+    volumes:
+      - ${TLS_ADMIN_CRT:?Задайте TLS_ADMIN_CRT. Его пишет установщик}:/certs/tls.crt:ro
+      - ${TLS_ADMIN_KEY:?Задайте TLS_ADMIN_KEY. Его пишет установщик}:/certs/tls.key:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  grafana:
+    environment:
+      GF_SERVER_PROTOCOL: https
+      GF_SERVER_CERT_FILE: /certs/tls.crt
+      GF_SERVER_CERT_KEY: /certs/tls.key
+    volumes:
+      - ${TLS_GRAFANA_CRT:?Задайте TLS_GRAFANA_CRT. Его пишет установщик}:/certs/tls.crt:ro
+      - ${TLS_GRAFANA_KEY:?Задайте TLS_GRAFANA_KEY. Его пишет установщик}:/certs/tls.key:ro

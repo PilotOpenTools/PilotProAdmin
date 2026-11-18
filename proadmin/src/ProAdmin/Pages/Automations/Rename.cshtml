@@ -1,0 +1,48 @@
+@page "/Automations/Rename"
+@model ProAdmin.Pages.Automations.RenameModel
+@{
+    ViewData["Title"] = "Переименовать";
+}
+<div class="crumbs">
+    <a href="/Automations">Автоматизации</a> <span>/</span> <span>@Model.Name</span> <span>/</span> <span>Переименование</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Переименовать <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">Имя меняется сразу везде: репозиторий GitLab, файлы в ветках <code>dev</code> и <code>main</code> и автоматизация на всех серверах Pilot. Содержимое не меняется, поэтому MR и pipeline не нужны.</p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@if (Model.NameProblem is not null)
+{
+    <div class="alert alert-warn">Текущее имя не подходит для репозитория GitLab: @Model.NameProblem</div>
+}
+
+@if (Model.Presence is not null)
+{
+    <div class="grid-2">
+        <section class="card">
+            <h2>Где сейчас есть</h2>
+            <partial name="_Presence" model="Model.Presence" />
+        </section>
+        <section class="card">
+            <form method="post" class="form" data-confirm="Переименовать автоматизацию во всех местах?">
+                <input type="hidden" asp-for="Name" />
+                <label class="field">
+                    <span>Новое имя</span>
+                    <input asp-for="NewName" autocomplete="off" required autofocus />
+                    <small class="muted">Буквы (можно русские), цифры, пробел, «_», «-», «.», «+». Меняется имя проекта в GitLab, путь репозитория остаётся прежним. Pilot-клиенты увидят новое имя сразу после сохранения.</small>
+                </label>
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">Переименовать</button>
+                    <a class="btn btn-ghost" href="/Automations">Отмена</a>
+                </div>
+            </form>
+        </section>
+    </div>
+}

@@ -1,0 +1,18 @@
+@model ProAdmin.Pages.Modules.ModuleDisabledActions
+<form method="post" asp-page-handler="EnableModule" asp-route-name="@Model.Page" class="inline">
+    <input type="hidden" name="AvailabilityEnv" value="@Model.Env" />
+    <input type="hidden" name="ModuleId" value="@Model.Id" />
+    <button class="btn btn-sm" type="submit">Включить</button>
+</form>
+<details class="small">
+    <summary>Удалить навсегда</summary>
+    <form method="post" asp-page-handler="DeleteModule" asp-route-name="@Model.Page" class="form"
+          data-confirm="Удалить модуль с сервера @Model.EnvTitle вместе с историей версий? Это необратимо.">
+        <input type="hidden" name="AvailabilityEnv" value="@Model.Env" />
+        <input type="hidden" name="ModuleId" value="@Model.Id" />
+        <p class="muted small">Объект и все версии будут удалены, назначения пользователям пропадут. Репозиторий в GitLab останется. Для подтверждения введите: <b>@Model.Name</b></p>
+        <input name="AvailabilityConfirm" placeholder="Имя модуля" autocomplete="off" required />
+        <input name="AvailabilityReason" placeholder="Причина" required />
+        <button class="btn btn-danger btn-sm" type="submit">Удалить с сервера @Model.EnvTitle</button>
+    </form>
+</details>

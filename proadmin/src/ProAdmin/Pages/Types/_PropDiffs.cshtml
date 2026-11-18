@@ -1,0 +1,23 @@
+@using ProAdmin.Types
+@model (List<PropertyDiff> Diffs, string LabelA, string LabelB)
+<table class="prop-diff">
+    <thead>
+    <tr><th>Свойство</th><th>@Model.LabelA</th><th>@Model.LabelB</th></tr>
+    </thead>
+    <tbody>
+    @foreach (var d in Model.Diffs)
+    {
+        <tr>
+            <td class="muted">@d.Property</td>
+            <td class="prop-a">@(d.ValueA is { Length: > 0 } va ? va : "-")</td>
+            <td class="prop-b">@(d.ValueB is { Length: > 0 } vb ? vb : "-")</td>
+        </tr>
+        @if (d.Lines is { } lines)
+        {
+            <tr>
+                <td colspan="3"><partial name="/Pages/Compare/_Diff.cshtml" model="(d.Property, lines, Model.LabelA, Model.LabelB)" /></td>
+            </tr>
+        }
+    }
+    </tbody>
+</table>

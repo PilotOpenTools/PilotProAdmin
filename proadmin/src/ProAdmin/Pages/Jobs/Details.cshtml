@@ -1,0 +1,131 @@
+@page "/Jobs/{id:guid}"
+@model ProAdmin.Pages.Jobs.DetailsModel
+@{
+    var job = Model.Job;
+    ViewData["Title"] = job.AutomationName;
+    var name = Uri.EscapeDataString(job.AutomationName);
+    // Куда вернуться после операции: к тому же модулю / отчёту / автоматизации.
+    var back = job.Env switch
+    {
+        var e when e.StartsWith("server-module:") => (Url: $"/Modules/Module?name={name}&kind=server", Title: "К модулю"),
+        var e when e.StartsWith("module:") => (Url: $"/Modules/Module?name={name}", Title: "К модулю"),
+        var e when e.StartsWith("types:") => (Url: "/Types", Title: "К типам"),
+        "reports" => (Url: "/Reports", Title: "К отчётам"),
+        var e when e.StartsWith("report:") => (Url: $"/Reports/Item?name={name}", Title: "К отчёту"),
+        "all" => (Url: "/Automations", Title: "К списку"),
+        _ => (Url: $"/Automations/Item?name={name}", Title: "К автоматизации"),
+    };
+}
+<div class="crumbs">
+    <a href="/Jobs">Операции</a> <span>/</span> <span>@job.AutomationName</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1 class="mono-title">@job.AutomationName <span class="muted">@(job.Operation is not null ? $"- {job.Operation}" : job.IsDelete ? "- удаление из ветки" : "")</span></h1>
+        <div class="meta-row">
+            <span class="meta"><span class="env-dot env-@job.Env"></span>@job.EnvTitle · ветка <code>@job.Branch</code></span>
+            <span class="meta">@(job.GitLabUser ?? job.PilotUser), @job.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")</span>
+            <span id="job-status"><partial name="_JobStatus" model="job.Status" /></span>
+        </div>
+        <p class="commit-line"><code>@job.CommitMessage</code></p>
+        @if (job.ChangeNotes.Count > 0)
+        {
+            <div class="change-notes">
+                <span class="muted small">Что изменилось (<code>@Changelog.FileName</code>):</span>
+                <ul>
+                    @foreach (var n in job.ChangeNotes)
+                    {
+                        <li>@n</li>
+                    }
+                </ul>
+            </div>
+        }
+    </div>
+    <div class="btn-row">
+        <a class="btn" id="link-mr" href="@SafeUrl.Http(job.MergeRequestUrl)" target="_blank" rel="noopener" hidden="@(SafeUrl.Http(job.MergeRequestUrl) is null)">Merge Request</a>
+        <a class="btn" id="link-pipeline" href="@SafeUrl.Http(job.PipelineUrl)" target="_blank" rel="noopener" hidden="@(SafeUrl.Http(job.PipelineUrl) is null)">Pipeline</a>
+        <a class="btn btn-ghost" href="@back.Url">@back.Title</a>
+    </div>
+</div>
+
+<div class="alert alert-error" id="job-error" hidden="@(job.Error is null)">@job.Error</div>
+
+<section class="card">
+    <h2>Журнал</h2>
+    <ol class="timeline" id="job-log">
+        @foreach (var e in job.Log)
+        {
+            <li class="lvl-@e.Level">
+                <span class="tl-time">@e.Time.ToLocalTime().ToString("HH:mm:ss")</span>
+                <span class="tl-text">
+                    @if (SafeUrl.Http(e.Url) is { } entryUrl)
+                    {
+                        <a href="@entryUrl" target="_blank" rel="noopener">@e.Text</a>
+                    }
+                    else
+                    {
+                        @e.Text
+                    }
+                    @if (e.Details is not null)
+                    {
+                        <pre class="details">@e.Details</pre>
+                    }
+                </span>
+            </li>
+        }
+    </ol>
+</section>
+
+@section Scripts {
+    @if (!job.IsFinished)
+    {
+        <script>
+            (function () {
+                const id = '@job.Id';
+                const labels = {
+                    Succeeded: '<span class="badge badge-synced">успешно</span>',
+                    Failed: '<span class="badge badge-failed">ошибка</span>',
+                    WaitingPipeline: '<span class="badge badge-running"><span class="spinner"></span>ждёт pipeline</span>',
+                    Running: '<span class="badge badge-running"><span class="spinner"></span>выполняется</span>',
+                };
+                function setLink(elId, url) {
+                    const a = document.getElementById(elId);
+                    if (url) { a.href = url; a.hidden = false; }
+                }
+                function render(s) {
+                    document.getElementById('job-status').innerHTML = labels[s.status] || s.status;
+                    setLink('link-mr', s.mergeRequestUrl);
+                    setLink('link-pipeline', s.pipelineUrl);
+                    const err = document.getElementById('job-error');
+                    if (s.error) { err.textContent = s.error; err.hidden = false; }
+                    const ol = document.getElementById('job-log');
+                    ol.innerHTML = '';
+                    s.log.forEach(e => {
+                        const li = document.createElement('li');
+                        li.className = 'lvl-' + e.level;
+                        const t = document.createElement('span'); t.className = 'tl-time'; t.textContent = e.time;
+                        const body = document.createElement('span'); body.className = 'tl-text';
+                        if (e.url) { const a = document.createElement('a'); a.href = e.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = e.text; body.appendChild(a); }
+                        else body.appendChild(document.createTextNode(e.text));
+                        if (e.details) { const pre = document.createElement('pre'); pre.className = 'details'; pre.textContent = e.details; body.appendChild(pre); }
+                        li.append(t, body);
+                        ol.appendChild(li);
+                    });
+                }
+                async function poll() {
+                    try {
+                        const res = await fetch(`/Jobs/${id}?handler=Status`, { cache: 'no-store' });
+                        if (res.ok) {
+                            const s = await res.json();
+                            render(s);
+                            if (s.finished) return;
+                        }
+                    } catch (e) { /* повторим */ }
+                    setTimeout(poll, 2500);
+                }
+                setTimeout(poll, 1500);
+            })();
+        </script>
+    }
+}

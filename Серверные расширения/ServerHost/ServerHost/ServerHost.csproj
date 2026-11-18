@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		Центральный серверный модуль: единственный .servext, который Pilot-Server загружает штатно.
+		Остальные серверные модули он грузит сам в выгружаемые AssemblyLoadContext и обновляет без перезапуска сервера.
+		Pilot-Server 26.x работает на .NET 8 - сборка под net8.0 (нужен collectible AssemblyLoadContext).
+	-->
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<AssemblyName>ServerHost.servext</AssemblyName>
+		<RootNamespace>ServerHost</RootNamespace>
+		<Product>ServerHost</Product>
+		<Version>1.3.0</Version>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<OutputPath>bin\$(Configuration)\</OutputPath>
+		<GenerateDependencyFile>false</GenerateDependencyFile>
+		<!-- В CI пути исходников не попадают в сборку: одинаковый код даёт одинаковый dll -->
+		<ContinuousIntegrationBuild Condition="'$(CI)' == 'true' Or '$(GITLAB_CI)' == 'true'">true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
+	<!-- Ascon.Pilot.* и MEF уже есть в Pilot-Server: только для компиляции, в архив не кладём -->
+	<ItemGroup>
+		<PackageReference Include="Ascon.Pilot.ServerExtensions.SDK" Version="26.13.0" ExcludeAssets="runtime" />
+		<PackageReference Include="System.ComponentModel.Composition" Version="4.7.0" ExcludeAssets="runtime" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="ServerHost.Tests" />
+	</ItemGroup>
+
+	<!-- Release: dist\ServerHost.zip - загрузить один раз в Pilot («Модули расширения» / серверное расширение) -->
+	<Target Name="ZipAfterBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+		<MakeDir Directories="$(MSBuildProjectDirectory)\dist" />
+		<ZipDirectory SourceDirectory="$(OutputPath)" DestinationFile="$(MSBuildProjectDirectory)\dist\ServerHost.zip" Overwrite="true" />
+	</Target>
+</Project>

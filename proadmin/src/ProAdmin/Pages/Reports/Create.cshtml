@@ -1,0 +1,80 @@
+@page "/Reports/Create"
+@model ProAdmin.Pages.Reports.CreateModel
+@{
+    ViewData["Title"] = "Репозиторий отчёта";
+}
+<div class="crumbs">
+    <a href="/Reports">Отчёты</a> <span>/</span> <span>Создание репозитория</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Репозиторий для отчёта <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">
+            Отчёта нет в группе <code>@Model.ReportsGroupPath</code>. Будет создан проект с ветками <code>main</code> и <code>dev</code>:
+            <code>main</code> / отчёт с продового сервера, <code>dev</code> / с тестового (если отчёт есть только на одном сервере - в обе ветки попадёт он).
+        </p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Folders.Count > 0)
+{
+    <form method="post" class="form">
+        <input type="hidden" asp-for="Name" />
+        <section class="card narrow-form">
+            <div class="field">
+                <span>Имя проекта в GitLab</span>
+                <div class="mono">@Model.ProjectName</div>
+                @if (Model.NameChanged)
+                {
+                    <small class="muted">Из имени отчёта убраны символы, недопустимые в имени проекта GitLab. Сопоставление идёт без учёта этих символов, поэтому отчёт найдётся.</small>
+                }
+            </div>
+
+            <div class="field">
+                <span>Где отчёт сейчас</span>
+                <ul class="checklist">
+                    @foreach (var (env, report) in Model.Servers)
+                    {
+                        <li class="lvl-@(report is null ? "warn" : "ok")">
+                            @env.Title (ветка <code>@env.Branch</code>): @(report is null ? "нет" : report.Folder.Length == 0 ? "корень папки отчётов" : report.Folder)
+                        </li>
+                    }
+                </ul>
+            </div>
+
+            <label class="field">
+                <span>Папка в GitLab</span>
+                <select asp-for="Folder">
+                    @foreach (var f in Model.Folders)
+                    {
+                        <option value="@f.Folder" selected="@(f.Folder == (Model.Folder ?? ""))">@(f.Folder.Length == 0 ? $"{Model.ReportsGroupPath} (корень)" : $"{Model.ReportsGroupPath}/{f.Folder}")</option>
+                    }
+                </select>
+                <small class="muted">
+                    Папки - подгруппы GitLab.
+                    @if (Model.PilotFolder is { } pf)
+                    {
+                        <text>В Pilot отчёт лежит в «@pf» - подходящая папка выбрана автоматически, если нашлась.</text>
+                    }
+                    Новую папку создайте в GitLab как подгруппу <code>@Model.ReportsGroupPath</code>.
+                </small>
+            </label>
+
+            <label class="field">
+                <span>Описание (необязательно)</span>
+                <textarea asp-for="Description" rows="3" placeholder="Что показывает отчёт, для кого…"></textarea>
+            </label>
+
+            <div class="form-actions">
+                <button class="btn btn-primary" type="submit" disabled="@(Model.Servers.All(s => s.Report is null))">Создать репозиторий</button>
+                <a class="btn btn-ghost" href="/Reports">Отмена</a>
+            </div>
+        </section>
+    </form>
+}

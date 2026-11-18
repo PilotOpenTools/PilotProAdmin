@@ -1,0 +1,40 @@
+@model string
+@* Блок «Активные работы» на вкладке раздела. Model - area (automations | reports | modules | servermodules). Таблица подгружается из /ActiveWork. *@
+<details class="aw" data-area="@Model">
+    <summary>Активные работы</summary>
+    <form class="aw-controls" data-no-submit>
+        <label class="aw-field">
+            <span class="muted small">Период</span>
+            <select name="period">
+                <option value="7">7 дней</option>
+                <option value="14" selected>2 недели</option>
+                <option value="30">30 дней</option>
+                <option value="90">3 месяца</option>
+                <option value="custom">Свой период…</option>
+            </select>
+        </label>
+        <label class="aw-field aw-custom" hidden>
+            <span class="muted small">С</span>
+            <input type="date" name="from" />
+        </label>
+        <label class="aw-field aw-custom" hidden>
+            <span class="muted small">По</span>
+            <input type="date" name="to" />
+        </label>
+        <label class="aw-field">
+            <span class="muted small">Этап</span>
+            <select name="stage">
+                <option value="">Все ветки</option>
+                <option value="work">Задачи (feature, bugfix…)</option>
+                <option value="test">Тест - dev</option>
+                <option value="stage">Стейдж - release/*</option>
+                <option value="prod">Прод - main</option>
+                <option value="hotfix">Hotfix</option>
+            </select>
+        </label>
+        <button type="button" class="btn btn-sm" data-refresh title="Перечитать из GitLab, минуя кэш (2 мин)">Обновить</button>
+        <a class="btn btn-sm aw-open" target="_blank" rel="noopener" title="Открыть таблицу отдельной страницей">Открыть журнал</a>
+    </form>
+    <div class="aw-body"><div class="aw-note">Загрузка…</div></div>
+</details>
+<script src="~/js/active-work.js" asp-append-version="true" defer></script>

@@ -1,0 +1,230 @@
+@page "/Modules"
+@model ProAdmin.Pages.Modules.IndexModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = Model.IsServer ? "Серверные модули: ветки и выкладка" : "Модули";
+    var catalog = Model.Catalog;
+    var kindQuery = Model.IsServer ? "&kind=server" : "";
+    string FolderTitle(string? folder) => string.IsNullOrEmpty(folder) ? $"{Model.ModulesGroupPath}" : $"{Model.ModulesGroupPath}/{folder}";
+}
+
+@if (Model.IsServer)
+{
+    @await Html.PartialAsync("_ServerModulesTabs", "branches")
+}
+<div class="page-head">
+    <h1>@(Model.IsServer ? "Серверные модули: ветки и выкладка" : "Клиентские модули")</h1>
+    <div class="head-actions">
+        @if (!Model.IsServer)
+        {
+            <a class="action-link" href="/Modules/Assemblies" title="Какие сторонние dll и каких версий можно класть в модули; состав модулей на серверах">Сборки</a>
+        }
+        <a class="action-link" href="#libraries" title="Режим библиотек и список разрешённых">Библиотеки</a>
+        <a class="action-link" href="@(Model.IsServer ? "/Process#server-modules" : "/Process#modules")">Как это работает</a>
+    </div>
+</div>
+<div class="catalog-tools">
+    @await Html.PartialAsync("_ActiveWork", Model.IsServer ? "servermodules" : "modules")
+    <details class="catalog-guide">
+        <summary>Как выкладываются модули</summary>
+        <p class="muted">
+            Путь изменения: задача / тест (<code>dev</code>) / стейдж (<code>release/X.Y.Z</code>) / прод (<code>main</code>); в строке подсвечен этап, где сейчас идёт работа.
+            Задачи - в ветках <code>feature/KTN-…</code>, в <code>dev</code> попадают squash-merge'ем (одна задача = один коммит).
+            @if (Model.IsServer)
+            {
+                <span>На серверы уходит zip (<code>*.servext.dll</code>), собранный GitLab CI: он ставится в ServerHost контура и работает сразу, без перезапуска Pilot-Server.</span>
+            }
+            else
+            {
+                <span>На серверы уходит zip, собранный GitLab CI; права пользователей на модуль не меняются.</span>
+            }
+        </p>
+    </details>
+</div>
+
+@if (Model.SetupProblem is not null)
+{
+    <div class="empty">
+        <p>@Model.SetupProblem</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+}
+else if (catalog is not null)
+{
+    @await Html.PartialAsync("_GroupAccess", (Model.ModulesAccess, "модули"))
+    <form method="post" asp-page-handler="UpdateAllCi" asp-route-kind="@Model.ModuleKind.Query()" class="catalog-batch">
+        <button class="btn" type="submit" title="MR ci/template-… в dev у каждого модуля, где .gitlab-ci.yml отличается от шаблона">Обновить CI у всех модулей</button>
+    </form>
+    @if (catalog.GitError is not null)
+    {
+        <div class="alert alert-warn">GitLab: @catalog.GitError</div>
+    }
+    @foreach (var (envKey, error) in catalog.PilotErrors)
+    {
+        var env = catalog.Envs.First(e => e.Key == envKey);
+        <div class="alert alert-error">@env.Title: @error.Message</div>
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        {
+            <section class="card narrow-card">
+                <h2>Вход в базу сервера «@env.Title» для модулей</h2>
+                <p class="muted">@(Model.IsServer
+                    ? "Серверные модули ставит ServerHost - он принимает команды только от администратора базы."
+                    : "Модули - объекты папки расширений базы, нужен пользователь базы с правами на неё (обычно администратор базы, как в Pilot-myAdmin).")</p>
+                @if (Model.CredentialError is not null && Model.CredentialError.StartsWith(env.Title))
+                {
+                    <div class="alert alert-error">@Model.CredentialError</div>
+                }
+                <form method="post" asp-page-handler="Credentials" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+                    <input type="hidden" name="CredEnv" value="@env.Key" />
+                    <label class="field"><span>Логин</span><input name="EnvLogin" autocomplete="username" required /></label>
+                    <label class="field"><span>Пароль</span><input name="EnvPassword" type="password" autocomplete="current-password" required /></label>
+                    <button class="btn btn-primary" type="submit">Подключиться</button>
+                </form>
+            </section>
+        }
+    }
+
+    var behind = catalog.Rows.Count(r => r.Envs.Values.Any(e => e.State == ModuleSync.Behind));
+    var releases = catalog.Rows.Count(r => r.Git?.ActiveRelease is not null);
+    <div class="toolbar catalog-toolbar">
+        <input type="search" id="filter" placeholder="Поиск по имени…" aria-label="Поиск" />
+        <div class="legend">
+            <span class="badge">репозиториев: @catalog.Rows.Count</span>
+            @if (releases > 0)
+            {
+                <span class="badge badge-onlypilot" title="Есть ветка release/X.Y.Z новее main">идут релизы: @releases</span>
+            }
+            @if (behind > 0)
+            {
+                <span class="badge badge-differs" title="Ветка ушла вперёд сервера">ждут выкладки: @behind</span>
+            }
+        </div>
+    </div>
+
+    @if (catalog.Rows.Count == 0)
+    {
+        <div class="empty"><p>В группе <code>@Model.ModulesGroupPath</code> нет репозиториев модулей.</p></div>
+    }
+    else
+    {
+        <div class="table-wrap catalog-table" role="region" aria-label="Каталог модулей" tabindex="0">
+            <table class="table" id="modules">
+                <thead>
+                <tr>
+                    <th>Модуль</th>
+                    <th title="Где сейчас идёт работа: задача / тест (dev) / стейдж (release/X.Y.Z) / прод (main)">Этап CI/CD</th>
+                    <th>Ветки</th>
+                </tr>
+                </thead>
+                @foreach (var group in catalog.Rows.GroupBy(r => r.Folder))
+                {
+                    <tbody class="folder">
+                    <tr class="folder-row"><td colspan="3">@FolderTitle(group.Key) <span class="muted">· @group.Count()</span></td></tr>
+                    @foreach (var row in group)
+                    {
+                        var git = row.Git!;
+                        var q = Uri.EscapeDataString(row.Name);
+                        <tr data-name="@row.Name.ToLowerInvariant() @(git.AssemblyName?.ToLowerInvariant())">
+                            <td>
+                                <a class="strong" href="/Modules/Module?name=@q@kindQuery">@row.Name</a>
+                                <a class="repo-link muted" href="@git.Repo.WebUrl" target="_blank" rel="noopener">GitLab</a>
+                                <div class="muted small">
+                                    @(git.AssemblyName ?? "csproj не найден")
+                                    @if (git.MainVersion is not null) { <span>· main @git.MainVersion</span> }
+                                    @if (!git.HasCi) { <span class="badge badge-differs" title="Без .gitlab-ci.yml выкладка невозможна - нечего брать из артефактов">нет CI</span> }
+                                    @if (git.Dev is null) { <span class="badge badge-differs">нет dev</span> }
+                                </div>
+                            </td>
+                            <td>@await Html.PartialAsync("_MiniFlow", MiniFlows.ForModule(row))</td>
+                            <td class="small">
+                                @if (git.TaskBranches.Count > 0) { <span class="badge" title="@string.Join(", ", git.TaskBranches.Select(b => b.Name))">задачи: @git.TaskBranches.Count</span> }
+                                @if (git.HotfixBranches.Count > 0) { <span class="badge badge-failed" title="@string.Join(", ", git.HotfixBranches.Select(b => b.Name))">hotfix: @git.HotfixBranches.Count</span> }
+                                <a href="/Modules/Module?name=@q@kindQuery">открыть /</a>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+    }
+
+    @if (catalog.Unmatched.Count > 0)
+    {
+        <details class="card">
+            <summary><b>Модули на серверах без репозитория в группе:</b> @catalog.Unmatched.Count</summary>
+            <p class="muted small">
+                Репозиторий сопоставляется по AssemblyProduct (= «Наименование» в Pilot), имени проекта GitLab или коду в скобках
+                («… - (OpenStoradge) - (CICD)» / проект OpenStoradge). Чтобы модуль появился в таблице, создайте для него репозиторий в группе.
+            </p>
+            <table class="table">
+                <thead><tr><th>Наименование в Pilot</th>@foreach (var env in catalog.Envs) { <th>@env.Title</th> }</tr></thead>
+                <tbody>
+                @foreach (var (name, byEnv) in catalog.Unmatched)
+                {
+                    <tr>
+                        <td>@name</td>
+                        @foreach (var env in catalog.Envs)
+                        {
+                            <td class="small">
+                                <span class="mono">@(byEnv.TryGetValue(env.Key, out var m) ? m.Version ?? "есть" : "-")</span>
+                                @if (m is not null && Model.ModuleKind == ModuleKind.Client && !Model.ModulesReadOnly)
+                                {
+                                    @await Html.PartialAsync("_ModuleDisableForm", new ModuleDisableForm(env.Key, env.Title, m.Id, m.Name, Model.ProtectedReason(m), null))
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </details>
+    }
+
+    @if (catalog.DisabledUnmatched.Count > 0)
+    {
+        <details class="card" open>
+            <summary><b>Отключённые модули без репозитория в группе:</b> @catalog.DisabledUnmatched.Count</summary>
+            <table class="table">
+                <thead><tr><th>Наименование в Pilot</th><th>Сервер</th><th>Кто и почему</th>@if (!Model.ModulesReadOnly) { <th></th> }</tr></thead>
+                <tbody>
+                @foreach (var off in catalog.DisabledUnmatched)
+                {
+                    var offEnv = catalog.Envs.First(e => e.Key == off.Env);
+                    <tr>
+                        <td>@off.Name <span class="muted small mono">@off.Version</span></td>
+                        <td>@offEnv.Title</td>
+                        <td class="small">@off.At.ToLocalTime().ToString("dd.MM HH:mm") · @off.By · @off.Reason</td>
+                        @if (!Model.ModulesReadOnly)
+                        {
+                            <td>@await Html.PartialAsync("_ModuleDisabledActions", new ModuleDisabledActions(off.Env, offEnv.Title, off.Id, off.Name, null))</td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </details>
+    }
+}
+
+@await Html.PartialAsync("_ModuleLibraries", Model)
+
+@section Scripts {
+    <script>
+        (function () {
+            const input = document.getElementById('filter');
+            if (!input) return;
+            input.addEventListener('input', () => {
+                const q = input.value.trim().toLowerCase();
+                document.querySelectorAll('#modules tbody.folder').forEach(body => {
+                    let visible = 0;
+                    body.querySelectorAll('tr[data-name]').forEach(tr => {
+                        tr.hidden = q.length > 0 && !tr.dataset.name.includes(q);
+                        if (!tr.hidden) visible++;
+                    });
+                    body.hidden = visible === 0;
+                });
+            });
+        })();
+    </script>
+}

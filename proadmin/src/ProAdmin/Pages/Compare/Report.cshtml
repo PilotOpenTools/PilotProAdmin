@@ -1,0 +1,85 @@
+@page "/Compare/Report"
+@model ProAdmin.Pages.Compare.ReportModel
+@{
+    ViewData["Title"] = $"Различия: {Model.Name}";
+    var a = Model.EnvA;
+    var b = Model.EnvB;
+    var q = Uri.EscapeDataString(Model.Name);
+    var fileTitle = Model.SideA?.FileName ?? Model.SideB?.FileName ?? "Отчёт";
+}
+<div class="crumbs">
+    <a href="/Compare?kind=reports&a=@a?.Key&b=@b?.Key">Сравнение отчётов</a> <span>/</span> <span>@Model.Name</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Различия отчёта <span class="mono-title">@Model.Name</span></h1>
+        @if (a is not null && b is not null)
+        {
+            <p class="muted">Сравнивается XML-разметка .repx. Строки <span class="diff-legend-del">−</span> есть только на @Model.LabelA, <span class="diff-legend-add">+</span> - только на @Model.LabelB. Чтобы посмотреть отчёт глазами, скачайте обе версии и откройте в дизайнере.</p>
+        }
+    </div>
+    @if (a is not null && b is not null)
+    {
+        <div class="head-actions">
+            <nav class="seg" aria-label="Что сравнивать">
+                <a class="seg-btn @(!Model.FromBranches ? "active" : "")" href="@Model.Link("servers")">Серверы</a>
+                <a class="seg-btn @(Model.FromBranches ? "active" : "")" href="@Model.Link("branches")">Ветки @a.Branch / @b.Branch</a>
+            </nav>
+            <a class="btn btn-sm" href="@Model.Link(a: b.Key, b: a.Key)" title="Поменять стороны местами">Поменять местами</a>
+        </div>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (a is not null && b is not null && (Model.SideA is not null || Model.SideB is not null))
+{
+    <div class="compare-sides">
+        @foreach (var (env, label, side, key) in new[] { (a, Model.LabelA, Model.SideA, "a"), (b, Model.LabelB, Model.SideB, "b") })
+        {
+            <div class="card compare-side">
+                <div class="muted small"><span class="env-dot env-@env.Key"></span>@label</div>
+                @if (side is null)
+                {
+                    <div class="h3">нет</div>
+                }
+                else
+                {
+                    <div class="h3">@side.Size</div>
+                    @if (side.Folder is { Length: > 0 })
+                    {
+                        <div class="muted small">Папка на сервере: @side.Folder</div>
+                    }
+                    <a class="small" href="@Model.Link()&handler=Download&side=@key">Скачать @side.FileName</a>
+                }
+            </div>
+        }
+    </div>
+
+    @if (Model.SideA is not null && Model.SideB is not null && Model.SideA.Folder != Model.SideB.Folder && !Model.FromBranches)
+    {
+        <div class="alert alert-warn">Отчёт лежит в разных папках: на @a.Title - «@Model.SideA.Folder», на @b.Title - «@Model.SideB.Folder».</div>
+    }
+
+    @if (Model.Diff is { } diff)
+    {
+        @if (diff.Identical)
+        {
+            <div class="alert alert-ok">Отчёт на @Model.LabelA и @Model.LabelB совпадает (с точностью до переводов строк).</div>
+        }
+        <section class="card">
+            <partial name="_Diff" model="(fileTitle, diff, Model.LabelA, Model.LabelB)" />
+        </section>
+
+        @if (Model.Repo is not null && !diff.Identical
+             && a.Branch == ProAdmin.Automations.AutomationRepositories.DevBranch
+             && b.Branch == ProAdmin.Automations.AutomationRepositories.MainBranch)
+        {
+            <a class="btn btn-promote" href="/Reports/Promote?name=@q">Перенести на прод /</a>
+        }
+    }
+}

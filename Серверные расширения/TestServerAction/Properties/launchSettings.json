@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "debug": {
+      "commandName": "Executable",
+      "executablePath": "$(ProjectDir)..\\Debug\\bin\\Release\\net8.0\\publish\\debug.exe",
+      "commandLineArgs": "",
+      "workingDirectory": "$(ProjectDir)"
+    }
+  }
+}

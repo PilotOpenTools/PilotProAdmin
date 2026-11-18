@@ -1,0 +1,115 @@
+@page "/Migration/Run/{id:guid}"
+@model ProAdmin.Pages.Migration.RunModel
+@using ProAdmin.Migration
+@{
+    var run = Model.Run;
+    var title = $"{MigrationTexts.EnvTitle(run.Request.Source)} / {MigrationTexts.EnvTitle(run.Request.Target)}";
+    ViewData["Title"] = "Миграция " + title;
+}
+<div class="crumbs">
+    <a href="/Migration">Миграция</a> <span>/</span> <span>@run.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>@title <span class="muted">- @MigrationTexts.Describe(run.Request)</span></h1>
+        <div class="meta-row">
+            <span class="meta">@run.RequestedBy · @run.Trigger</span>
+            <span class="meta">@run.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")</span>
+            <span id="run-status">
+                <span class="badge @MigrationTexts.StatusCss(run.Status)">@if (!run.IsFinished) {<span class="spinner"></span>}@MigrationTexts.Status(run.Status)</span>
+            </span>
+            <span class="meta" id="run-phase">@run.Phase</span>
+        </div>
+    </div>
+    <div class="btn-row">
+        @if (!run.IsFinished)
+        {
+            <details class="mig-confirm" id="cancel-form">
+                <summary class="btn btn-danger">Отменить</summary>
+                <form method="post" asp-page-handler="Cancel" asp-route-id="@run.Id" class="inline">
+                    <span class="muted small">@(run.Request.IsFileExport ? "Недописанная выгрузка удалится, источник не менялся." : "Незафиксированные изменения откатятся, база приёмника запустится.")</span>
+                    <button class="btn btn-danger btn-sm" type="submit">Да, отменить @(run.Request.IsFileExport ? "выгрузку" : "перенос")</button>
+                </form>
+            </details>
+        }
+        <a class="btn btn-ghost" href="/Migration">К миграции</a>
+    </div>
+</div>
+<partial name="_ProdAdminBanner" model="Model" />
+
+<div class="alert alert-error" id="run-error" hidden="@(run.Error is null)">@run.Error</div>
+
+<section class="card" id="stats-card" hidden="@(run.Stats.Count == 0)">
+    <h2>Итоги</h2>
+    <dl class="mig-stats" id="run-stats">
+        @foreach (var (k, v) in run.Stats.Where(s => !s.Key.StartsWith("Строк: ") || s.Value > 0))
+        {
+            <div><dt>@k</dt><dd>@v</dd></div>
+        }
+    </dl>
+</section>
+
+<section class="card">
+    <h2>Журнал</h2>
+    <ol class="timeline" id="run-log">
+        @foreach (var e in run.Log)
+        {
+            <li class="lvl-@ProAdmin.Pages.Migration.RunModel.LogCss(e.Level) @(e.Level == "phase" ? "mig-phase" : "")">
+                <span class="tl-time">@e.Time.ToLocalTime().ToString("HH:mm:ss")</span>
+                <span class="tl-text">@e.Text</span>
+            </li>
+        }
+    </ol>
+</section>
+
+@section Scripts {
+    @if (!run.IsFinished)
+    {
+        <script>
+            (function () {
+                const id = '@run.Id';
+                function render(s) {
+                    document.getElementById('run-status').innerHTML =
+                        `<span class="badge ${s.statusCss}">${s.finished ? '' : '<span class="spinner"></span>'}${s.statusTitle}</span>`;
+                    document.getElementById('run-phase').textContent = s.phase || '';
+                    const err = document.getElementById('run-error');
+                    if (s.error) { err.textContent = s.error; err.hidden = false; }
+                    const ol = document.getElementById('run-log');
+                    ol.innerHTML = '';
+                    s.log.forEach(e => {
+                        const li = document.createElement('li');
+                        li.className = 'lvl-' + e.level + (e.phase ? ' mig-phase' : '');
+                        const t = document.createElement('span'); t.className = 'tl-time'; t.textContent = e.time;
+                        const b = document.createElement('span'); b.className = 'tl-text'; b.textContent = e.text;
+                        li.append(t, b);
+                        ol.appendChild(li);
+                    });
+                    const stats = Object.entries(s.stats || {}).filter(([k, v]) => !k.startsWith('Строк: ') || v > 0);
+                    const dl = document.getElementById('run-stats');
+                    dl.innerHTML = '';
+                    stats.forEach(([k, v]) => {
+                        const d = document.createElement('div');
+                        const dt = document.createElement('dt'); dt.textContent = k;
+                        const dd = document.createElement('dd'); dd.textContent = v;
+                        d.append(dt, dd); dl.appendChild(d);
+                    });
+                    document.getElementById('stats-card').hidden = stats.length === 0;
+                    if (s.finished) document.getElementById('cancel-form')?.remove();
+                }
+                async function poll() {
+                    try {
+                        const res = await fetch(`/Migration/Run/${id}?handler=Status`, { cache: 'no-store' });
+                        if (res.ok) {
+                            const s = await res.json();
+                            render(s);
+                            if (s.finished) return;
+                        }
+                    } catch (e) { /* повторим */ }
+                    setTimeout(poll, 2000);
+                }
+                setTimeout(poll, 1000);
+            })();
+        </script>
+    }
+}

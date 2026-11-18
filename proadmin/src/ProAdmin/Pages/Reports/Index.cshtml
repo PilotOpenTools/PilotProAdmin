@@ -1,0 +1,187 @@
+@page "/Reports"
+@model ProAdmin.Pages.Reports.IndexModel
+@using ProAdmin.Reports
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "Отчёты";
+    var catalog = Model.Catalog;
+    string FolderTitle(string? folder) => folder is null
+        ? "Без репозитория - только на серверах"
+        : folder.Length == 0 ? $"{Model.ReportsGroupPath}" : $"{Model.ReportsGroupPath}/{folder}";
+    var dev = catalog is null ? null : ReportCatalog.DevEnv(Model.AppSettings);
+    var main = catalog is null ? null : ReportCatalog.MainEnv(Model.AppSettings);
+}
+
+<div class="page-head">
+    <h1>Отчёты</h1>
+    <a class="action-link" href="/Compare?kind=reports" title="Чем отчёты на тесте отличаются от прода">Сравнить тест и прод</a>
+</div>
+
+<div class="catalog-tools">
+    @await Html.PartialAsync("_ActiveWork", "reports")
+    <details class="catalog-guide">
+        <summary>Как выпускаются отчёты</summary>
+        <p class="muted">
+            Путь отчёта: правка в Pilot / тест (<code>dev</code>) / прод (<code>main</code>); в строке подсвечен этап, где сейчас идёт работа.
+            Репозиторий ищется по имени: имя проекта в группе <code>@(Model.ReportsGroupPath ?? "-")</code> = имя отчёта в Pilot.
+            Отчёты меняются в Pilot (модуль Reports отправляет их в <code>dev</code> или, для исправления прода, в <code>hotfix/…</code> от <code>main</code>; прямо в <code>main</code> он не отправляет), здесь - только перенос на прод
+            и обратно: хотфикс, влитый в <code>main</code>, переносится в <code>dev</code> и на тест кнопкой «/ В тест».
+        </p>
+    </details>
+</div>
+
+@if (Model.SetupProblem is not null)
+{
+    <div class="empty">
+        <p>@Model.SetupProblem</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+}
+else if (catalog is not null)
+{
+    @await Html.PartialAsync("_GroupAccess", (Model.ReportsAccess, "отчётов"))
+    @if (catalog.GitError is not null)
+    {
+        <div class="alert alert-warn">GitLab: @catalog.GitError</div>
+    }
+    @foreach (var (envKey, error) in catalog.PilotErrors)
+    {
+        var env = ReportCatalog.FindEnv(Model.AppSettings, envKey)!;
+        <div class="alert alert-error">@env.Title: @error.Message</div>
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        {
+            <section class="card narrow-card">
+                <h2>Вход в базу сервера «@env.Title» для отчётов</h2>
+                <p class="muted">Отчёты - объекты базы, поэтому нужен пользователь базы с правами на папку отчётов (как в клиенте Pilot), а не администратор сервера.</p>
+                @if (Model.CredentialError is not null && Model.CredentialError.StartsWith(env.Title))
+                {
+                    <div class="alert alert-error">@Model.CredentialError</div>
+                }
+                <form method="post" asp-page-handler="Credentials" class="form">
+                    <input type="hidden" name="CredEnv" value="@env.Key" />
+                    <label class="field"><span>Логин</span><input name="EnvLogin" autocomplete="username" required /></label>
+                    <label class="field"><span>Пароль</span><input name="EnvPassword" type="password" autocomplete="current-password" required /></label>
+                    <button class="btn btn-primary" type="submit">Подключиться</button>
+                </form>
+            </section>
+        }
+    }
+
+    var pending = catalog.Rows.Count(r => r.PendingPromotion);
+    var backport = catalog.Rows.Count(r => r.PendingBackport);
+    var noRepo = catalog.Rows.Count(r => r.Repo is null);
+    <div class="toolbar catalog-toolbar">
+        <input type="search" id="filter" placeholder="Поиск по имени…" aria-label="Поиск" />
+        <div class="legend">
+            <span class="badge">всего: @catalog.Rows.Count</span>
+            @if (pending > 0)
+            {
+                <span class="badge badge-onlypilot" title="В dev отчёт отличается от main">ждут переноса на прод: @pending</span>
+            }
+            @if (backport > 0)
+            {
+                <span class="badge badge-differs" title="В main (на проде) правки, которых нет в dev">хотфиксы ждут переноса в тест: @backport</span>
+            }
+            @if (noRepo > 0)
+            {
+                <span class="badge badge-differs" title="Отчёт есть на сервере, но репозиторий не найден">без репозитория: @noRepo</span>
+            }
+        </div>
+    </div>
+
+    @if (catalog.Rows.Count == 0)
+    {
+        <div class="empty"><p>Отчётов нет ни на серверах, ни в GitLab.</p></div>
+    }
+    else
+    {
+        <div class="table-wrap catalog-table" role="region" aria-label="Каталог отчётов" tabindex="0">
+            <table class="table" id="reports">
+                <thead>
+                <tr>
+                    <th>Отчёт</th>
+                    <th title="Где сейчас идёт работа: правка / тест (dev) / прод (main)">Этап CI/CD</th>
+                    <th scope="col">Действия</th>
+                </tr>
+                </thead>
+                @foreach (var group in catalog.Rows.GroupBy(r => r.Folder))
+                {
+                    <tbody class="folder">
+                    <tr class="folder-row">
+                        <td colspan="3">@FolderTitle(group.Key) <span class="muted">· @group.Count()</span></td>
+                    </tr>
+                    @foreach (var row in group)
+                    {
+                        var q = Uri.EscapeDataString(row.Name);
+                        <tr data-name="@row.Name.ToLowerInvariant()">
+                            <td>
+                                <a class="strong" href="/Reports/Item?name=@q" title="Где сейчас и что дальше">@row.Name</a>
+                                @if (row.Repo is not null)
+                                {
+                                    <a class="repo-link muted" href="@row.Repo.WebUrl" target="_blank" rel="noopener" title="Репозиторий в GitLab">GitLab</a>
+                                }
+                                else
+                                {
+                                    @if (!Model.ReportsReadOnly)
+                                    {
+                                        <a class="repo-link" href="/Reports/Create?name=@q">создать репозиторий</a>
+                                    }
+                                    @if (row.PilotFolder is { Length: > 0 } pf)
+                                    {
+                                        <div class="muted small">в Pilot: @pf</div>
+                                    }
+                                }
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("_MiniFlow", MiniFlows.ForReport(row, main is not null))
+                                @if (row.Envs.Values.Any(e => e.Pilot is { FileMissing: true }))
+                                {
+                                    <span class="badge badge-differs" title="Объект отчёта есть, но файл .repx отсутствует в файловом архиве сервера">файл потерян</span>
+                                }
+                            </td>
+                            <td class="row-actions nowrap">
+                                @if (row.Repo is not null && row.DevBlob is not null && main is not null && !Model.ReportsReadOnly)
+                                {
+                                    var prodState = row.Envs.TryGetValue(main.Key, out var ps) ? ps.State : SyncState.Unknown;
+                                    @if (row.PendingBackport)
+                                    {
+                                        <a class="backport" href="/Reports/Backport?name=@q" title="main / dev / тестовый сервер: вернуть хотфикс с прода в разработку">В тест</a>
+                                    }
+                                    else if (row.PendingPromotion || prodState != SyncState.Synced)
+                                    {
+                                        <a class="promote" href="/Reports/Promote?name=@q" title="dev / main / продовый сервер">На прод /</a>
+                                    }
+                                }
+                                @if (row.Repo is not null && main is not null && !Model.ReportsReadOnly)
+                                {
+                                    <a class="muted" href="/Reports/Rollback?name=@q" title="Вернуть на прод один из прошлых релизов">откат</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            const input = document.getElementById('filter');
+            if (!input) return;
+            input.addEventListener('input', () => {
+                const q = input.value.trim().toLowerCase();
+                document.querySelectorAll('#reports tbody.folder').forEach(body => {
+                    let visible = 0;
+                    body.querySelectorAll('tr[data-name]').forEach(tr => {
+                        tr.hidden = q.length > 0 && !tr.dataset.name.includes(q);
+                        if (!tr.hidden) visible++;
+                    });
+                    body.hidden = visible === 0;
+                });
+            });
+        })();
+    </script>
+}

@@ -1,0 +1,127 @@
+@page "/Reports/Item"
+@model ProAdmin.Pages.Reports.ItemModel
+@using ProAdmin.Automations
+@using ProAdmin.Modules
+@using ProAdmin.Reports
+@{
+    ViewData["Title"] = "Отчёт " + Model.Name;
+    var repo = Model.Repo;
+    var ro = Model.ReportsReadOnly;
+    var q = Model.Q;
+    string StateLabel(SyncState s) => s switch
+    {
+        SyncState.Synced => "совпадает",
+        SyncState.Differs => "отличается",
+        SyncState.OnlyPilot => "нет в ветке",
+        SyncState.OnlyGit => "нет на сервере",
+        SyncState.NoBranch => "нет ветки",
+        _ => "-",
+    };
+    string StateCss(SyncState s) => s switch
+    {
+        SyncState.Synced => "badge-synced",
+        SyncState.Differs => "badge-differs",
+        SyncState.OnlyPilot => "badge-onlypilot",
+        SyncState.OnlyGit => "badge-onlygit",
+        _ => "badge-nobranch",
+    };
+    string Caption(ItemModel.EnvState? st) => st is null ? "сервер не задан" : StateLabel(st.State);
+    var editing = Model.Branches.Active.Count(b => b.Kind is "задача" or "вне схемы");
+}
+<div class="crumbs"><a href="/Reports">Отчёты</a> <span>/</span> <span>@Model.Name</span></div>
+
+<div class="page-head">
+    <div>
+        <h1>@Model.Name</h1>
+        <p class="muted">
+            последний релиз <b>@(Model.LastRelease ?? "-")</b>@(Model.RollbackTo is { } rb ? $" (откат на {rb})" : "")@(Model.LastReleaseDate is { } d ? " · " + d.ToLocalTime().ToString("dd.MM.yyyy") : "")
+            · dev @(Model.DevEqualsMain ? "= main" : Model.Drift switch { ReportDrift.MainAhead => "отстаёт от main", ReportDrift.Diverged => "и main разошлись", _ => "впереди main" })
+        </p>
+    </div>
+    <div class="head-actions">
+        @if (repo is not null) { <a class="btn" href="@repo.WebUrl" target="_blank" rel="noopener">Репозиторий</a> }
+        <a class="btn" href="/Compare/Report?name=@q">Сравнить тест / прод</a>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@await Html.PartialAsync("_GroupAccess", (Model.ReportsAccess, "отчётов"))
+
+@if (Model.NextStep is { } next)
+{
+    var steps = new List<FlowStep>
+    {
+        new("Правка", "Pilot / dev", editing > 0 ? $"в работе: {ModuleNextSteps.Plural(editing, "ветка", "ветки", "веток")}" : $"в Pilot на сервере «{Model.Test?.Title ?? "Тест"}»"),
+        new(Model.Test?.Title ?? "Тест", "dev", Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Test))),
+    };
+    steps.Add(new("Прод", "main", (Model.LastRelease is { } lr ? lr + " · " : "") + Caption(Model.Envs.FirstOrDefault(e => e.Env == Model.Prod))));
+    var current = FlowCard.WithoutStage(next.Stage);
+    var lanes = FlowLanes.Build(repo?.WebUrl ?? "",
+        Model.Branches.Active.Where(a => a.Kind is "задача" or "hotfix").Select(a => (a.Branch, a.Mr is { } am ? $"MR !{am.Iid}" : a.Kind == "hotfix" ? "hotfix / прод" : (string?)null)),
+        Model.DevCommits, Array.Empty<ProAdmin.GitLab.GitLabCommit>(), testColumn: 1, stageColumn: 1);
+    @await Html.PartialAsync("_FlowCard", new FlowCard(steps, current, next, Model.Branches.Active, repo?.WebUrl ?? "", lanes))
+}
+
+<div class="promote-flow" id="envs">
+    @foreach (var st in Model.Envs)
+    {
+        var env = st.Env;
+        <div class="card promote-step">
+            <div class="muted small"><span class="env-dot env-@env.Key"></span>Сервер @env.Title / <code>@env.Branch</code></div>
+            <div class="h3">@(st.Pilot is null ? "-" : st.Pilot.Folder.Length > 0 ? st.Pilot.Folder : "в корне")</div>
+            <span class="badge @StateCss(st.State)">@StateLabel(st.State)</span>
+        </div>
+    }
+</div>
+
+@if (repo is not null && Model.Branches.Active.Any(a => a.Kind == "hotfix"))
+{
+    <section class="card@(Model.NextStep?.Href?.Contains("from=hotfix") == true ? " is-focus" : "")" id="hotfix">
+        <h2>Hotfix</h2>
+        <p class="muted small">Исправление прода: Reports отправляет его в <code>hotfix/…</code> от main. «Hotfix в прод» переносит ветку в main и на продовый сервер, затем «/ В тест» вернёт исправление в dev.</p>
+        @foreach (var h in Model.Branches.Active.Where(a => a.Kind == "hotfix"))
+        {
+            <div class="btn-row">
+                <a class="mono" href="@repo.WebUrl/-/commits/@Uri.EscapeDataString(h.Branch.Name)" target="_blank" rel="noopener">@h.Branch.Name</a>
+                <span class="muted small">+@h.Ahead к main@(h.Branch.Commit is { } c ? $" · {c.AuthorName}, {ProAdmin.GitLab.BranchActivity.Ago(c.CommittedDate)}" : "")</span>
+                @if (!ro && h.Ahead > 0)
+                {
+                    <a class="btn btn-sm btn-primary" href="/Reports/Promote?name=@q&from=@Uri.EscapeDataString(h.Branch.Name)">Hotfix в прод /</a>
+                }
+            </div>
+        }
+    </section>
+}
+
+<section class="card">
+    <h2>Перенос и история</h2>
+    <div class="btn-row">
+        @if (!ro)
+        {
+            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Reports/Promote") == true ? "btn-primary" : "")" href="/Reports/Promote?name=@q">На прод /</a>
+            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Reports/Backport") == true ? "btn-primary" : "")" href="/Reports/Backport?name=@q">В тест</a>
+            <a class="btn" href="/Reports/Rollback?name=@q">Откатить прод</a>
+            @if (Model.RollbackTo is not null && Model.UndoRollbackTag is not null)
+            {
+                <a class="btn" href="/Reports/Rollback?name=@q&tag=@Uri.EscapeDataString(Model.UndoRollbackTag)" title="Вернуть на прод то, что было до отката">Отменить откат (@Model.UndoRollbackTag)</a>
+            }
+        }
+        @if (repo is not null)
+        {
+            <a class="btn" href="@repo.WebUrl/-/releases" target="_blank" rel="noopener">Релизы</a>
+            <a class="btn" href="@repo.WebUrl/-/blob/main/CHANGELOG.md" target="_blank" rel="noopener">CHANGELOG</a>
+        }
+    </div>
+</section>
+
+@if (repo is not null)
+{
+    <section class="card">
+        @await Html.PartialAsync("_BranchesPanel", new ProAdmin.GitLab.BranchesPanel(Model.Branches.Active,
+            new[] { new ProAdmin.GitLab.BranchGroup("Без новых коммитов, MR уже влит", Model.Branches.Removable), new ProAdmin.GitLab.BranchGroup("Выпущенные релизы (история - в тегах v<дата>)", Model.ReleasedReleases) },
+            repo.WebUrl, !ro, new Dictionary<string, string> { ["name"] = Model.Name }))
+    </section>
+}

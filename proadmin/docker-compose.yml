@@ -1,0 +1,175 @@
+name: pilot-proadmin
+
+services:
+  proadmin:
+    build: .
+    image: pilot-proadmin:latest
+    container_name: pilot-proadmin
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-5300}:8080"
+    # Защита в глубину: без лишних привилегий, корневая ФС только на чтение (пишет только /data и /tmp).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      # localhost:порт в адресах Pilot/GitLab внутри контейнера подменяется на этот хост.
+      App__LocalhostAlias: ${LOCALHOST_ALIAS:-host.docker.internal}
+      # Адрес, по которому админку открывают пользователи (http://host:5300): от него строится адрес возврата OAuth.
+      # Пусто - из адреса запроса. Для https cookie всегда Secure.
+      App__PublicUrl: ${ADMIN_PUBLIC_URL:-}
+      App__SetupKey: ${ADMIN_SETUP_KEY:-}
+      # X-Forwarded-* принимаются только за своим обратным прокси: иначе клиент подделает адрес и схему.
+      App__TrustForwardedHeaders: ${ADMIN_TRUST_PROXY:-false}
+      # Допустимые значения Host через «;» (без порта). По умолчанию любой; пример - в .env.example.
+      AllowedHosts: ${ADMIN_ALLOWED_HOSTS:-*}
+      # OAuth-приложение GitLab (необязательно - можно войти по Personal Access Token).
+      App__GitLab__ClientId: ${GITLAB_OAUTH_CLIENT_ID:-}
+      App__GitLab__ClientSecret: ${GITLAB_OAUTH_CLIENT_SECRET:-}
+      App__GitLab__RedirectUri: ${GITLAB_OAUTH_REDIRECT_URI:-}
+      # Начальные общие настройки (применяются, пока нет data/settings.json; дальше - страница «Настройки»).
+      App__Defaults__TestPilotUrl: ${PILOT_TEST_URL:-}
+      App__GitHubTypes__Repository: ${GITHUB_TYPES_REPOSITORY:-}
+      App__Defaults__ProdPilotUrl: ${PILOT_PROD_URL:-}
+      App__Defaults__GitLabGroupUrl: ${GITLAB_GROUP_URL:-http://localhost:8080/automation}
+      App__Defaults__ReportsGitLabGroupUrl: ${REPORTS_GITLAB_GROUP_URL:-}
+      App__Defaults__ModulesGitLabGroupUrl: ${MODULES_GITLAB_GROUP_URL:-}
+      App__Defaults__ServerModulesGitLabGroupUrl: ${SERVER_MODULES_GITLAB_GROUP_URL:-}
+      App__Defaults__StagePilotUrl: ${PILOT_STAGE_URL:-}
+      App__Defaults__TypesGitLabProjectUrl: ${TYPES_GITLAB_PROJECT_URL:-}
+      # Сервис миграции данных (proadmin/migration) - раздел «Миграция».
+      App__Migration__Url: http://pilot-migration:8080
+      App__Migration__ApiKey: ${MIGRATION_API_KEY:-}
+      # Выкладка модулей из GitLab CI (job deploy_* шаблона модуля): ключи по контурам = переменные DEPLOY_KEY_TEST / _STAGE / _PROD
+      # в GitLab, служебные учётки Pilot по контурам. Пустой ключ - выкладка на этот контур выключена.
+      # Кроме ключа запрос обязан нести job-токен ($CI_JOB_TOKEN): админка проверяет его в GitLab.
+      App__CiDeploy__Keys__test: ${MODULES_DEPLOY_KEY_TEST:-}
+      App__CiDeploy__Keys__stage: ${MODULES_DEPLOY_KEY_STAGE:-}
+      App__CiDeploy__Keys__prod: ${MODULES_DEPLOY_KEY_PROD:-}
+      # Прежний общий ключ: принимается только для test и только если MODULES_DEPLOY_KEY_TEST пуст (для stage и prod - никогда).
+      App__CiDeploy__ApiKey: ${MODULES_DEPLOY_KEY:-}
+      App__CiDeploy__Logins__test__Login: ${MODULES_DEPLOY_TEST_LOGIN:-}
+      App__CiDeploy__Logins__test__Password: ${MODULES_DEPLOY_TEST_PASSWORD:-}
+      App__CiDeploy__Logins__stage__Login: ${MODULES_DEPLOY_STAGE_LOGIN:-}
+      App__CiDeploy__Logins__stage__Password: ${MODULES_DEPLOY_STAGE_PASSWORD:-}
+      App__CiDeploy__Logins__prod__Login: ${MODULES_DEPLOY_PROD_LOGIN:-}
+      App__CiDeploy__Logins__prod__Password: ${MODULES_DEPLOY_PROD_PASSWORD:-}
+      # Раздел «Серверы»: каталоги server-settings контуров (server-settings.conf + applied.conf).
+      App__ServerSettings__Root: /servers
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # settings.json, история операций, ключи шифрования cookie
+      - ./data:/data
+      # Настройки серверов Pilot: админка пишет server-settings.conf, pilot-server применяет его при перезапуске.
+      # Корни контуров те же, что у сервиса миграции ниже (TEST_ROOT / STAGE_ROOT / PROD_ROOT).
+      - ${TEST_ROOT:-C:/Ascon-Docker/test}/server-settings:/servers/test
+      - ${STAGE_ROOT:-C:/Ascon-Docker/stage}/server-settings:/servers/stage
+      - ${PROD_ROOT:-C:/Ascon-Docker/prod}/server-settings:/servers/prod
+
+  migration:
+    build: ./migration
+    image: pilot-migration:latest
+    container_name: pilot-migration
+    restart: unless-stopped
+    ports:
+      # Админка ходит к сервису по сети compose (http://pilot-migration:8080); наружу порт открыт только на этой машине.
+      - "${MIGRATION_BIND:-127.0.0.1}:${MIGRATION_PORT:-5320}:8080"
+    # Защита в глубину, как у админки: без лишних привилегий, корневая ФС только на чтение (пишет только /data и /tmp).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    # В образе нет curl: проверка - запрос /health через bash (/dev/tcp).
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    environment:
+      # Тот же ключ указывается в админке (App__Migration__ApiKey).
+      Migration__ApiKey: ${MIGRATION_API_KEY:?Задайте MIGRATION_API_KEY в .env}
+      # Каталог с присланными файловыми базами Pilot (.dbp): подпапка на базу. Импортировать можно только из него.
+      Migration__ImportDirectory: /mnt/import
+      # Каталог выгрузок базы в файлы: папка на выгрузку, её переносят в каталог импорта другого компьютера.
+      Migration__ExportDirectory: /mnt/export
+      # Начальные подключения - применяются, пока нет data/config.json; дальше правятся в админке.
+      Migration__Defaults__0__Key: prod
+      Migration__Defaults__0__PilotUrl: http://pilot-server-prod:5545/pilot-ice_ru
+      Migration__Defaults__0__PilotAdminLogin: ${PROD_PILOT_ADMIN:-admin}
+      Migration__Defaults__0__PilotAdminPassword: ${PROD_PILOT_PASSWORD:-}
+      Migration__Defaults__0__SettingsXmlPath: /mnt/prod/settings/settings.xml
+      Migration__Defaults__0__ArchiveServerRoot: /usr/share/ascon/databases
+      Migration__Defaults__0__ArchiveLocalRoot: /mnt/prod/databases
+      Migration__Defaults__0__S3ServerUrl: http://rustfs-prod:9000
+      Migration__Defaults__0__S3AccessKey: ${PROD_S3_ACCESS_KEY:-}
+      Migration__Defaults__0__S3SecretKey: ${PROD_S3_SECRET_KEY:-}
+      Migration__Defaults__1__Key: test
+      Migration__Defaults__1__PilotUrl: http://pilot-server-test:5545/pilot-ice_ru
+      Migration__Defaults__1__PilotAdminLogin: ${TEST_PILOT_ADMIN:-admin}
+      Migration__Defaults__1__PilotAdminPassword: ${TEST_PILOT_PASSWORD:-}
+      Migration__Defaults__1__SettingsXmlPath: /mnt/test/settings/settings.xml
+      Migration__Defaults__1__ArchiveServerRoot: /usr/share/ascon/databases
+      Migration__Defaults__1__ArchiveLocalRoot: /mnt/test/databases
+      Migration__Defaults__1__S3ServerUrl: http://rustfs-test:9000
+      Migration__Defaults__1__S3AccessKey: ${TEST_S3_ACCESS_KEY:-}
+      Migration__Defaults__1__S3SecretKey: ${TEST_S3_SECRET_KEY:-}
+      Migration__Defaults__2__Key: stage
+      Migration__Defaults__2__PilotUrl: http://pilot-server-stage:5545/pilot-ice_ru
+      Migration__Defaults__2__PilotAdminLogin: ${STAGE_PILOT_ADMIN:-admin}
+      Migration__Defaults__2__PilotAdminPassword: ${STAGE_PILOT_PASSWORD:-}
+      Migration__Defaults__2__SettingsXmlPath: /mnt/stage/settings/settings.xml
+      Migration__Defaults__2__ArchiveServerRoot: /usr/share/ascon/databases
+      Migration__Defaults__2__ArchiveLocalRoot: /mnt/stage/databases
+      Migration__Defaults__2__S3ServerUrl: http://rustfs-stage:9000
+      Migration__Defaults__2__S3AccessKey: ${STAGE_S3_ACCESS_KEY:-}
+      Migration__Defaults__2__S3SecretKey: ${STAGE_S3_SECRET_KEY:-}
+      # Пароль PostgreSQL (роль pilotuser) по контурам. Нужен кластерному Pilot-Server: в его настройках пароль зашифрован.
+      # У монолита берётся из settings.xml, это значение - запасное. Задаёт его только окружение: PUT /api/config его не стирает.
+      Migration__PgPasswords__prod: ${PROD_PILOT_PG_PASSWORD:-}
+      Migration__PgPasswords__test: ${TEST_PILOT_PG_PASSWORD:-}
+      Migration__PgPasswords__stage: ${STAGE_PILOT_PG_PASSWORD:-}
+      # База конфигурации кластера Pilot-Server (на том же сервере PostgreSQL, что и база Pilot).
+      Migration__ConfigurationDatabase: ${MIGRATION_CONFIG_DATABASE:-configurationdb}
+    volumes:
+      # config.json (подключения), schedules.json, runs/ (журналы запусков)
+      - ./migration/data:/data
+      # settings.xml серверов Pilot - только чтение: из них берутся файловые архивы и строки подключения.
+      - ${PROD_ROOT:-C:/Ascon-Docker/prod}/pilot-server/settings:/mnt/prod/settings:ro
+      - ${TEST_ROOT:-C:/Ascon-Docker/test}/pilot-server/settings:/mnt/test/settings:ro
+      - ${STAGE_ROOT:-C:/Ascon-Docker/stage}/pilot-server/settings:/mnt/stage/settings:ro
+      # Файловые архивы-папки. Прод - источник, монтируется только на чтение.
+      - ${PROD_ROOT:-C:/Ascon-Docker/prod}/databases:/mnt/prod/databases:ro
+      - ${TEST_ROOT:-C:/Ascon-Docker/test}/databases:/mnt/test/databases
+      - ${STAGE_ROOT:-C:/Ascon-Docker/stage}/databases:/mnt/stage/databases
+      # Настройки сервера Pilot (опция «Настройки сервера»): каталог рядом с settings - /mnt/<контур>/server-settings.
+      # Прод - только источник: его значения читаются из settings.xml, каталог не пишется.
+      - ${PROD_ROOT:-C:/Ascon-Docker/prod}/server-settings:/mnt/prod/server-settings:ro
+      - ${TEST_ROOT:-C:/Ascon-Docker/test}/server-settings:/mnt/test/server-settings
+      - ${STAGE_ROOT:-C:/Ascon-Docker/stage}/server-settings:/mnt/stage/server-settings
+      # Присланные файловые базы (.dbp) и их файловые архивы - только чтение: сервис из них только читает.
+      - ${IMPORT_ROOT:-C:/Ascon-Docker/import}:/mnt/import:ro
+      # Выгрузки базы в файлы (.dbp + тела файлов) для импорта на другом компьютере - на запись.
+      - ${EXPORT_ROOT:-C:/Ascon-Docker/export}:/mnt/export
+    networks:
+      - default
+      - pilot-prod
+      - pilot-test
+      - pilot-stage
+
+# Сети контуров: сервис миграции обращается к pilot-server-*, postgres-*, rustfs-* по именам контейнеров.
+networks:
+  pilot-prod:
+    external: true
+  pilot-test:
+    external: true
+  pilot-stage:
+    external: true

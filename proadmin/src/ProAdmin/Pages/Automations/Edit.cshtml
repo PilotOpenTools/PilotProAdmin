@@ -1,0 +1,304 @@
+@page "/Automations/{env}/Edit"
+@model ProAdmin.Pages.Automations.EditModel
+@using System.Text.Json
+@{
+    var env = Model.Current;
+    var title = Model.Name;
+    ViewData["Title"] = title;
+    var pilotVersion = Model.PilotVersion?.Version?.ToString();
+    var gitVersion = AutomationVersion.Find(Model.GitJson?.Text)?.ToString();
+    var inSync = Model.PilotVersion is not null && Model.GitJson is not null &&
+                 AutomationFiles.SameContent(Model.PilotVersion.Triggers, Model.GitJson.Text) &&
+                 AutomationFiles.SameContent(Model.PilotVersion.CSharpCode, Model.GitCs?.Text);
+    var editorData = JsonSerializer.Serialize(new
+    {
+        env = env.Key,
+        branch = Model.ShownBranch,
+        baseBranch = env.Branch,
+        requireVersion = Model.AppSettings.RequireVersion,
+        workMode = Model.WorkMode,
+        hotfix = Model.IsHotfixMode,
+        name = Model.Name,
+        requireTask = env.RequireTaskReference,
+        pilot = Model.PilotVersion is null ? null : new { triggers = Model.PilotVersion.Triggers, csharp = Model.PilotVersion.CSharpCode, paused = Model.PilotVersion.IsPaused },
+        git = Model.GitJson is null ? null : new { triggers = Model.GitJson.Text, csharp = Model.GitCs?.Text ?? "" },
+        gitVersion = Model.GitJson is null ? null : AutomationChecks.FirstTriggerVersion(Model.GitJson.Text)?.ToString(),
+        gitHasCSharp = Model.GitCs is not null,
+    });
+}
+@section Head {
+    <link rel="stylesheet" href="~/vendor/codemirror/codemirror.min.css" asp-append-version="true" />
+}
+
+<div class="crumbs">
+    <a href="/Automations/@env.Key">@env.Title</a> <span>/</span>
+    @if (Model.Repo is { Folder.Length: > 0 })
+    {
+        <span>@Model.Repo.Folder</span> <span>/</span>
+    }
+    <a href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)">@title</a> <span>/</span>
+    <span>Редактор · @env.Title</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1 class="mono-title">@title</h1>
+        @if (!string.IsNullOrWhiteSpace(Model.Repo?.Description))
+        {
+            <p class="muted">@Model.Repo.Description</p>
+        }
+        <div class="meta-row">
+            <span class="meta"><span class="env-dot env-@env.Key"></span>Сервер @env.Title: <b>@(Model.PilotError is not null ? "ошибка" : Model.PilotVersion is null ? "нет" : pilotVersion ?? "без версии")</b></span>
+            @if (env.Branch.Length > 0 && Model.Repo is not null)
+            {
+                <span class="meta">Ветка <code>@env.Branch</code>: <b>@(Model.GitError is not null ? "ошибка" : Model.GitJson is null ? "нет" : gitVersion ?? "без версии")</b></span>
+            }
+            @if (Model.PilotVersion is not null && Model.GitJson is not null)
+            {
+                <span class="badge @(inSync ? "badge-synced" : "badge-differs")">@(inSync ? "сервер = ветка" : "сервер ≠ ветка")</span>
+            }
+            @if (Model.Repo is not null)
+            {
+                <a class="meta" href="@Model.Repo.WebUrl" target="_blank" rel="noopener">@Model.Repo.ProjectPath</a>
+            }
+        </div>
+    </div>
+    <div class="head-actions">
+        <a class="btn btn-sm" href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)" title="Схема этапов, ветки, релизы">К автоматизации</a>
+        @if (env.Branch == AutomationRepositories.MainBranch && Model.Repo is not null)
+        {
+            <a class="btn btn-sm btn-ghost" href="/Automations/Rollback?name=@Uri.EscapeDataString(Model.Name)" title="Вернуть прод к одному из прошлых релизов">Откатить версию</a>
+        }
+        @if (env.Branch == AutomationRepositories.DevBranch && Model.Repo is not null)
+        {
+            <a class="btn btn-sm btn-promote" href="/Automations/Promote?name=@Uri.EscapeDataString(Model.Name)" title="Отправить версию из dev в main и на продовый сервер">Перенести на прод /</a>
+        }
+        <a class="btn btn-sm" href="/Automations/Rename?name=@Uri.EscapeDataString(Model.Name)">Переименовать</a>
+        <a class="btn btn-sm" href="/Automations/Create?copyFrom=@Uri.EscapeDataString(Model.Name)">Копировать</a>
+        <a class="btn btn-sm btn-ghost" href="/Automations/Delete?name=@Uri.EscapeDataString(Model.Name)">Удалить</a>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@if (Model.PilotError is not null)
+{
+    <div class="alert alert-error">Сервер @env.Title: @Model.PilotError</div>
+}
+@if (Model.GitError is not null)
+{
+    <div class="alert alert-warn">GitLab: @Model.GitError</div>
+}
+@if (Model.AutomationsReadOnly)
+{
+    <div class="alert alert-info">Только просмотр: ваш доступ к группе <code>@Model.GroupPath</code> в GitLab - <b>@(Model.AutomationsAccess?.LevelTitle ?? "не определён")</b>. Для изменений нужен Developer или выше.</div>
+}
+@if (Model.Repo is null && Model.GitError is null && !Model.AutomationsReadOnly)
+{
+    <div class="alert alert-warn">
+        Для «@Model.Name» ещё нет репозитория в GitLab - отправка недоступна.
+        <a href="/Automations/Create?name=@Uri.EscapeDataString(Model.Name)">Создать репозиторий</a> (можно сразу импортировать версии с серверов).
+    </div>
+}
+else if (!env.IsEditable)
+{
+    <div class="alert alert-info">Контур «@env.Title» не привязан к ветке - только просмотр.</div>
+}
+else if (Model.PilotVersion is not null && Model.GitJson is not null && !inSync)
+{
+    <div class="alert alert-warn">Сервер и ветка <code>@env.Branch</code> расходятся. В редакторе - версия <b>@(Model.InitialSource == "pilot" ? "с сервера" : "из ветки")</b>. «Изменения» покажут разницу с веткой.</div>
+}
+else if (Model.PilotVersion is null && Model.GitJson is not null)
+{
+    <div class="alert alert-info">На сервере @env.Title этой автоматизации ещё нет. В редакторе - версия из ветки <code>@env.Branch</code>; «Отправить» запишет её на сервер.</div>
+}
+
+<form method="post" id="editor-form" asp-page-handler="Publish" asp-route-env="@env.Key" asp-route-name="@Model.Name">
+    <input type="hidden" asp-for="Form.BasePilotHash" />
+    <input type="hidden" asp-for="Form.BaseGitJsonBlob" />
+    <input type="hidden" asp-for="Form.BaseGitCsBlob" />
+
+    <div class="editor-layout">
+        <div class="editor-main">
+            <section class="card editor-card">
+                <div class="editor-head">
+                    <h2>Триггеры <span class="muted">JSON</span></h2>
+                    <span class="muted small">@(Model.Name).json</span>
+                </div>
+                <div class="version-bar" id="version-bar">
+                    <span id="version-status" class="version-status"></span>
+                    <span class="version-buttons" title="Повысить версию относительно ветки">
+                        <button type="button" class="btn btn-sm" data-bump="patch" title="Исправление ошибки без изменения сценария">+patch</button>
+                        <button type="button" class="btn btn-sm" data-bump="minor" title="Изменение или расширение бизнес-логики">+minor</button>
+                        <button type="button" class="btn btn-sm" data-bump="major" title="Существенное или несовместимое изменение поведения">+major</button>
+                    </span>
+                </div>
+                <textarea asp-for="Form.Triggers" id="triggers" class="code" spellcheck="false" rows="22"></textarea>
+                <div class="lint-panel" id="lint-panel">
+                    <div class="lint-head"><span>Проверка сценария</span> <span id="lint-summary" class="muted small">…</span></div>
+                    <ul class="lint-list" id="lint-list"></ul>
+                    <p class="muted small lint-note" id="lint-note"></p>
+                </div>
+            </section>
+
+            <section class="card editor-card">
+                <div class="editor-head">
+                    <h2>C#-вставка <span class="muted">необязательно</span></h2>
+                    <span class="muted small">@($"{Model.Name}/{Model.Name}").cs</span>
+                </div>
+                <textarea asp-for="Form.CSharpCode" id="csharp" class="code" spellcheck="false" rows="14" placeholder="// пусто - автоматизация без C#"></textarea>
+            </section>
+
+            <section class="card" id="diff-card" hidden>
+                <div class="editor-head">
+                    <h2>Изменения</h2>
+                    <div class="seg" role="group" aria-label="С чем сравнивать">
+                        <button type="button" class="seg-btn active" data-diff="git">с веткой @Model.ShownBranch</button>
+                        <button type="button" class="seg-btn" data-diff="pilot">с сервером</button>
+                    </div>
+                </div>
+                <div id="diff-output" class="diff"></div>
+            </section>
+        </div>
+
+        <aside class="editor-side">
+            <section class="card">
+                <h3>Загрузить в редактор</h3>
+                <div class="btn-col">
+                    <button type="button" class="btn btn-sm" data-source="pilot" data-env="@env.Key">С сервера @env.Title</button>
+                    @if (env.Branch.Length > 0)
+                    {
+                        <button type="button" class="btn btn-sm" data-source="git" data-env="@env.Key">Из ветки @env.Branch</button>
+                    }
+                    @foreach (var other in Model.OtherEnvironments)
+                    {
+                        @if (other.Branch.Length > 0)
+                        {
+                            <button type="button" class="btn btn-sm btn-ghost" data-source="git" data-env="@other.Key">Из ветки @other.Branch (@other.Title)</button>
+                        }
+                        @if (other.HasServer)
+                        {
+                            <button type="button" class="btn btn-sm btn-ghost" data-source="pilot" data-env="@other.Key">С сервера @other.Title</button>
+                        }
+                    }
+                </div>
+                <p class="muted small" id="source-status"></p>
+            </section>
+
+            <section class="card">
+                <label class="check">
+                    <input type="checkbox" asp-for="Form.IsPaused" id="paused" />
+                    <span>Приостановлена на сервере</span>
+                </label>
+            </section>
+
+            @if (Model.CanPublish && Model.WorkMode)
+            {
+                var prefix = Model.IsHotfixMode ? "hotfix/" : "feature/";
+                var alwaysShowTask = Model.IsHotfixMode || env.RequireTaskReference;
+                <section class="card">
+                    <h3>Сохранить в @(Model.IsHotfixMode ? "hotfix-ветку" : "ветку задачи")</h3>
+                    <label class="field">
+                        <span>Ветка</span>
+                        <select asp-for="Form.WorkBranch" id="work-branch">
+                            <option value="@EditModel.NewBranch">+ новая ветка от @env.Branch</option>
+                            @foreach (var b in Model.WorkBranches)
+                            {
+                                <option value="@b">@b</option>
+                            }
+                        </select>
+                    </label>
+                    @if (alwaysShowTask)
+                    {
+                        <label class="field">
+                            <span>Задача (@(env.RequireTaskReference ? "обязательно" : "если есть"))</span>
+                            <input asp-for="Form.TaskReference" id="task" placeholder="KTN-1234" autocomplete="off"
+                                   aria-required="@(env.RequireTaskReference ? "true" : null)" />
+                        </label>
+                    }
+                    <div id="new-branch-fields" class="btn-row">
+                        @if (!alwaysShowTask)
+                        {
+                            <input asp-for="Form.TaskReference" id="task" placeholder="KTN-1234 (если есть)" autocomplete="off" size="14" />
+                        }
+                        <input asp-for="Form.BranchSlug" placeholder="кратко, что делается" autocomplete="off" size="18" />
+                    </div>
+                    <small class="muted">Новая ветка: <code>@(prefix)KTN-1234-кратко</code> или <code>@(prefix)кратко</code>.</small>
+                    <label class="field">
+                        <span>Что изменилось (@(env.RequireTaskReference ? "для бизнеса" : "техническое описание"))</span>
+                        <textarea asp-for="Form.Description" id="description" rows="3"></textarea>
+                        <small class="muted">Сообщение коммита; при вливании - пункты <code>@Changelog.FileName</code>. Каждая строка - отдельный пункт.</small>
+                    </label>
+                    <div class="commit-preview"><span class="muted small">Коммит:</span> <code id="commit-preview"></code></div>
+
+                    <div class="btn-row">
+                        <button type="button" class="btn" id="btn-validate">Проверить</button>
+                        <button type="button" class="btn" id="btn-diff">Изменения</button>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" id="btn-publish"
+                            formaction="@Url.Page("/Automations/Edit", "SaveBranch", new { env = env.Key, name = Model.Name })">Сохранить в ветку</button>
+                    <p class="muted small">
+                        Сервер @env.Title не меняется. @(Model.IsHotfixMode
+                            ? "На прод hotfix выпускается кнопкой «Hotfix в прод» на странице автоматизации."
+                            : "На тест ветка попадает кнопкой «Влить / тест» на странице автоматизации (MR в dev, pipeline, запись на сервер).")
+                        <a href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)">Страница автоматизации /</a>
+                    </p>
+                    <ul class="checklist" id="validate-output"></ul>
+                </section>
+            }
+            else if (Model.CanPublish)
+            {
+                <section class="card">
+                    <h3>Отправить в <code>@env.Branch</code></h3>
+                    @if (env.RequireTaskReference)
+                    {
+                        <label class="field">
+                            <span>Задача</span>
+                            <input asp-for="Form.TaskReference" id="task" placeholder="TASK-123" autocomplete="off" />
+                        </label>
+                    }
+                    <label class="field">
+                        <span>Что изменилось (@(env.RequireTaskReference ? "для бизнеса" : "техническое описание"))</span>
+                        <textarea asp-for="Form.Description" id="description" rows="3"></textarea>
+                        <small class="muted">Попадёт в коммит и в <code>@Changelog.FileName</code>@(env.Branch == AutomationRepositories.MainBranch ? " (раздел с версией)" : " (раздел «Не выпущено»)"). Каждая строка - отдельный пункт.</small>
+                    </label>
+                    <div class="commit-preview"><span class="muted small">Коммит:</span> <code id="commit-preview"></code></div>
+
+                    <div class="btn-row">
+                        <button type="button" class="btn" id="btn-validate">Проверить</button>
+                        <button type="button" class="btn" id="btn-diff">Изменения</button>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" id="btn-publish">Отправить</button>
+                    <p class="muted small">Изменения уйдут в MR в <code>@env.Branch</code>. Автоматизация сохранится на сервере @env.Title, только если pipeline GitLab пройдёт.</p>
+                    <ul class="checklist" id="validate-output"></ul>
+                </section>
+
+            }
+            @if (Model.CanPublish)
+            {
+                @if (Model.Repo is not null)
+                {
+                    <details class="card danger-zone">
+                        <summary>Удалить только из <code>@env.Branch</code> и с сервера @env.Title</summary>
+                        <p class="muted small">Удалит файлы из <code>@env.Branch</code> (через MR и pipeline) и автоматизацию с сервера @env.Title. Описание и задача берутся из полей выше.</p>
+                        <button type="submit" class="btn btn-danger btn-block" id="btn-delete"
+                                formaction="@Url.Page("/Automations/Edit", "Delete", new { env = env.Key, name = Model.Name })">Удалить через MR</button>
+                    </details>
+                }
+            }
+        </aside>
+    </div>
+</form>
+
+<script type="application/json" id="editor-data">@Html.Raw(editorData)</script>
+
+@section Scripts {
+    <script src="~/vendor/codemirror/codemirror.min.js" asp-append-version="true"></script>
+    <script src="~/vendor/codemirror/mode/javascript/javascript.min.js" asp-append-version="true"></script>
+    <script src="~/vendor/codemirror/mode/clike/clike.min.js" asp-append-version="true"></script>
+    <script src="~/vendor/codemirror/addon/edit/matchbrackets.min.js" asp-append-version="true"></script>
+    <script src="~/js/diff.js" asp-append-version="true"></script>
+    <script src="~/js/editor.js" asp-append-version="true"></script>
+}

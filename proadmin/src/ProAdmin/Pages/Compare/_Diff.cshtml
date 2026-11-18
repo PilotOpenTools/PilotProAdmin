@@ -1,0 +1,44 @@
+@using ProAdmin.Compare
+@model (string Title, DiffResult Diff, string LabelA, string LabelB)
+@{
+    const int MaxLineLength = 400;
+    string Cut(string s) => s.Length > MaxLineLength ? s[..MaxLineLength] + $" … (+{s.Length - MaxLineLength} симв.)" : s;
+    var d = Model.Diff;
+}
+<div class="diff-block">
+    <div class="diff-title">
+        @Model.Title
+        @if (d.Identical)
+        {
+            <span class="badge badge-synced">одинаково</span>
+        }
+        else
+        {
+            <span class="badge badge-failed">−@d.Removed</span>
+            <span class="badge badge-synced">+@d.Added</span>
+        }
+        <span class="muted small">строк: @Model.LabelA - @d.OldLines, @Model.LabelB - @d.NewLines</span>
+    </div>
+
+    @if (d.TooLarge)
+    {
+        <p class="muted">Различий слишком много для построчного показа - файлы отличаются почти целиком.</p>
+    }
+    else if (!d.Identical)
+    {
+        <div class="diff-body">
+            @foreach (var h in d.Hunks)
+            {
+                <div class="dl3 dl-hunk">
+                    <span></span><span></span><span>@@ @Model.LabelA: строка @h.OldStart · @Model.LabelB: строка @h.NewStart</span>
+                </div>
+                @foreach (var l in h.Lines)
+                {
+                    var cls = l.Kind switch { DiffKind.Added => "dl-add", DiffKind.Removed => "dl-del", _ => "" };
+                    var sign = l.Kind switch { DiffKind.Added => "+", DiffKind.Removed => "−", _ => " " };
+                    <div class="dl3 @cls"><span class="dl-num">@l.OldNo</span><span class="dl-num">@l.NewNo</span><span>@sign @Cut(l.Text)</span></div>
+                }
+            }
+        </div>
+    }
+</div>

@@ -1,0 +1,86 @@
+@page "/Migration/Schedule"
+@model ProAdmin.Pages.Migration.ScheduleModel
+@{
+    ViewData["Title"] = Model.IsNew ? "Новое расписание" : "Расписание " + Model.Schedule.Name;
+    var s = Model.Schedule;
+    var dayNames = new[] { "пн", "вт", "ср", "чт", "пт", "сб", "вс" };
+}
+<div class="crumbs">
+    <a href="/Migration">Миграция</a> <span>/</span> <span>@(Model.IsNew ? "Новое расписание" : s.Name)</span>
+</div>
+<div class="page-head">
+    <div>
+        <h1>@(Model.IsNew ? "Новое расписание" : s.Name)</h1>
+        <p class="muted">Перенос запускается сам в заданное время. Если в этот момент идёт другой перенос, запуск пропускается (видно в «Последний»).</p>
+    </div>
+</div>
+<partial name="_ProdAdminBanner" model="Model" />
+
+@if (Model.Error is not null)
+{
+    <div class="alert alert-error">@Model.Error</div>
+}
+
+<form method="post" class="form" id="mig-form">
+    <input type="hidden" asp-for="Id" />
+    <section class="card">
+        <h2>Когда</h2>
+        <div class="grid-2">
+            <label class="field">
+                <span>Название</span>
+                <input name="Schedule.Name" value="@s.Name" required placeholder="Ночная копия прода в тест" />
+            </label>
+            <label class="check mig-enabled">
+                <input type="checkbox" name="Schedule.Enabled" value="true" checked="@s.Enabled" /><input type="hidden" name="Schedule.Enabled" value="false" />
+                <span>Включено</span>
+            </label>
+        </div>
+
+        <div class="mig-modes">
+            <label class="mig-mode">
+                <input type="radio" name="Schedule.Kind" value="Weekly" checked="@(s.Kind != "Interval")" />
+                <span>
+                    <b>По дням недели</b>
+                    <span class="mig-inline">
+                        в <input type="time" name="Schedule.TimeOfDay" value="@s.TimeOfDay" />
+                        @for (var d = 1; d <= 7; d++)
+                        {
+                            <label class="check mig-day"><input type="checkbox" name="Schedule.Days" value="@d" checked="@s.Days.Contains(d)" /><span>@dayNames[d - 1]</span></label>
+                        }
+                    </span>
+                    <span class="muted small">Ни один день не отмечен - каждый день.</span>
+                </span>
+            </label>
+            <label class="mig-mode">
+                <input type="radio" name="Schedule.Kind" value="Interval" checked="@(s.Kind == "Interval")" />
+                <span>
+                    <b>Через промежуток времени</b>
+                    <span class="mig-inline">
+                        каждые <input type="number" name="Schedule.IntervalValue" value="@s.IntervalValue" min="1" class="mig-num" />
+                        <select name="Schedule.IntervalUnit">
+                            <option value="minutes" selected="@(s.IntervalUnit == "minutes")">мин</option>
+                            <option value="hours" selected="@(s.IntervalUnit == "hours")">ч</option>
+                            <option value="days" selected="@(s.IntervalUnit == "days")">сут</option>
+                        </select>
+                    </span>
+                    <span class="muted small">Не чаще раза в 15 минут. Отсчёт - от предыдущего запуска.</span>
+                </span>
+            </label>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Что переносить</h2>
+        <partial name="_RequestFields" model="new ProAdmin.Pages.Migration.RequestFieldsModel(Model.Form, Model.Envs)" />
+        <p class="muted small">Полная копия по расписанию запускается без ввода имени базы - перед сохранением параметры проверяются так же, как при ручном запуске.</p>
+    </section>
+
+    <div class="form-actions">
+        <button class="btn btn-primary" type="submit" data-busy="Проверяю и сохраняю…">Сохранить</button>
+        <a class="btn btn-ghost" href="/Migration">Отмена</a>
+    </div>
+</form>
+
+@section Scripts {
+    <script src="~/js/migration.js" asp-append-version="true"></script>
+}

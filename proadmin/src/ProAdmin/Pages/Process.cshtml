@@ -1,0 +1,549 @@
+@page "/Process"
+@inject IWebHostEnvironment Env
+@{
+    ViewData["Title"] = "Как работать";
+    ViewData["Section"] = "process";
+
+    // (номер, колонка: dev | site | qa, заголовок, текст, статус задачи, кнопка на сайте)
+    var steps = new (int N, string Lane, string Title, string Text, string? Status, string? Button)[]
+    {
+        (1, "dev", "Берёт задачу", "Открывает автоматизацию на вкладке «Автоматизации» или создаёт новую.", "Progress", "+ Создать автоматизацию"),
+        (2, "dev", "Вносит изменения", "Правит JSON / C#, повышает версию, смотрит «Проверку сценария», пишет техническое описание. Изменения коммитятся в ветку задачи feature/… от dev, серверы не меняются.", null, "+patch · Проверить · Сохранить в ветку"),
+        (3, "site", "Сайт вливает в dev", "На странице автоматизации: MR в dev / pipeline / запись на тестовый сервер / merge, ветка задачи удаляется. Не прошло - сервер не меняется.", null, "Влить / тест"),
+        (4, "dev", "Передаёт на проверку", "Пишет в задаче «На тест загружена версия X.Y.Z».", "For Test", null),
+        (5, "qa", "Проверяет на тесте", "Работа автоматизации на тестовом сервере. Есть замечания - возвращает разработчику (шаг 2).", "Test", null),
+        (6, "qa", "Переносит на прод", "Страница автоматизации: проверяет версии и сценарий по базе прода, указывает задачу и бизнес-описание. Если в настройках выбран путь через стейдж, сначала «Релиз / стейдж» и проверка на стейдже.", null, "На прод / / Выпустить в прод /"),
+        (7, "site", "Сайт отправляет в main", "MR в main / pipeline / запись на продовый сервер / merge / тег vX.Y.Z и Release.", null, null),
+        (8, "qa", "Проверяет на проде", "Всё в порядке - задача закрыта. Ошибка - откат к прошлому релизу и возврат задачи разработчику.", "Prod", "Откатить версию"),
+    };
+    // Отчёты: правят в дизайнере Pilot на тесте, в dev отправляет модуль Reports, на прод - сайт.
+    var reportSteps = new (int N, string Lane, string Title, string Text, string? Status, string? Button)[]
+    {
+        (1, "dev", "Берёт задачу", "Открывает отчёт в Pilot на тестовом сервере: «Редактировать отчёт» или главное меню / «Загрузить отчёт» (там же сравнение с main/dev). Новый отчёт создаёт в папке отчётов.", "Progress", "Редактировать отчёт"),
+        (2, "dev", "Вносит изменения", "Правит макет и скрипт в дизайнере отчётов (DevExpress). Первая строка скрипта - Report.Begin(this, «Имя») для статистики.", null, "Сохранить"),
+        (3, "site", "Reports отправляет в dev", "Окно при сохранении: «Что изменилось» / причина версии в Pilot, коммит .repx в dev, пункт в CHANGELOG.md («Не выпущено»). Нет репозитория - «Создать репозиторий…» (выбор подгруппы, проверка прав); нет ветки dev - создаётся.", null, "Сохранить и отправить"),
+        (4, "dev", "Передаёт на проверку", "Пишет в задаче «На тест загружен отчёт …», что изменилось и ссылку на коммит.", "For Test", null),
+        (5, "qa", "Проверяет на тесте", "Строит отчёт на тестовом сервере. Есть замечания - возвращает разработчику (шаг 2).", "Test", null),
+        (6, "qa", "Переносит на прод", "Вкладка «Отчёты» / «На прод /». Сайт показывает, совпадает ли dev с тестом, и номер будущей версии; «что изменилось» подставляется из CHANGELOG.md ветки dev.", null, "На прод /"),
+        (7, "site", "Сайт отправляет в main", "Раздел CHANGELOG.md с номером / MR dev / main / pipeline / новая версия на продовом сервере (причина «2026.09.27 - …») / merge / релиз v2026.09.27.", null, null),
+        (8, "qa", "Проверяет на проде", "Всё в порядке - задача закрыта. Ошибка - «откат» к прошлому релизу (новой версией) и возврат задачи разработчику.", "Prod", "откат"),
+    };
+    // Модули: Kaiten / feature / dev (тест) / release (стейдж) / main (прод)
+    var moduleSteps = new (int N, string Lane, string Title, string Text, string? Status, string? Button)[]
+    {
+        (1, "dev", "Берёт задачу", "Вкладка «Модули» / модуль / создаёт ветку задачи <code>feature/KTN-1234</code> от <code>dev</code> (имя = номер задачи Kaiten).", "В работе", "Создать ветку"),
+        (2, "dev", "Разрабатывает, открывает MR", "Правит модуль в ветке, не поднимая версию. Открывает Merge Request <code>feature/KTN-1234 / dev</code>; pipeline проверяет схему веток и собирает модуль.", "Code Review", null),
+        (3, "qa", "Code Review", "Ревьюер (не автор) смотрит изменения и нажимает Approve. Без апрува «Влить / тест» недоступно.", null, "Approve"),
+        (4, "site", "Сайт вливает в dev и выкладывает на тест", "Squash merge (одна задача = один коммит в <code>dev</code>), сборка <code>dev</code> уходит на тестовый сервер. Ветка задачи удаляется.", null, "Влить / тест"),
+        (5, "qa", "Проверяет на тесте", "Аналитик / тестировщик проверяет модуль на тестовом сервере. Баги - возврат разработчику в <code>bugfix/KTN-…</code> (шаг 2).", "Test", null),
+        (6, "qa", "Собирает релиз", "Выпускающий выбирает версию X.Y.Z и задачи в релиз. Снятая галочка - задача в релиз не попадёт (cherry-pick).", null, "Релиз / стейдж"),
+        (7, "site", "Сайт готовит релиз и выкладывает на стейдж", "Ветка <code>release/X.Y.Z</code>, версия и <code>CHANGELOG.md</code>, сборка CI, выкладка на стейдж, тег <code>vX.Y.Z-rc.N</code>.", null, null),
+        (8, "qa", "Проверяет на стейдже", "Приёмка релиза. Мелкие баги - <code>bugfix/KTN-…</code> от <code>release/X.Y.Z</code> и «Влить / стейдж»; критический - отмена релиза.", "Stage", "Влить / стейдж"),
+        (9, "qa", "Выпускает в прод", "Выпускающий (Maintainer) подтверждает выпуск релиза.", null, "Выпустить в прод"),
+        (10, "site", "Сайт выпускает в main", "MR <code>release / main</code>, pipeline, на прод - та же сборка, что на стейдже, merge (не удался - прод откатывается), тег <code>vX.Y.Z</code> и Release, <code>release / dev</code>, ветка релиза удаляется.", null, null),
+        (11, "qa", "Проверяет на проде", "Smoke-check, статус «Прод» в Kaiten. Версии у пользователей - в Grafana «Pilot - клиентские модули» и в трее Pilot.", "Prod", "Откат"),
+    };
+    // Серверные модули (*.servext): те же контуры, но выкладка - в ServerHost без перезапуска сервера
+    var serverSteps = new (int N, string Lane, string Title, string Text, string? Status, string? Button)[]
+    {
+        (1, "dev", "Берёт задачу", "«Серверные модули» / «Ветки и выкладка (GitLab)» / создаёт ветку <code>feature/KTN-1234</code> от <code>dev</code> (имя = номер задачи Kaiten).", "В работе", "Создать ветку"),
+        (2, "dev", "Отлаживает у себя, без загрузки", "Скачивает <code>debug.json</code> и запускает модуль по F5 в Visual Studio через <code>debug</code> на данных тестового сервера. На сервер ничего не загружается и не пишется. Подробная инструкция - ниже.", null, "debug.json"),
+        (3, "dev", "Открывает MR", "Merge Request <code>feature/KTN-1234 / dev</code>; pipeline проверяет схему веток и собирает модуль. Версию руками не поднимает.", "Code Review", null),
+        (4, "qa", "Code Review", "Ревьюер (не автор) смотрит изменения и нажимает Approve. Без апрува «Влить / тест» недоступно.", null, "Approve"),
+        (5, "site", "Сайт вливает в dev и ставит на тест", "Squash merge в <code>dev</code>, CI собирает zip, админка проверяет архив и заменяет модуль в ServerHost теста на лету - сервер не перезапускается.", null, "Влить / тест"),
+        (6, "qa", "Проверяет на тесте", "Запускает автоматизацию на тестовом сервере, смотрит журнал ServerHost и Grafana «Pilot - серверные модули». Баги - возврат разработчику в <code>bugfix/KTN-…</code> (шаг 2).", "Test", "Отключить / Откатить"),
+        (7, "qa", "Собирает релиз", "Выпускающий выбирает версию X.Y.Z и задачи в релиз.", null, "Релиз / стейдж"),
+        (8, "site", "Сайт готовит релиз и ставит на стейдж", "Ветка <code>release/X.Y.Z</code>, версия и <code>CHANGELOG.md</code>, сборка CI, замена модуля на стейдже, тег <code>vX.Y.Z-rc.N</code>.", null, null),
+        (9, "qa", "Проверяет на стейдже и выпускает", "Приёмка на стейдже. Всё в порядке - подтверждает выпуск (Maintainer).", "Stage", "Выпустить в прод"),
+        (10, "site", "Сайт выпускает в main", "MR <code>release / main</code>, pipeline, на прод - та же сборка, что на стейдже, тег <code>vX.Y.Z</code> и Release, <code>release / dev</code>.", null, null),
+        (11, "qa", "Проверяет на проде", "Smoke-check, статус «Прод» в Kaiten. Ошибка - «Откатить» к предыдущей версии модуля на странице «Серверные модули».", "Prod", "Откатить"),
+    };
+    string ModuleLaneTitle(string lane) => lane switch { "dev" => "Разработчик", "site" => "Сайт / GitLab и серверы Pilot", _ => "Ревьюер / тестировщик / выпускающий" };
+    // Типы: ветка изменения / dev (тест) / release (стейдж) / main (прод), как у модулей
+    var typeSteps = new (int N, string Lane, string Title, string Text, string? Status, string? Button)[]
+    {
+        (1, "dev", "Заводит изменение", "«Типы» / «+ Новое изменение»: ветка <code>types/KTN-…</code> от <code>dev</code>.", "Progress", "+ Новое изменение"),
+        (2, "dev", "Правит тип", "Тип / состояние / группа / «Сохранить в ветку». Каждое сохранение - коммит в ветку изменения; серверы не меняются.", null, "Сохранить в ветку"),
+        (3, "site", "Сайт вливает в dev и пишет на тест", "«Влить / тест»: MR со squash (ветка - один коммит в <code>dev</code>), pipeline-проверка, merge, запись <code>dev</code> на тестовый сервер.", null, "Влить / тест"),
+        (4, "dev", "Связывает с модулем", "«+ Связать»: изменение типов / коммит клиентского/серверного модуля или автоматизации (или ветка задачи модуля).", "Test", "+ Связать"),
+        (5, "site", "Сайт выкладывает на стейдж вместе с модулем", "При «Релиз / стейдж» модуля, если его коммит в релизе: cherry-pick изменения в <code>release</code>, MR, pipeline, запись на стейдж - до модуля.", null, null),
+        (6, "qa", "Проверяет на стейдже", "Приёмка модуля вместе с типами на стейдже.", "Stage", null),
+        (7, "site", "Сайт выпускает в прод вместе с модулем", "«Выпустить в прод» модуля: MR типов <code>release / main</code> с версией и CHANGELOG, типы на прод перед модулем, merge после него, тег <code>vX.Y.Z</code>. Модуль не вышел - типы откатываются.", null, null),
+        (8, "qa", "Проверяет на проде", "Всё в порядке - задача закрыта. Изменения без модуля переносятся вручную: «/ стейдж», «/ прод».", "Prod", null),
+    };
+    string TypeLaneTitle(string lane) => lane switch { "dev" => "Разработчик / аналитик", "site" => "Сайт / GitLab и серверы Pilot", _ => "Тестировщик / выпускающий" };
+    string LaneTitle(string lane) => lane switch { "dev" => "Разработчик", "site" => "Сайт / GitLab и Pilot", _ => "Тестировщик / аналитик" };
+    string ReportLaneTitle(string lane) => lane switch { "dev" => "Разработчик (Pilot, тест)", "site" => "Reports / сайт / GitLab и Pilot", _ => "Тестировщик / аналитик" };
+}
+
+@{
+    void RenderFlow((int N, string Lane, string Title, string Text, string? Status, string? Button)[] items, Func<string, string> laneTitle)
+    {
+        <div class="flow-head">
+            <div class="lane-dev">@laneTitle("dev")</div>
+            <div class="lane-site">@laneTitle("site")</div>
+            <div class="lane-qa">@laneTitle("qa")</div>
+        </div>
+        <ol class="flow-grid">
+            @foreach (var s in items)
+            {
+                <li class="flow-step lane-@s.Lane" style="grid-row:@s.N">
+                    <span class="flow-lane-label">@laneTitle(s.Lane)</span>
+                    <div class="flow-card">
+                        <div class="flow-title"><span class="flow-num">@s.N</span>@s.Title</div>
+                        <div class="flow-text">@Html.Raw(s.Text)</div>
+                        <div class="flow-meta">
+                            @if (s.Status is not null)
+                            {
+                                <span class="badge">задача: @s.Status</span>
+                            }
+                            @if (s.Button is not null)
+                            {
+                                <span class="flow-button">@s.Button</span>
+                            }
+                        </div>
+                    </div>
+                </li>
+            }
+        </ol>
+    }
+}
+
+<nav class="process-nav" role="tablist" aria-label="Что настраиваем">
+    <a class="process-tab" href="#automations" data-tab="automations" role="tab">Автоматизации</a>
+    <a class="process-tab" href="#reports" data-tab="reports" role="tab">Отчёты</a>
+    <a class="process-tab" href="#modules" data-tab="modules" role="tab">Клиентские модули</a>
+    <a class="process-tab" href="#server-modules" data-tab="server-modules" role="tab">Серверные модули</a>
+    <a class="process-tab" href="#types" data-tab="types" role="tab">Типы</a>
+</nav>
+
+<div class="process-section" id="automations">
+    <div class="process-title">
+        <h1>Как работать с автоматизациями</h1>
+        <p class="muted">Автоматизации меняются только здесь, на сайте. Сначала ветка задачи и тест (ветка <code>dev</code>), на прод (<code>main</code>) - только после проверки. Срочное исправление прода - ветка <code>hotfix/…</code> от <code>main</code> и кнопка «Hotfix в прод».</p>
+    </div>
+
+    <div class="flow-legend">
+        <div class="flow-pair"><span class="env-dot env-test"></span><b>Ветка dev</b> / тестовый сервер</div>
+        <div class="flow-pair"><span class="env-dot env-prod"></span><b>Ветка main</b> / продовый сервер</div>
+        <div class="muted small">Сайт записывает автоматизацию на сервер только вместе с коммитом в ветку и только после успешных проверок - поэтому ветка всегда равна серверу.</div>
+    </div>
+
+    <section class="card flow">
+        @{ RenderFlow(steps, LaneTitle); }
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Шаг 5:</b> замечания на тесте / задача возвращается разработчику в <code>Progress</code>, снова шаги 2-4.</div>
+            <div class="flow-branch danger"><b>Шаг 8:</b> ошибка на проде / «Откатить версию» к прошлому релизу (новая версия, например v1.0.2 / откат на v1.0.1 = v1.0.3), задача - разработчику.</div>
+        </div>
+    </section>
+
+
+<section class="card">
+        <h2>После отката: что делать дальше</h2>
+        <p class="small">Откат меняет только <b>прод</b> (<code>main</code> и продовый сервер) и делается новой версией. Ветка <code>dev</code> и тест не трогаются: в них остаётся версия, от которой откатились, - там лежит работа, которую нужно исправить. Страница автоматизации после отката показывает «Прод откачен на vX» и два пути:</p>
+        <ol class="small">
+            <li><b>Исправить вперёд (обычно).</b> Задача возвращается разработчику / новая ветка задачи / исправление / «Влить / тест» / проверка / «На прод». Новая версия выше версии отката.</li>
+            <li><b>Принять откат в dev.</b> Если сломанная версия не нужна, нажмите «/ В тест»: <code>dev</code> и тестовый сервер станут такими же, как прод.</li>
+        </ol>
+        <p class="small"><b>Не нажимайте «На прод», пока не выбрали путь:</b> пока <code>dev</code> не исправлен, перенос вернёт на прод ту самую сломанную версию. Откатить сам откат - ещё один откат на нужный релиз.</p>
+    </section>
+
+<div class="grid-3 rules">
+    <section class="card">
+        <h3>Версия</h3>
+        <p class="small">Поле первого триггера: <code>{ "_comment_": "Version: 1.0.2", "when": … }</code>. Отдельная запись без <code>"when"</code> роняет клиент Pilot. Повышается кнопками +patch / +minor / +major при любом изменении, в том числе только в C#.</p>
+    </section>
+    <section class="card">
+        <h3>Проверки</h3>
+        <p class="small">Синтаксис JSON, справка Pilot (триггеры, действия, параметры), база сервера (типы, атрибуты, состояния), компиляция C#, версия, pipeline GitLab.</p>
+    </section>
+    <section class="card">
+        <h3>Коммиты и теги</h3>
+        <p class="small"><code>dev</code>: «Имя: техническое описание». <code>main</code>: «Имя: TASK-123, бизнес-описание». Каждый перенос на прод - тег <code>vX.Y.Z</code> и Release.</p>
+    </section>
+</div>
+
+<div class="grid-3 rules">
+    <section class="card">
+        <h3>Нельзя</h3>
+        <p class="small">Менять автоматизации в Pilot myAdmin напрямую и переносить на прод то, что не проверено на тесте. Изменения мимо сайта видны в списке как «отличается».</p>
+    </section>
+    <section class="card">
+        <h3>Права</h3>
+        <p class="small">Администратор сервера Pilot. GitLab: разработчику - Developer, тому, кто переносит на прод, - Maintainer (вливание в защищённую <code>main</code>).</p>
+    </section>
+    <section class="card">
+        <h3>В задаче</h3>
+        <p class="small">«На тест / на прод загружена версия X.Y.Z», наличие C#-вставки и серверных модулей расширения со ссылкой на GitLab.</p>
+    </section>
+</div>
+</div>
+
+<div class="process-section" id="reports">
+    <div class="process-title">
+        <h1>Как работать с отчётами</h1>
+        <p class="muted">
+            Отчёт правят в Pilot - в дизайнере отчётов на тестовом сервере. В ветку <code>dev</code> его отправляет клиентский модуль
+            Reports при сохранении, на прод (<code>main</code>) переносит только сайт, после проверки на тесте. В админке отчёты не редактируются.
+        </p>
+    </div>
+
+    <section class="card">
+        <h2>Где лежит отчёт</h2>
+        <div class="report-map">
+            <div class="report-node test">
+                <span class="node-title"><span class="env-dot env-test"></span>Pilot - тест</span>
+                <span class="node-text">Объект «Отчёт» в папке отчётов, файл <code>.repx</code> (макет + скрипт). Здесь правят и проверяют.</span>
+            </div>
+            <div class="report-edge">
+                <span class="edge-arrow">/</span>
+                <span class="edge-label">сохранение в дизайнере<br />Reports</span>
+            </div>
+            <div class="report-node git">
+                <span class="node-title">GitLab - ветка <code>dev</code></span>
+                <span class="node-text">Проект с именем отчёта в группе отчётов (подгруппа = папка): <code>Имя.repx</code>, <code>CHANGELOG.md</code> («Не выпущено»).</span>
+            </div>
+            <div class="report-edge">
+                <span class="edge-arrow">/</span>
+                <span class="edge-label">«На прод /» на сайте<br />MR + pipeline</span>
+            </div>
+            <div class="report-node git">
+                <span class="node-title">GitLab - ветка <code>main</code></span>
+                <span class="node-text">То, что на проде. Каждый перенос - релиз <code>v2026.09.27</code> и раздел <code>CHANGELOG.md</code> с тем же номером.</span>
+            </div>
+            <div class="report-edge">
+                <span class="edge-arrow">/</span>
+                <span class="edge-label">запись сайтом<br />до merge</span>
+            </div>
+            <div class="report-node prod">
+                <span class="node-title"><span class="env-dot env-prod"></span>Pilot - прод</span>
+                <span class="node-text">Новая версия отчёта с причиной «2026.09.27 - что изменилось (задача)». Не влился MR - версия откатывается.</span>
+            </div>
+        </div>
+        <div class="report-back">
+            <div><b>«Загрузить отчёт»</b> (главное меню Pilot, Reports): дерево отчётов / загрузить <code>.repx</code> с диска, сравнить или обновить из <code>main</code> / <code>dev</code>. Всегда с причиной - новой версией в Pilot.</div>
+            <div><b>Откат</b> (вкладка «Отчёты» / «откат»): выбранный релиз / временная ветка / MR в <code>main</code> / прод новой версией. Ветка <code>dev</code> не меняется.</div>
+            <div><b>Сравнение</b> (вкладка «Сравнение»): тест / прод, <code>dev</code> / <code>main</code>. В Reports - Pilot / ветка, скрипт и разметка отдельно.</div>
+        </div>
+    </section>
+
+    <section class="card flow">
+        @{ RenderFlow(reportSteps, ReportLaneTitle); }
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Шаг 5:</b> замечания на тесте / задача возвращается разработчику в <code>Progress</code>, снова шаги 2-4. Каждое сохранение - новая версия в Pilot и коммит в <code>dev</code>.</div>
+            <div class="flow-branch danger"><b>Шаг 8:</b> ошибка на проде / «откат» к прошлому релизу: v2026.09.27 сломан / откат на v2026.09.20 = новая версия с сегодняшним номером (в тот же день - v2026.09.27.2).</div>
+        </div>
+    </section>
+
+<section class="card">
+        <h2>После отката: что делать дальше</h2>
+        <p class="small">Откат (вкладка «Отчёты» / «откат») даёт прод новую версию с сегодняшним номером, <code>dev</code> и тест не меняются. Отчёт в Pilot на тесте остаётся прежним - в нём сломанная версия. Страница отчёта покажет «Прод откачен на vX» и два пути:</p>
+        <ol class="small">
+            <li><b>Исправить вперёд (обычно).</b> Поправьте отчёт в Pilot на тестовом сервере, сохраните и отправьте в <code>dev</code> (Reports), проверьте и перенесите на прод кнопкой «На прод /».</li>
+            <li><b>Принять откат в dev.</b> Кнопка «/ В тест»: <code>dev</code> и тестовый сервер получат версию с прода.</li>
+        </ol>
+        <p class="small"><b>Пока не выбран путь, «На прод» не нажимать</b> - она вернёт на прод откаченную версию. Откат отменяется ещё одним откатом на нужный релиз.</p>
+    </section>
+
+    <div class="grid-3 rules">
+        <section class="card">
+            <h3>Номер версии</h3>
+            <p class="small">В коде отчёта номер не хранится. Номер - дата переноса на прод: <code>2026.09.27</code>, второй перенос за день - <code>2026.09.27.2</code>. Сайт пишет его в релиз, <code>CHANGELOG.md</code> и причину версии в Pilot.</p>
+        </section>
+        <section class="card">
+            <h3>Что изменилось</h3>
+            <p class="small">Пишется при каждом сохранении (окно Reports), одна строка - один пункт. Попадает в историю версий отчёта в Pilot, коммит и <code>CHANGELOG.md</code>. При переносе на прод пункты «Не выпущено» собираются в раздел с номером.</p>
+        </section>
+        <section class="card">
+            <h3>Репозиторий</h3>
+            <p class="small">Один отчёт - один проект; <b>имя проекта = имя отчёта в Pilot</b> (символы, недопустимые в GitLab, не учитываются). Создать: Reports «Создать репозиторий…» или вкладка «Отчёты» / «создать репозиторий». Ветки: <code>main</code> / прод, <code>dev</code> / тест.</p>
+        </section>
+    </div>
+
+    <div class="grid-3 rules">
+        <section class="card">
+            <h3>Нельзя</h3>
+            <p class="small">Переносить на прод то, что не проверено на тесте, и править отчёты на проде в дизайнере: такие правки не попадут в GitLab и затрутся следующим переносом. Расхождения видны на вкладке «Отчёты» как «отличается».</p>
+        </section>
+        <section class="card">
+            <h3>Права</h3>
+            <p class="small">Pilot: пользователь базы с правами на папку отчётов (если учётка администратора сервера не подходит, вкладка «Отчёты» спросит логин и пароль). GitLab: Developer - отправка в <code>dev</code>; создание репозитория - по настройке группы (обычно Maintainer); перенос в защищённую <code>main</code> - Maintainer.</p>
+        </section>
+        <section class="card">
+            <h3>Статистика</h3>
+            <p class="small">Первая строка скрипта <code>Report.Begin(this, "Имя отчёта")</code> - сколько раз и насколько успешно строят отчёт (Grafana, дашборд «Pilot - отчёты»). Для старых отчётов без модуля - «мягкая» строка из README Reports.</p>
+        </section>
+    </div>
+</div>
+
+<div class="process-section" id="modules">
+    <div class="process-title">
+        <h1>Как работать с клиентскими модулями</h1>
+        <p class="muted">
+            Модуль - .NET-проект в GitLab (группа модулей). Три контура: <code>dev</code> / тест, <code>release/X.Y.Z</code> / стейдж,
+            <code>main</code> / прод. На серверы уходит zip, собранный GitLab CI (job <code>build_module</code>): на стейдж и прод - одна и та же сборка.
+        </p>
+    </div>
+
+    <div class="flow-legend">
+        <div class="flow-pair"><span class="env-dot env-test"></span><b>dev</b> / тест · автовыкладка после влития задачи</div>
+        <div class="flow-pair"><span class="env-dot env-stage"></span><b>release/X.Y.Z</b> / стейдж · тег <code>vX.Y.Z-rc.N</code></div>
+        <div class="flow-pair"><span class="env-dot env-prod"></span><b>main</b> / прод · тег <code>vX.Y.Z</code> и Release</div>
+    </div>
+
+    <section class="card flow">
+        <h2>Кто что делает</h2>
+        @{ RenderFlow(moduleSteps, ModuleLaneTitle); }
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Шаг 5:</b> баги на тесте / доработка в <code>bugfix/KTN-…</code> от актуального <code>dev</code>, снова шаги 2-5. <b>Шаг 8:</b> критический баг на стейдже / «Отменить релиз», исправление в <code>dev</code>, новый релиз.</div>
+            <div class="flow-branch danger"><b>Hotfix</b> - срочный баг прода: <code>hotfix/KTN-…</code> от <code>main</code>. <b>Откат прода</b> (шаг 11) - выкладывается сборка прошлого тега <code>vX.Y.Z</code>, ветки не меняются. Подробности ниже.</div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Подробно по шагам: от Kaiten до прода</h2>
+        <ol class="steps">
+            <li><b>В работе.</b> Вкладка «Модули» / модуль / «Создать ветку»: <code>feature/KTN-1234</code> от <code>dev</code> (имя ветки = номер задачи Kaiten). Разработка в ветке, при необходимости - быстрая сверка логики с аналитиком.</li>
+            <li><b>Code Review.</b> Merge Request <code>feature/KTN-1234 / dev</code> в GitLab. Pipeline проверяет схему веток и собирает модуль. Ревьюер (не автор) смотрит изменения и нажимает <b>Approve</b> - без апрува «Влить / тест» недоступно. Ветка <code>dev</code> защищена: push запрещён, изменения - только через MR. Администратор GitLab может влить без ревью, указав причину - она пишется в журнал операций.</li>
+            <li><b>Тестирование.</b> «Влить / тест»: <b>squash merge</b> (одна задача = один коммит в <code>dev</code>), сборка <code>dev</code> выкладывается на тестовый сервер. Аналитик/тестировщик проверяет на тесте.</li>
+            <li><b>Есть баги</b> / доработка в <code>bugfix/KTN-1234</code> от актуального <code>dev</code>, снова шаги 2-3.</li>
+            <li><b>Готово к релизу.</b> «Релиз / стейдж»: версия X.Y.Z и список задач - ветка создаётся в GitLab и сразу выкладывается на стейдж. MR <code>release-prep/X.Y.Z / release/X.Y.Z</code>: при всех задачах <code>release-prep</code> - снимок головы <code>dev</code> (влитое позже в релиз не попадёт), при снятой галочке релиз собирается <b>выборочно</b> - cherry-pick нужных коммитов от <code>main</code>. <code>dev</code> не меняется. MR вливается автоматически, затем версия, CHANGELOG, сборка, стейдж и тег rc.</li>
+            <li><b>Стейдж.</b> Выполняется сразу в «Релиз / стейдж» (повтор или багфикс - «Влить / стейдж»): MR вливается, в <code>release/X.Y.Z</code> поднимается версия и пишется <code>CHANGELOG.md</code>, сборка - на стейдж, тег <code>vX.Y.Z-rc.N</code>. На стейдже - только мелкие багфиксы (<code>bugfix/KTN-…</code> от <code>release/X.Y.Z</code>).</li>
+            <li><b>Прод.</b> «Выпустить в прод»: MR <code>release/X.Y.Z / main</code>, pipeline, на прод - та же сборка, что на стейдже, merge (не удался - прод откатывается), тег <code>vX.Y.Z</code>, обратное слияние <code>release / dev</code>, ветка <code>release/X.Y.Z</code> удаляется (история - в тегах <code>vX.Y.Z-rc.N</code> и <code>vX.Y.Z</code>). Ветки задач удаляются при «Влить / тест», hotfix - после синхронизации. Старые ветки - кнопка «Удалить выпущенные и влитые ветки» внизу страницы модуля.</li>
+            <li><b>Статус «Прод»</b> в Kaiten - после успешной выкладки и smoke-check. Версию у пользователей видно в Grafana («Pilot - клиентские модули» / версии на рабочих местах) и в трее Pilot «Модули версии».</li>
+        </ol>
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Критический баг на стейдже</b> / «Отменить релиз» (ветки релиза удаляются), исправление в <code>dev</code>, новый релиз.</div>
+            <div class="flow-branch danger"><b>Hotfix</b> - только срочный баг прода: <code>hotfix/KTN-…</code> от <code>main</code> / Code Review / (проверка на стейдже) / «Hotfix в прод»: патч-версия, прод, тег, затем исправление вливается в <code>dev</code> и активный <code>release</code>.</div>
+            <div class="flow-branch danger"><b>Откат прода</b> - сборка прошлого тега <code>vX.Y.Z</code> выкладывается на прод; ветки не меняются, исправление выпускается hotfix'ом.</div>
+        </div>
+    </section>
+
+<section class="card">
+        <h2>После отката: что делать дальше</h2>
+        <p class="small">Откат прода выкладывает на прод сборку прошлого тега <code>vX.Y.Z</code>. Ветки (<code>dev</code>, <code>main</code>, релизы) не меняются, поэтому <code>main</code> и <code>dev</code> ушли вперёд прода. Страница модуля пишет «На проде не голова main» и в «Релизах на проде» помечает, что сейчас выложено.</p>
+        <ol class="small">
+            <li><b>Исправление.</b> Критичный баг - <code>hotfix/…</code> от <code>main</code> / «Hotfix в прод» (патч-версия). Не срочный - обычная задача в <code>dev</code> и следующий релиз.</li>
+            <li><b>Отмена отката.</b> Откат был зря - «Релизы на проде» / «вернуть на прод» у последнего релиза.</li>
+        </ol>
+        <p class="small">До исправления не выпускайте новый релиз, в котором остался дефект: «Выпустить в прод» заменит откат той же ошибкой. Задачу верните разработчику, версию руками не меняйте.</p>
+    </section>
+
+    <div class="grid-3 rules">
+        <section class="card">
+            <h3>Выборочный релиз</h3>
+            <p class="small">Не всё, что прошло Code Review, сразу идёт в прод. Лучше решать состав релиза до влития в <code>dev</code>. Если задача уже в <code>dev</code> - снимите её галочку: релиз соберётся cherry-pick'ом без неё. Не вливайте <code>dev</code> в <code>release</code> руками в GitLab - состав релиза собирает сайт.</p>
+        </section>
+        <section class="card">
+            <h3>Версия и журнал</h3>
+            <p class="small"><b>Версию руками не поднимаем</b> - ни в задаче, ни в <code>dev</code>: в MR задачи CI (<code>check_version</code>) предупредит «версия изменена вручную». Версию X.Y.Z выбирают при «Релиз / стейдж» (по умолчанию +minor), hotfix - +patch. Сайт сам пишет её в <code>&lt;Version&gt;</code> csproj и раздел <code>CHANGELOG.md</code>; в Pilot версия модуля - «Версия X.Y.Z», причина версии - «X.Y.Z · ветка @@ коммит - задачи». На <code>main</code> CI требует, чтобы версия выросла и в <code>CHANGELOG.md</code> был её раздел (иначе pipeline красный). <b>Версия - в одном месте:</b> <code>&lt;Version&gt;1.4.0&lt;/Version&gt;</code> в csproj. <code>AssemblyVersion</code>/<code>FileVersion</code> генерирует .NET SDK (в AssemblyInfo.cs и <code>&lt;FileVersion&gt;</code> версии нет - CI предупредит). Версия модуля везде - <b>три числа X.Y.Z</b> (четвёртое число .NET допишет сам, админка, трей Pilot и Grafana его не показывают). Шаблон <code>.gitlab-ci.yml</code> и перевод версии в одно место - кнопка «Обновить CI и версию» на странице модуля (MR <code>ci/template-…</code> / <code>dev</code>, вливается после успешной сборки). На стейдж CI выкладывает <code>release/X.Y.Z</code> только сборку с версией X.Y.Z.</p>
+        </section>
+        <section class="card">
+            <h3>Статистика и общие методы</h3>
+            <p class="small">Модуль <code>113Pilot.ClientSdk.ext2</code>: <code>ModuleStats.Run("Действие", …)</code> - использование и ошибки в Grafana («Pilot - клиентские модули»); <code>Pilot</code>, <code>Loader</code>, <code>Search</code>, <code>Org</code> - общие методы вместо копипасты. См. README в <code>Клиентские модули/Pilot.ClientSdk</code>.</p>
+        </section>
+    </div>
+
+    <div class="grid-3 rules">
+        <section class="card">
+            <h3>Нельзя</h3>
+            <p class="small">Загружать модули в Pilot-myAdmin вручную мимо сайта (такие версии видны как «выложен вручную»), вливать в <code>main</code> что-то кроме <code>release/*</code> и <code>hotfix/*</code>, пушить задачи прямо в <code>dev</code>.</p>
+        </section>
+        <section class="card">
+            <h3>Права</h3>
+            <p class="small">Pilot: пользователь базы с правами на папку расширений на всех трёх серверах (вкладка «Модули» спросит логин, если учётка входа не подходит). GitLab: Developer - ветки задач и MR; выпускающий - Maintainer (влитие в защищённые <code>dev</code>/<code>release/*</code>/<code>main</code>, коммит версии и <code>CHANGELOG.md</code> в <code>release/*</code>). Защита веток: <code>main</code> - push No one, merge Maintainers; <code>release/*</code> - push и merge Maintainers (админка сама создаёт ветку релиза и коммитит в неё, при «No one» GitLab это запретит).</p>
+        </section>
+        <section class="card">
+            <h3>Назначение пользователям</h3>
+            <p class="small">Выкладка меняет только файл модуля (новая версия объекта), права не трогает. Новый модуль, которого не было на сервере, создаётся никому не назначенным - назначьте его в Pilot-myAdmin.</p>
+        </section>
+    </div>
+</div>
+
+<div class="process-section" id="server-modules">
+    <div class="process-title">
+        <h1>Как работать с серверными модулями</h1>
+        <p class="muted">
+            Серверный модуль - <code>*.servext</code> (активность автоматизации, работает внутри Pilot-Server), проект в группе серверных модулей GitLab.
+            Контуры те же, что у клиентских: <code>dev</code> / тест, <code>release/X.Y.Z</code> / стейдж, <code>main</code> / прод.
+            Модуль ставится не в сам Pilot, а в центральный загрузчик <b>ServerHost</b>, который заменяет его на лету - без перезапуска сервера.
+        </p>
+    </div>
+
+    <div class="flow-legend">
+        <div class="flow-pair"><span class="env-dot env-test"></span><b>dev</b> / тест · автовыкладка после влития задачи</div>
+        <div class="flow-pair"><span class="env-dot env-stage"></span><b>release/X.Y.Z</b> / стейдж · тег <code>vX.Y.Z-rc.N</code></div>
+        <div class="flow-pair"><span class="env-dot env-prod"></span><b>main</b> / прод · тег <code>vX.Y.Z</code> и Release</div>
+    </div>
+
+    <section class="card flow">
+        <h2>Кто что делает</h2>
+        @{ RenderFlow(serverSteps, ModuleLaneTitle); }
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Шаг 6:</b> баги на тесте / доработка в <code>bugfix/KTN-…</code> от актуального <code>dev</code>, снова шаги 2-6. Критический баг на стейдже / «Отменить релиз», исправление в <code>dev</code>, новый релиз.</div>
+            <div class="flow-branch danger"><b>Hotfix</b> - срочный баг прода: <code>hotfix/KTN-…</code> от <code>main</code>. <b>Откат</b> - страница «Серверные модули» / «Откатить» возвращает предыдущую версию на лету, ветки не меняются.</div>
+        </div>
+    </section>
+
+    <section class="card" id="debug">
+        <h2>Тестирование без загрузки на сервер: debug</h2>
+        <p class="small">
+            Не нужно ни выкладывать модуль, ни иметь доступ к машине с Docker. <code>debug</code> - отдельная программа на вашем компьютере:
+            она запускает <b>локальную сборку</b> модуля из <code>bin\</code> вашего проекта и подключает её к серверу Pilot под вашей учёткой.
+            Модуль получает настоящие объекты, типы и файлы, точки останова в Visual Studio работают на реальных данных.
+            Версия, загруженная на сервер, не используется - с сервера берутся только данные. Сервер не останавливается.
+        </p>
+        <ol class="steps">
+            <li>
+                @if (Env.WebRootFileProvider.GetFileInfo("downloads/debug.zip").Exists)
+                {
+                    <span><b>Установка.</b> Скачайте <a href="/downloads/debug.zip">debug.zip</a> и распакуйте, например, в <code>C:\Tools\debug</code>.</span>
+                }
+                else
+                {
+                    <span><b>Установка.</b> Возьмите <code>debug</code> у администратора (в репозитории: <code>Серверные расширения/Debug</code>, <code>dotnet publish -c Release</code>) и положите, например, в <code>C:\Tools\debug</code>.</span>
+                }
+            </li>
+            <li><b>Кейс.</b> Вкладка «Серверные модули» / нужный контур (обычно тест) / у активности «Отладить локально» / <code>debug.json</code>
+                (можно указать Id объекта, на котором «сработало» событие). Положите файл в папку проекта модуля, рядом с <code>.csproj</code>.
+                В файле: адрес сервера, ваш логин и <code>params</code> / <code>sourceTypes</code> / <code>when</code> из автоматизаций контура. Пароля в файле нет.</li>
+            <li><b>Профиль запуска.</b> В проекте модуля создайте <code>Properties/launchSettings.json</code>:
+<pre class="small">{
+  "profiles": {
+    "debug": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Tools\\debug\\debug.exe",
+      "commandLineArgs": "",
+      "workingDirectory": "$(ProjectDir)"
+    }
+  }
+}</pre>
+            </li>
+            <li><b>Запуск.</b> Откройте решение в конфигурации <b>Debug</b>, поставьте точку останова в <code>RunAsync</code>, выберите профиль «debug» рядом с и нажмите F5.
+                Введите пароль в консоли (или задайте переменную <code>DEBUG_PASSWORD</code>). Отладчик остановится в модуле.</li>
+            <li><b>Результат.</b> В конце консоль покажет, что модуль <b>собирался</b> записать. По умолчанию <b>на сервер ничего не пишется</b> (dry-run).</li>
+        </ol>
+
+        <div class="grid-3 rules">
+            <section class="card">
+                <h3>Пример debug.json</h3>
+<pre class="small">{
+  "server": "http://…/pilot-ice_ru",
+  "login": "admin",
+  "module": "bin/Debug/MyModule.servext.dll",
+  "activity": "MyModule",
+  "sourceId": "4a912f46-…",
+  "when": "StateAttributeChanged",
+  "sourceTypes": [ "task_toReviewDocument" ],
+  "params": {}
+}</pre>
+                <p class="small"><code>sourceId</code> - объект, на котором будто бы сработало событие; он должен быть одного из типов <code>sourceTypes</code>, иначе модуль, скорее всего, ничего не сделает. Другой объект: поменять в файле или <code>--source &lt;guid&gt;</code>.</p>
+            </section>
+            <section class="card">
+                <h3>Записать по-настоящему</h3>
+                <p class="small">Скачайте json с галочкой «Записывать изменения на сервер», либо <code>"apply": true</code> в файле, либо <code>--apply</code> в <code>commandLineArgs</code>.
+                    Подтверждение не спрашивается; изменения идут <b>от вашего имени</b> и записываются по ходу выполнения - перед следующим обращением модуля к Pilot и в конце <code>RunAsync</code>.
+                    Если активность упадёт, уже записанные шаги останутся на сервере. Для проверок лучше тестовый контур.</p>
+            </section>
+            <section class="card">
+                <h3>Не останавливается на точках</h3>
+                <p class="small">Добавьте <code>--wait</code> в <code>commandLineArgs</code>, запустите, затем Visual Studio / Debug / Attach to Process / <code>debug.exe</code> (Managed .NET Core). Остальные ключи: <code>debug --help</code>.</p>
+            </section>
+        </div>
+
+        <h3>Чем отличается от настоящего сервера</h3>
+        <ul class="small">
+            <li>Права ваши, а не сервера: объект, к которому у вас нет доступа, модуль не увидит.</li>
+            <li><code>ev.Changes</code> пустой (изменения, вызвавшие событие, не воспроизводятся); <code>Target</code> и <code>RelationType</code> - null.</li>
+            <li><code>GetService&lt;T&gt;()</code>: есть <code>IAutomationNotifier</code> (только печатает) и <code>IAutomationFileProvider</code> (файлы с сервера); остальные сервисы возвращают null с предупреждением.</li>
+            <li><code>params</code> разбираются как на сервере; шаблоны (<code>templates</code>) сценария не подставляются.</li>
+            <li>Почта, HTTP и прочие внешние вызовы модуля выполняются по-настоящему.</li>
+            <li>В режиме записи сервер получает изменения несколькими пакетами, а не одним после <code>RunAsync</code>. Builder, полученный до обращения к Pilot, после записи пакета теряет изменения - берите <code>EditObject</code> заново.</li>
+        </ul>
+    </section>
+
+    <div class="grid-3 rules">
+        <section class="card">
+            <h3>Как устроена замена на лету</h3>
+            <p class="small">Pilot-Server читает <code>*.servext</code> один раз при старте. ServerHost заранее держит 64 слота активностей и перенаправляет вызов в текущую загруженную версию модуля. Обновление с теми же именами активностей действует сразу. Новое имя активности занимает свободный слот и начинает работать после изменения метаданных базы - админка делает это сама.</p>
+        </section>
+        <section class="card">
+            <h3>Проверка архива и версия</h3>
+            <p class="small">В архиве ровно один <code>*.servext.dll</code>. Сборки, которые уже есть у сервера (<code>Ascon.Pilot.*</code>, MEF, Newtonsoft.Json…), модуль всё равно получит серверные: та же версия - ошибка (админка может убрать лишнее сама), другая - предупреждение. Версия - три числа X.Y.Z, в csproj <code>&lt;Version&gt;</code>; руками её не поднимают.</p>
+        </section>
+        <section class="card">
+            <h3>Нельзя и права</h3>
+            <p class="small">Не загружать модули вручную мимо сайта и не вливать в <code>main</code> ничего, кроме <code>release/*</code> и <code>hotfix/*</code>. Нужен администратор базы Pilot на контуре; GitLab: Developer - ветки и MR, выпускающий - Maintainer. Имя активности должно быть уникальным среди всех модулей.</p>
+        </section>
+    </div>
+</div>
+
+<div class="process-section" id="types">
+    <div class="process-title">
+        <h1>Как работать с типами</h1>
+        <p class="muted">
+            Типы, атрибуты, состояния и группы состояний - один репозиторий GitLab (настройка «Репозиторий с типами»).
+            Путь как у модулей: ветка изменения / <code>dev</code> / <code>release</code> / <code>main</code>; изменение можно связать с коммитом модуля
+            или автоматизации, тогда оно идёт на стейдж и прод вместе с ним.
+        </p>
+    </div>
+
+    <div class="flow-legend">
+        <div class="flow-pair"><span class="env-dot env-test"></span><b>dev</b> / тест · ветки <code>types/…</code> вливаются со squash</div>
+        <div class="flow-pair"><span class="env-dot env-stage"></span><b>release</b> / стейдж · вместе с модулем или выбранные коммиты</div>
+        <div class="flow-pair"><span class="env-dot env-prod"></span><b>main</b> / прод · версия, <code>CHANGELOG.md</code>, тег <code>vX.Y.Z</code></div>
+    </div>
+
+    <section class="card flow">
+        <h2>Кто что делает</h2>
+        @{ RenderFlow(typeSteps, TypeLaneTitle); }
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Сервер отличается от ветки</b> (типы правили в Pilot напрямую) / на тесте «Сервер Тест / ветка изменения» и обычный путь; на стейдже и проде - «Записать ветку на сервер».</div>
+            <div class="flow-branch danger">Внимание <b>Опасные изменения</b> - удаление атрибута, смена типа данных, удаление типа - видны в плане и журнале операции.</div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Подробно по шагам: от правки до прода</h2>
+        <ol class="steps">
+            <li><b>Изменение.</b> «Типы» / «+ Новое изменение» (номер задачи и суть) - ветка <code>types/KTN-…</code> от <code>dev</code>. В редакторе типа / состояния / группы «Сохранить в ветку»: каждое сохранение - коммит в неё; серверы не меняются.</li>
+            <li><b>В dev и на тест.</b> «Влить / тест»: MR со squash (вся ветка - <b>один коммит</b> в <code>dev</code>), pipeline-проверка, запись <code>dev</code> на тестовый сервер.</li>
+            <li><b>Связь с модулем.</b> «+ Связать»: выберите модуль или автоматизацию и её коммит в <code>dev</code> (или ветку задачи модуля). Можно связать и ещё не влитую ветку типов.</li>
+            <li><b>Стейдж и прод вместе с модулем.</b> Когда коммит модуля попадает в <code>release/X.Y.Z</code> («Релиз / стейдж»), изменение типов переносится в <code>release</code> и пишется на стейдж до модуля. «Выпустить в прод» модуля переносит его в <code>main</code> (версия, CHANGELOG, тег), пишет на прод до модуля и откатывает, если модуль не вышел. Выкладка модуля из CI с такими связями остановится - выпускайте из админки.</li>
+            <li><b>Без модуля.</b> «/ стейдж» и «/ прод» у изменения (или «Перенос вручную» внизу вкладки): выбранные коммиты, MR, pipeline, сервер, merge.</li>
+        </ol>
+        <div class="flow-branches">
+            <div class="flow-branch warn"><b>Сервер отличается от ветки</b> (типы правили в Pilot напрямую) / на тесте «Сервер Тест / ветка изменения» и обычный путь; на стейдже и проде - «Записать ветку на сервер».</div>
+            <div class="flow-branch danger">Внимание <b>Опасные изменения</b> - удаление атрибута (значения скрываются), смена типа данных, удаление типа (только пометка) - видны в плане и журнале операции.</div>
+        </div>
+    </section>
+</div>
+
+@section Scripts {
+<script>
+(function () {
+    var tabs = document.querySelectorAll('.process-tab');
+    var sections = document.querySelectorAll('.process-section');
+    function show(id) {
+        var found = false;
+        sections.forEach(function (s) { if (s.id === id) found = true; });
+        if (!found) id = 'automations';
+        sections.forEach(function (s) { s.hidden = s.id !== id; });
+        tabs.forEach(function (t) {
+            var on = t.dataset.tab === id;
+            t.classList.toggle('active', on);
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    tabs.forEach(function (t) {
+        t.addEventListener('click', function (e) {
+            e.preventDefault();
+            history.replaceState(null, '', '#' + t.dataset.tab);
+            show(t.dataset.tab);
+        });
+    });
+    window.addEventListener('hashchange', function () { show(location.hash.slice(1)); });
+    show(location.hash.slice(1));
+})();
+</script>
+}

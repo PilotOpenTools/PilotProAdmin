@@ -1,0 +1,151 @@
+@using ProAdmin.Sessions
+@inject SessionVault Vault
+@inject SettingsStore Store
+@inject Microsoft.Extensions.Options.IOptions<ProAdmin.Infrastructure.AppOptions> AppOptions
+@{
+    var session = User.Identity?.IsAuthenticated == true ? Vault.Get(User.FindFirst(SessionVault.SidClaim)?.Value) : null;
+    var settings = Store.Current;
+    // Bare - страницы входа и ошибки. Страница без сессии (например, «Как работать» открыта без входа или сессия
+    // потерялась при перезапуске админки) получает узкую шапку со входом, а не пустую страницу без выхода.
+    var explicitBare = ViewData["Bare"] as bool? == true;
+    var bare = explicitBare || session is null;
+    var staleCookie = session is null && User.Identity?.IsAuthenticated == true;
+    var section = ViewData["Section"] as string;
+    var gitLabOk = session?.IsGitLabConnected(settings) == true;
+    var githubMode = AppOptions.Value.GitHubTypes.IsConfigured;
+}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@(ViewData["Title"] is string t ? t + " · " : "")PilotProAdmin</title>
+    <link rel="icon" href="~/icon.svg" type="image/svg+xml" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <script src="~/js/dialog.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Head", required: false)
+</head>
+<body class="@(explicitBare ? "bare" : bare ? null : "app-shell")">
+@if (bare && !explicitBare)
+{
+    <header class="topbar">
+        <a class="brand" href="/">PilotProAdmin</a>
+        <div class="userbox">
+            @if (staleCookie)
+            {
+                <span class="chip chip-warn" title="Сессии хранятся в памяти админки и пропадают при её перезапуске">Сессия истекла</span>
+                <form method="post" action="/Logout" class="inline">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="btn btn-sm">Войти заново</button>
+                </form>
+            }
+            else
+            {
+                <a class="btn btn-sm" href="/Login?ReturnUrl=@Uri.EscapeDataString(Context.Request.Path + Context.Request.QueryString)">Войти</a>
+            }
+        </div>
+    </header>
+}
+@if (!bare)
+{
+    <a class="skip-link" href="#main-content">К содержимому</a>
+    <aside class="app-sidebar">
+        <a class="brand" href="/">PilotProAdmin</a>
+        <button class="nav-toggle btn btn-sm" type="button" aria-controls="workspace-menu" aria-expanded="false" hidden>Разделы и сессия</button>
+        <div class="workspace-menu" id="workspace-menu">
+            <nav class="mainnav" id="main-navigation" aria-label="Разделы PilotProAdmin">
+                <div class="nav-group">
+                    <p class="nav-label">Содержимое</p>
+                    @if (!githubMode)
+                    {
+                        <a href="/Automations" aria-current="@(section == "automations" ? "page" : null)">Автоматизации</a>
+                        <a href="/Reports" aria-current="@(section == "reports" ? "page" : null)">Отчёты</a>
+                        <a href="/Modules" aria-current="@(section == "modules" ? "page" : null)">Модули</a>
+                        <a href="/Modules?kind=server" aria-current="@(section == "servermodules" ? "page" : null)">Серверные модули</a>
+                    }
+                    <a href="/Types" aria-current="@(section == "types" ? "page" : null)">Типы</a>
+                </div>
+                <div class="nav-group">
+                    <p class="nav-label">Контуры Pilot</p>
+                    @if (!githubMode)
+                    {
+                        <a href="/Compare" aria-current="@(section == "compare" ? "page" : null)">Сравнение</a>
+                    }
+                    <a href="/Migration" aria-current="@(section == "migration" ? "page" : null)">Миграция</a>
+                    <a href="/Servers" aria-current="@(section == "servers" ? "page" : null)">Серверы</a>
+                </div>
+                <div class="nav-group">
+                    <p class="nav-label">Администрирование</p>
+                    <a href="/Jobs" aria-current="@(section == "jobs" ? "page" : null)">Операции</a>
+                    @if (!githubMode)
+                    {
+                        <a href="/Settings" aria-current="@(section == "settings" ? "page" : null)">Настройки</a>
+                        <a href="/Process" aria-current="@(section == "process" ? "page" : null)">Как работать</a>
+                    }
+                </div>
+            </nav>
+            <div class="session">
+                @if (githubMode)
+                {
+                    <a class="chip" href="/Types/GitHub">GitHub</a>
+                }
+                else if (gitLabOk && session!.GitLabUser is { } gu)
+                {
+                    <a class="chip" href="/GitLab" aria-current="@(section == "gitlab" ? "page" : null)" title="GitLab: @gu.Name">
+                        @if (!string.IsNullOrEmpty(gu.AvatarUrl))
+                        {
+                            <img src="@gu.AvatarUrl" alt="" width="18" height="18" />
+                        }
+                        <span class="muted">GitLab</span>
+                        <span>@gu.Username</span>
+                    </a>
+                }
+                else
+                {
+                    <a class="chip chip-warn" href="/GitLab" aria-current="@(section == "gitlab" ? "page" : null)">GitLab не подключён</a>
+                }
+                <div class="session-pilot" title="@PilotChipTitle(session!)">
+                    <span class="chip"><span class="muted">Pilot</span> @session!.PilotLogin</span>
+                    <ul class="session-envs" aria-label="Доступ к контурам Pilot">
+                        @foreach (var a in session.LoginAccess)
+                        {
+                            <li class="chip-env @(a.Ok ? "" : "fail")">
+                                <span class="env-dot env-@a.Key" aria-hidden="true"></span>@a.Title
+                                <span class="visually-hidden">@(a.Ok ? " - вход выполнен" : " - вход не выполнен")</span>
+                            </li>
+                        }
+                    </ul>
+                </div>
+                <form method="post" action="/Logout" class="inline">
+                    @Html.AntiForgeryToken()
+                    <button type="submit" class="btn btn-ghost btn-sm" title="Выйти из Pilot и GitLab: учётки и токен этой сессии удаляются">Выйти</button>
+                </form>
+            </div>
+        </div>
+    </aside>
+}
+<main class="@(explicitBare ? "main-bare" : "main")" id="main-content" tabindex="-1">
+    @if (TempData["Flash"] is string flash)
+    {
+        <div class="alert alert-ok" role="status">@flash</div>
+    }
+    @if (TempData["FlashError"] is string flashError)
+    {
+        <div class="alert alert-error" role="alert">@flashError</div>
+    }
+    @RenderBody()
+</main>
+@if (!bare)
+{
+    <script src="~/js/navigation.js" asp-append-version="true" defer></script>
+}
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
+
+@functions {
+    private static string PilotChipTitle(ProAdmin.Sessions.UserSession session) =>
+        session.LoginAccess.Count == 0
+            ? "Pilot: " + session.PilotUrl
+            : string.Join("\n", session.LoginAccess.Select(a => (a.Ok ? "" : "X ") + a.Title + ": " + a.PilotUrl));
+}

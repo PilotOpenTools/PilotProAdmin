@@ -1,0 +1,372 @@
+@page "/ServerModules"
+@model ProAdmin.Pages.ServerModules.IndexModel
+@using ProAdmin.Pilot.ServerModules
+@{
+    ViewData["Title"] = "Серверные модули";
+    var state = Model.State;
+    var report = Model.Report;
+    var readOnly = Model.ModulesReadOnly;
+    string Local(DateTime? utc) => utc is { } d ? DateTime.SpecifyKind(d, DateTimeKind.Utc).ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "-";
+}
+
+@await Html.PartialAsync("_ServerModulesTabs", "host")
+<div class="page-head">
+    <div>
+        <h1>Серверные модули</h1>
+        <p class="muted">
+            Модули Pilot-Server (<code>*.servext.dll</code>) загружает центральный модуль <b>ServerHost</b> - единственное
+            расширение, установленное в Pilot штатно. Обновление, отключение и откат модуля применяются сразу,
+            без перезапуска сервера. Имена активностей в автоматизациях не меняются.
+        </p>
+    </div>
+    <div>
+        <a class="btn" href="/Process#server-modules">Как это работает</a>
+    </div>
+</div>
+
+@await Html.PartialAsync("_ActiveWork", "servermodules")
+
+@if (Model.Envs.Count == 0)
+{
+    <div class="empty">
+        <p>Не задан ни один сервер Pilot.</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+    return;
+}
+
+<div class="toolbar">
+    <div class="legend">
+        @foreach (var env in Model.Envs)
+        {
+            <a class="btn btn-sm @(env.Key == Model.Current?.Key ? "btn-primary" : "")" href="/ServerModules?env=@env.Key">
+                <span class="env-dot env-@env.Key"></span>@env.Title
+            </a>
+        }
+    </div>
+    <span class="muted small mono">@Model.Current?.PilotUrl</span>
+</div>
+
+@if (Model.Error is not null)
+{
+    <div class="alert @(Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Configuration ? "alert-warn" : "alert-error")">@Model.Error.Message</div>
+    @if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+    {
+        <section class="card narrow-card">
+            <h2>Вход в базу сервера «@Model.Current!.Title»</h2>
+            <p class="muted">Нужен администратор базы - ServerHost принимает команды только от администраторов. Учётка общая с разделом «Модули».</p>
+            @if (Model.CredentialError is not null)
+            {
+                <div class="alert alert-error">@Model.CredentialError</div>
+            }
+            <form method="post" asp-page-handler="Credentials" class="form">
+                <input type="hidden" name="Env" value="@Model.Env" />
+                <label class="field"><span>Логин</span><input name="EnvLogin" autocomplete="username" required /></label>
+                <label class="field"><span>Пароль</span><input name="EnvPassword" type="password" autocomplete="current-password" required /></label>
+                <button class="btn btn-primary" type="submit">Подключиться</button>
+            </form>
+        </section>
+    }
+    else if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Configuration && Model.HostExtension is null && Model.HostLookupError is null)
+    {
+        <section class="card">
+            <h2>Как установить ServerHost (один раз на сервер)</h2>
+            <ol>
+                <li>Соберите <code>Серверные расширения/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>.</li>
+                <li>В клиенте Pilot: «Модули расширения» / добавить <code>ServerHost.zip</code> как расширение Pilot-Server.</li>
+                <li>Перезапустите сервер Pilot (контейнер) - это последний перезапуск: дальше модули обновляются отсюда.</li>
+                <li>Модули, которые сейчас установлены штатно (например, ApprovalDocumentVersionSaving), загрузите здесь и удалите из «Модулей расширения».</li>
+            </ol>
+        </section>
+    }
+}
+
+@if (Model.HostLookupError is not null)
+{
+    <div class="alert alert-warn">Версия ServerHost в базе не прочитана: @Model.HostLookupError</div>
+}
+@if (Model.HostExtension is { } host)
+{
+    <section class="card">
+        <h2>Сам ServerHost</h2>
+        <p class="muted small">
+            В базе записан <span class="mono">@(host.Version ?? "версия не указана")</span>@(host.SnapshotCreated is { } hostAt ? $" (загружен {Local(hostAt)})" : "").
+            @if (state is not null) { <span>Сервер сейчас работает на <span class="mono">@state.HostVersion</span>.</span> }
+            Pilot-Server читает хост один раз при старте: новая версия начинает работать только после перезапуска сервера Pilot
+            (всех узлов в кластере) - в отличие от модулей, которые обновляются на лету.
+        </p>
+        @if (Model.IsProdAdmin && !readOnly)
+        {
+            <form method="post" asp-page-handler="UpdateHost" enctype="multipart/form-data" class="form"
+                  data-confirm="@(Model.IsProd ? "Записать новую версию ServerHost в базу ПРОДА? Она вступит в силу после перезапуска сервера Pilot." : "Записать новую версию ServerHost в базу? Она вступит в силу после перезапуска сервера Pilot.")">
+                <input type="hidden" name="Env" value="@Model.Env" />
+                <label class="field"><span>Архив новой версии (в корне <code>ServerHost.servext.dll</code>)</span><input type="file" name="Archive" accept=".zip" required /></label>
+                <label class="check"><input type="checkbox" name="AllowDowngrade" value="true" /> Понизить версию, если в архиве она ниже записанной в базе</label>
+                <button class="btn btn-primary" type="submit">Записать в базу</button>
+            </form>
+        }
+        else if (!Model.IsProdAdmin)
+        {
+            <p class="muted small">Обновлять сам хост может только администратор прода.</p>
+        }
+    </section>
+}
+else if (state is not null && Model.HostLookupError is null)
+{
+    <div class="alert alert-warn">Объект ServerHost в базе не найден (по имени или по имени файла архива), поэтому форма обновления хоста недоступна.</div>
+}
+
+@if (report is not null)
+{
+    <section class="card">
+        <h2>Проверка архива @report.FileName</h2>
+        <p>
+            Модуль <b>@(report.ModuleName.Length > 0 ? report.ModuleName : "?")</b>
+            @if (report.CurrentVersion is not null)
+            {
+                <span>: <span class="mono">@report.CurrentVersion</span> / <span class="mono">@report.Version</span></span>
+            }
+            else if (report.Version.Length > 0)
+            {
+                <span class="mono">@report.Version</span> <span class="badge badge-onlygit">новый</span>
+            }
+            <span class="muted small mono">sha256 @report.Sha256[..Math.Min(12, report.Sha256.Length)]</span>
+        </p>
+        @foreach (var e in report.Errors)
+        {
+            <div class="alert alert-error">@e</div>
+        }
+        @foreach (var w in report.Warnings)
+        {
+            <div class="alert alert-warn">@w</div>
+        }
+        @if (report.Activities.Count > 0)
+        {
+            <p>Активности: @foreach (var a in report.Activities) { <code>@a</code> }</p>
+        }
+
+        <table class="table">
+            <thead><tr><th>Файл</th><th>Сборка</th><th>Версия в архиве</th><th>На сервере</th><th>Статус</th></tr></thead>
+            <tbody>
+            @foreach (var f in report.Files)
+            {
+                <tr>
+                    <td class="mono small">@f.Path</td>
+                    <td class="small">@f.AssemblyName</td>
+                    <td class="mono small">@f.Version</td>
+                    <td class="mono small">@f.ServerVersion</td>
+                    <td>
+                        <span class="badge @IndexModel.FileStatusCss(f.Status)">@IndexModel.FileStatusLabel(f.Status)</span>
+                        @if (f.Stripped) { <span class="muted small">не будет установлен</span> }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+
+        @{
+            var duplicates = report.Files.Count(f => f.Status == FileStatus.Duplicate);
+        }
+        @if (!report.CanInstall && duplicates > 0 && !readOnly)
+        {
+            <form method="post" asp-page-handler="Revalidate" class="form" style="margin-top:12px">
+                <input type="hidden" name="Env" value="@Model.Env" />
+                <input type="hidden" name="UploadId" value="@report.UploadId" />
+                <input type="hidden" name="Strip" value="true" />
+                <button class="btn" type="submit">Убрать лишние сборки (@duplicates) и проверить снова</button>
+            </form>
+        }
+        @if (report.CanInstall && !readOnly)
+        {
+            <form method="post" asp-page-handler="Install" class="form" style="margin-top:12px"
+                  data-confirm="@(Model.IsProd ? $"Установить {report.ModuleName} {report.Version} на ПРОД?" : null)">
+                <input type="hidden" name="Env" value="@Model.Env" />
+                <input type="hidden" name="UploadId" value="@report.UploadId" />
+                <label class="field"><span>Что изменилось (в журнал модуля)</span><input name="Reason" maxlength="300" /></label>
+                <button class="btn btn-primary" type="submit">Установить на «@Model.Current!.Title»</button>
+            </form>
+        }
+    </section>
+}
+
+@if (state is not null)
+{
+    <section class="card">
+        <h2>Модули на сервере «@Model.Current!.Title»</h2>
+        <p class="muted small">
+            ServerHost <span class="mono">@state.HostVersion</span> · запущен @Local(state.StartedAt)
+            · слотов активностей занято @state.SlotsUsed из @state.SlotsTotal
+            · хранилище <span class="mono">@state.StorageDir</span>
+            @if (!state.StoragePersistent) { <span class="badge badge-differs" title="Папка пропадёт при пересоздании контейнера">не постоянное</span> }
+        </p>
+        @if (state.NativeExtensions.Count > 0)
+        {
+            <div class="alert alert-info">
+                Штатно загружены Pilot (не через ServerHost):
+                @string.Join(", ", state.NativeExtensions.Select(n => $"{n.Name} {n.Version}")).
+                Такие модули обновляются только перезапуском сервера - перенесите их сюда.
+            </div>
+        }
+
+        @if (state.Modules.Count == 0)
+        {
+            <p class="muted">Модулей пока нет - загрузите архив ниже.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+            <table class="table">
+                <thead><tr><th>Модуль</th><th>Активности</th><th>Установлен</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var m in state.Modules)
+                {
+                    <tr>
+                        <td>
+                            <b>@m.Name</b> <span class="mono">@m.Version</span>
+                            <div>
+                                @if (!m.Enabled) { <span class="badge badge-onlygit">отключён</span> }
+                                else if (m.Loaded) { <span class="badge badge-synced">работает</span> }
+                                else { <span class="badge badge-failed">ошибка</span> }
+                            </div>
+                            @if (m.Error is not null) { <div class="small" style="color:var(--error)">@m.Error</div> }
+                        </td>
+                        <td class="small">
+                            @foreach (var a in m.Activities)
+                            {
+                                <div title="@a.TypeName">
+                                    <code>@a.Name</code>
+                                    <span class="muted">вызовов @a.Calls@(a.Errors > 0 ? $", ошибок {a.Errors}" : "")</span>
+                                    @if (a.LastError is not null) { <div class="muted" style="color:var(--error)">@a.LastError</div> }
+                                    <details class="debug-case">
+                                        <summary class="muted">Отладить локально</summary>
+                                        <form method="get" class="inline"
+                                              data-confirm-if="apply" data-confirm="debug будет записывать изменения модуля на сервер «@Model.Current!.Title» от вашего имени.@(Model.IsProd ? " Это прод: перед записью debug попросит ввести слово prod." : "") Скачать такой debug.json?">
+                                            <input type="hidden" name="handler" value="DebugCase" />
+                                            <input type="hidden" name="env" value="@Model.Env" />
+                                            <input type="hidden" name="activity" value="@a.Name" />
+                                            <input type="hidden" name="module" value="@m.Name" />
+                                            <input name="sourceId" placeholder="Id объекта (необязательно)" class="mono small" style="width:22em" />
+                                            <label class="small" title="Без галочки debug только показывает, что модуль собирался записать">
+                                                <input type="checkbox" name="apply" value="true" /> Записывать изменения на сервер
+                                            </label>
+                                            <button class="btn btn-sm" type="submit" title="Кейс для debug: сервер, ваш логин, params из автоматизаций">debug.json</button>
+                                        </form>
+                                    </details>
+                                </div>
+                            }
+                        </td>
+                        <td class="small">
+                            @Local(m.InstalledAt)@(m.InstalledBy is null ? "" : $" · {m.InstalledBy}")
+                            @if (!string.IsNullOrWhiteSpace(m.Reason)) { <div class="muted">@m.Reason</div> }
+                            @if (m.PreviousVersion is not null) { <div class="muted">предыдущая: <span class="mono">@m.PreviousVersion</span></div> }
+                        </td>
+                        <td class="small">
+                            @if (!readOnly)
+                            {
+                                <form method="post" class="inline">
+                                    <input type="hidden" name="Env" value="@Model.Env" />
+                                    <input type="hidden" name="Name" value="@m.Name" />
+                                    @if (m.Enabled)
+                                    {
+                                        <button class="btn btn-sm" asp-page-handler="Reload" type="submit" title="Загрузить заново из хранилища">Перезагрузить</button>
+                                        <button class="btn btn-sm" asp-page-handler="Disable" type="submit"
+                                                data-confirm="Отключить @m.Name? Автоматизации с его активностями будут падать с ошибкой.">Отключить</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm" asp-page-handler="Enable" type="submit">Включить</button>
+                                    }
+                                    @if (m.PreviousVersion is not null)
+                                    {
+                                        <button class="btn btn-sm" asp-page-handler="Rollback" type="submit"
+                                                data-confirm="Откатить @m.Name на @m.PreviousVersion?">Откатить на @m.PreviousVersion</button>
+                                    }
+                                    <button class="btn btn-sm btn-danger" asp-page-handler="Remove" type="submit"
+                                            data-confirm="Удалить модуль @m.Name с сервера «@Model.Current.Title»?">Удалить</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+            </div>
+        }
+    </section>
+
+    @if (!readOnly)
+    {
+        <section class="card">
+            <h2>Загрузить или обновить модуль</h2>
+            <p class="muted small">
+                Zip с содержимым папки сборки: в корне ровно одна <code>*.servext.dll</code> и её собственные зависимости.
+                Сборки, которые уже есть у сервера (Ascon.Pilot.*, System.*, Newtonsoft.Json и т. п.), класть не нужно -
+                проверка покажет лишние и сборки другой версии. Модуль с тем же именем обновится на лету.
+            </p>
+            <form method="post" asp-page-handler="Validate" enctype="multipart/form-data" class="form">
+                <input type="hidden" name="Env" value="@Model.Env" />
+                <label class="field"><span>Архив модуля</span><input type="file" name="Archive" accept=".zip" required /></label>
+                <label class="check"><input type="checkbox" name="Strip" value="true" /> Сразу убрать сборки, которые уже есть на сервере</label>
+                <button class="btn btn-primary" type="submit">Проверить архив</button>
+            </form>
+        </section>
+    }
+    else
+    {
+        @await Html.PartialAsync("_GroupAccess", (Model.ModulesAccess, "модули"))
+    }
+
+    <details class="card">
+        <summary><b>Локальная отладка модуля (debug)</b> <span class="muted">· точки останова в своей Visual Studio, без доступа к серверу</span></summary>
+        <ol>
+            <li>
+                @if (Model.DebugAvailable)
+                {
+                    <span>Скачайте <a href="/downloads/debug.zip">debug.zip</a> и распакуйте, например, в <code>C:\Tools\debug</code>.</span>
+                }
+                else
+                {
+                    <span>Возьмите debug у администратора (<code>Серверные расширения/Debug</code>: <code>dotnet publish -c Release</code>).</span>
+                }
+            </li>
+            <li>У нужной активности в таблице выше нажмите «Отладить локально» / <b>debug.json</b> (можно сразу указать Id объекта;
+                галочка «Записывать изменения на сервер» - без неё debug только показывает, что модуль собирался записать)
+                и положите файл в папку проекта модуля (debug ищет его вверх от папки запуска, а модуль - свежий <code>*.servext.dll</code> в <code>bin\</code>). В нём адрес «@Model.Current!.Title», ваш логин и params из автоматизаций контура; пароля в нём нет.</li>
+            <li>В проекте модуля создайте <code>Properties/launchSettings.json</code>:
+<pre class="small">{
+  "profiles": {
+    "debug": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Tools\\debug\\debug.exe",
+      "commandLineArgs": ""
+    }
+  }
+}</pre>
+            </li>
+            <li>F5 (профиль «debug»): модуль выполнится на вашей машине с данными сервера, точки останова работают.
+                В конце debug покажет, что модуль <b>собирался</b> записать, - на сервер ничего не пишется.
+                Записать по-настоящему - добавить <code>--apply</code> (спросит подтверждение; изменения пойдут от вашего имени).</li>
+        </ol>
+        <p class="muted small">Модуль работает с вашими правами, а не с правами сервера: объект, к которому у вас нет доступа, он не увидит.
+            Почта, HTTP и прочие внешние вызовы из модуля выполняются по-настоящему - debug перехватывает только запись в Pilot и уведомления.</p>
+    </details>
+
+    @if (state.Journal.Count > 0)
+    {
+        <details class="card">
+            <summary><b>Журнал ServerHost</b> <span class="muted">· последние @Math.Min(state.Journal.Count, 50)</span></summary>
+            <table class="table">
+                <tbody>
+                @foreach (var j in state.Journal.Take(50))
+                {
+                    <tr>
+                        <td class="small mono" style="white-space:nowrap">@Local(j.At)</td>
+                        <td><span class="badge @(j.Level == "error" ? "badge-failed" : "")">@j.Level</span></td>
+                        <td class="small">@j.Text</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </details>
+    }
+}

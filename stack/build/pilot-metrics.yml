@@ -1,0 +1,22 @@
+# База pilot_metrics на postgres-prod: метрики автоматизаций и статистика отчётов.
+# uid совпадает с тем, на который ссылаются дашборды автоматизаций и отчётов.
+apiVersion: 1
+
+datasources:
+  - name: Pilot metrics (prod)
+    type: grafana-postgresql-datasource
+    uid: pilot-metrics-prod
+    access: proxy
+    url: $METRICS_PG_ADDRESS
+    user: metrics_reader
+    secureJsonData:
+      password: $METRICS_READER_PASSWORD
+    jsonData:
+      database: pilot_metrics
+      sslmode: $METRICS_PG_SSLMODE
+      postgresVersion: 1600
+      timescaledb: false
+    # Только чтение: metrics_reader видит одну базу pilot_metrics и только SELECT.
+    readOnly: true
+    # Не правится из интерфейса: иначе администратор Grafana может направить подключение на другую базу.
+    editable: false

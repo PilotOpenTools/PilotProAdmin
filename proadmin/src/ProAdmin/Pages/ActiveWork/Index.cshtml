@@ -1,0 +1,119 @@
+@page "/ActiveWork"
+@model ProAdmin.Pages.ActiveWork.IndexModel
+@{
+    ViewData["Title"] = "Активные работы · " + Model.AreaTitle;
+    if (Model.Fragment)
+    {
+        Layout = null;
+    }
+    var result = Model.Result;
+}
+@if (!Model.Fragment)
+{
+    <div class="page-head">
+        <div>
+            <h1>Активные работы · @Model.AreaTitle</h1>
+            <p class="muted">Репозитории группы <code>@(Model.AreaGroupPath ?? "-")</code> и ветки, в которых за период появились коммиты.</p>
+        </div>
+    </div>
+}
+@if (Model.Problem is not null)
+{
+    <div class="aw-note">
+        @Model.Problem
+        @if (Model.AreaGroupPath is null)
+        {
+            <a href="/Settings">Открыть настройки</a>
+        }
+    </div>
+}
+else if (result!.Error is not null)
+{
+    <div class="alert alert-error">GitLab: @result.Error</div>
+}
+else
+{
+    var shown = result.Branches.Where(b => Model.InStage(b.Branch)).ToList();
+    var repos = shown.GroupBy(b => b.Project.Id).ToList();
+    var authors = shown.SelectMany(b => b.Authors).Distinct().Count();
+    <div class="aw-summary">
+        <span class="muted">@Model.Local(result.Since, "dd.MM.yyyy") - @Model.Local(result.Until, "dd.MM.yyyy"):</span>
+        <span class="badge">репозиториев: @repos.Count</span>
+        <span class="badge">веток: @shown.Count</span>
+        <span class="badge">коммитов: @shown.Sum(b => b.Commits)@(shown.Any(b => b.More) ? "+" : "")</span>
+        <span class="badge">авторов: @authors</span>
+        <span class="muted small" title="Проекты группы с активностью в GitLab за период">· просмотрено проектов: @result.ProjectsScanned · обновлено @Model.Local(result.LoadedAt, "HH:mm:ss")</span>
+    </div>
+    @foreach (var warning in result.Warnings)
+    {
+        <div class="alert alert-warn small">@warning</div>
+    }
+    @if (repos.Count == 0)
+    {
+        <div class="aw-note">За выбранный период коммитов нет.</div>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table aw-table">
+                <thead>
+                <tr>
+                    <th>Репозиторий</th>
+                    <th>Ветка</th>
+                    <th title="Коммитов в ветке за период">Коммитов</th>
+                    <th>Авторы</th>
+                    <th>Задачи</th>
+                    <th>Последний коммит</th>
+                </tr>
+                </thead>
+                @foreach (var repo in repos)
+                {
+                    var project = repo.First().Project;
+                    var branches = repo.OrderByDescending(b => b.Last.CommittedDate).ToList();
+                    <tbody>
+                    @for (var i = 0; i < branches.Count; i++)
+                    {
+                        var b = branches[i];
+                        <tr>
+                            @if (i == 0)
+                            {
+                                <td rowspan="@branches.Count" class="aw-repo">
+                                    <a class="strong" href="@project.WebUrl" target="_blank" rel="noopener">@project.Name</a>
+                                    @if (b.Folder.Length > 0)
+                                    {
+                                        <div class="muted small"> @b.Folder</div>
+                                    }
+                                </td>
+                            }
+                            <td>
+                                <a class="aw-branch @ProAdmin.Pages.ActiveWork.IndexModel.BranchClass(b.Branch)"
+                                   href="@project.WebUrl/-/commits/@Uri.EscapeDataString(b.Branch).Replace("%2F", "/")" target="_blank" rel="noopener">@b.Branch</a>
+                            </td>
+                            <td class="aw-num" title="Первый за период: @Model.Local(b.First)">@b.Commits@(b.More ? "+" : "")</td>
+                            <td class="small">@string.Join(", ", b.Authors)</td>
+                            <td class="small">
+                                @foreach (var task in b.Tasks)
+                                {
+                                    var url = Model.TaskUrl(task);
+                                    if (url is null)
+                                    {
+                                        <span class="badge">@task</span>
+                                    }
+                                    else
+                                    {
+                                        <a class="badge" href="@url" target="_blank" rel="noopener">@task</a>
+                                    }
+                                }
+                            </td>
+                            <td class="aw-last">
+                                <a href="@b.Last.WebUrl" target="_blank" rel="noopener" title="@b.Last.Message"><code>@b.Last.ShortId</code> @b.Last.Title</a>
+                                <div class="muted small">@Model.Local(b.Last.CommittedDate) · @b.Last.AuthorName</div>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+    }
+}

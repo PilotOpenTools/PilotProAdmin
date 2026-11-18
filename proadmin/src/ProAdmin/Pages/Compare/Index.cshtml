@@ -1,0 +1,188 @@
+@page "/Compare"
+@model ProAdmin.Pages.Compare.IndexModel
+@using ProAdmin.Compare
+@{
+    ViewData["Title"] = "Сравнение";
+    var a = Model.EnvA;
+    var b = Model.EnvB;
+    string StateLabel(CompareState s) => s switch
+    {
+        CompareState.Same => "одинаково",
+        CompareState.Differs => "различается",
+        CompareState.OnlyA => $"только на {a?.Title}",
+        _ => $"только на {b?.Title}",
+    };
+    string StateClass(CompareState s) => s switch
+    {
+        CompareState.Same => "badge-synced",
+        CompareState.Differs => "badge-differs",
+        CompareState.OnlyA => "badge-onlypilot",
+        _ => "badge-onlygit",
+    };
+    var detailPage = Model.IsReports ? "/Compare/Report" : "/Compare/Automation";
+    var groupRoot = Model.IsReports ? Model.ReportsGroupPath : Model.GroupPath;
+}
+
+<div class="page-head">
+    <div>
+        <h1>Сравнение контуров</h1>
+        <p class="muted">Что сейчас реально работает на серверах: чем @(a?.Title ?? "тест") отличается от @(b?.Title ?? "прода").</p>
+    </div>
+</div>
+
+<div class="toolbar">
+    <nav class="seg" aria-label="Что сравнивать">
+        <a class="seg-btn @(!Model.IsReports ? "active" : "")" href="@Model.Link("automations")">Автоматизации</a>
+        <a class="seg-btn @(Model.IsReports ? "active" : "")" href="@Model.Link("reports")">Отчёты</a>
+    </nav>
+    <form method="get" class="compare-pair">
+        <input type="hidden" name="kind" value="@Model.Kind" />
+        <select name="a" aria-label="Контур A" data-autosubmit>
+            @foreach (var e in Model.Servers)
+            {
+                <option value="@e.Key" selected="@(e.Key == a?.Key)">@e.Title</option>
+            }
+        </select>
+        <span class="muted">/</span>
+        <select name="b" aria-label="Контур B" data-autosubmit>
+            @foreach (var e in Model.Servers)
+            {
+                <option value="@e.Key" selected="@(e.Key == b?.Key)">@e.Title</option>
+            }
+        </select>
+    </form>
+    @if (Model.Result is { } r)
+    {
+        <div class="legend">
+            <span class="badge badge-differs">различается: @r.Count(CompareState.Differs)</span>
+            <span class="badge badge-onlypilot">только на @a!.Title: @r.Count(CompareState.OnlyA)</span>
+            <span class="badge badge-onlygit">только на @b!.Title: @r.Count(CompareState.OnlyB)</span>
+            <span class="badge badge-synced">одинаково: @r.Count(CompareState.Same)</span>
+            @{ var noRepo = r.Rows.Count(x => x.Repo is null); }
+            @if (noRepo > 0)
+            {
+                <span class="badge badge-norepo" title="Автоматизации есть на серверах, но их нет в GitLab: нет истории версий, их нельзя перенести на прод через сайт">нет в GitLab: @noRepo</span>
+            }
+        </div>
+    }
+</div>
+
+@if (Model.Problem is not null)
+{
+    <div class="alert alert-warn">@Model.Problem</div>
+}
+else if (Model.Result is { } result)
+{
+    @if (result.ErrorA is not null)
+    {
+        <div class="alert alert-error">@a!.Title: @result.ErrorA</div>
+    }
+    @if (result.ErrorB is not null)
+    {
+        <div class="alert alert-error">@b!.Title: @result.ErrorB</div>
+    }
+    @if (result.GitError is not null)
+    {
+        <div class="alert alert-warn">GitLab: @result.GitError</div>
+    }
+
+    @if (result.ErrorA is null && result.ErrorB is null)
+    {
+        <div class="toolbar">
+            <input type="search" id="filter" placeholder="Поиск по имени…" aria-label="Поиск" />
+            <label class="check"><input type="checkbox" id="only-diff" checked /> <span>Только различия и без репозитория</span></label>
+        </div>
+
+        @if (result.Rows.All(x => x.State == CompareState.Same))
+        {
+            var missing = result.Rows.Count(x => x.Repo is null);
+            <div class="alert alert-ok">@(Model.IsReports ? "Отчёты" : "Автоматизации") на @a!.Title и @b!.Title полностью совпадают (@result.Rows.Count).
+                @if (missing > 0)
+                {
+                    <span>Но @missing из них нет в GitLab - у них нет истории версий, и перенести их на прод через сайт нельзя. Создайте репозитории (ссылка «Создать репозиторий» в строке).</span>
+                }
+            </div>
+        }
+
+        <div class="table-wrap">
+            <table class="table" id="compare">
+                <thead>
+                <tr>
+                    <th>Имя</th>
+                    <th><span class="env-dot env-@a!.Key"></span>@a.Title</th>
+                    <th><span class="env-dot env-@b!.Key"></span>@b.Title</th>
+                    <th>Состояние</th>
+                    <th>Что отличается</th>
+                    <th></th>
+                </tr>
+                </thead>
+                @foreach (var group in result.Rows.GroupBy(x => x.Folder))
+                {
+                    <tbody class="folder">
+                    <tr class="folder-row">
+                        <td colspan="6">@(group.Key is null ? "Без репозитория" : group.Key.StartsWith("Pilot: ") ? group.Key : group.Key.Length == 0 ? groupRoot : $"{groupRoot}/{group.Key}")</td>
+                    </tr>
+                    @foreach (var row in group)
+                    {
+                        var q = Uri.EscapeDataString(row.Name);
+                        <tr data-name="@row.Name.ToLowerInvariant()" data-same="@(row.State == CompareState.Same && row.Repo is not null ? "1" : "0")">
+                            <td><a class="strong" href="@detailPage?name=@q&a=@a.Key&b=@b.Key">@row.Name</a></td>
+                            <td class="mono small">@(row.State == CompareState.OnlyB ? "-" : row.VersionA ?? row.DetailA ?? (Model.IsReports ? "есть" : "без версии")) @(row.VersionA is not null && row.DetailA is not null ? $"· {row.DetailA}" : "")</td>
+                            <td class="mono small">@(row.State == CompareState.OnlyA ? "-" : row.VersionB ?? row.DetailB ?? (Model.IsReports ? "есть" : "без версии")) @(row.VersionB is not null && row.DetailB is not null ? $"· {row.DetailB}" : "")</td>
+                            <td class="nowrap">
+                                <span class="badge @StateClass(row.State)">@StateLabel(row.State)</span>
+                                @if (row.Repo is null)
+                                {
+                                    <span class="badge badge-norepo" title="Нет репозитория в GitLab: сравниваются только серверы, истории версий нет">нет в GitLab</span>
+                                }
+                            </td>
+                            <td class="small">@string.Join(", ", row.Differences)</td>
+                            <td class="row-actions nowrap">
+                                @if (row.State != CompareState.Same)
+                                {
+                                    <a href="@detailPage?name=@q&a=@a.Key&b=@b.Key">Различия</a>
+                                }
+                                @if (row.Repo is null)
+                                {
+                                    <a href="@(Model.IsReports ? $"/Reports/Create?name={q}" : $"/Automations/Create?source={q}")" title="Создать репозиторий и импортировать версии с серверов">Создать репозиторий</a>
+                                }
+                                @if (row.Repo is not null
+                                     && (row.State is CompareState.Differs or CompareState.OnlyA)
+                                     && a.Branch == ProAdmin.Automations.AutomationRepositories.DevBranch
+                                     && b.Branch == ProAdmin.Automations.AutomationRepositories.MainBranch)
+                                {
+                                    <a class="promote" href="@(Model.IsReports ? "/Reports/Promote" : "/Automations/Promote")?name=@q">На прод /</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                }
+            </table>
+        </div>
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            const input = document.getElementById('filter');
+            const onlyDiff = document.getElementById('only-diff');
+            if (!input) return;
+            function apply() {
+                const q = input.value.trim().toLowerCase();
+                document.querySelectorAll('#compare tbody.folder').forEach(body => {
+                    let visible = 0;
+                    body.querySelectorAll('tr[data-name]').forEach(tr => {
+                        tr.hidden = (q.length > 0 && !tr.dataset.name.includes(q)) || (onlyDiff.checked && tr.dataset.same === '1');
+                        if (!tr.hidden) visible++;
+                    });
+                    body.hidden = visible === 0;
+                });
+            }
+            input.addEventListener('input', apply);
+            onlyDiff.addEventListener('change', apply);
+            apply();
+        })();
+    </script>
+}

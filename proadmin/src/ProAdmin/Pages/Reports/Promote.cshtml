@@ -1,0 +1,129 @@
+@page "/Reports/Promote"
+@model ProAdmin.Pages.Reports.PromoteModel
+@{
+    ViewData["Title"] = "Перенос отчёта на прод";
+    var main = Model.Main;
+    var dev = Model.Dev;
+    var canPromote = Model.Repo is not null && Model.DevPath is not null && Model.HasMain && main is not null
+                     && !(Model.BranchesEqual && Model.ProdUpToDate == true);
+}
+<div class="crumbs">
+    <a href="/Reports">Отчёты</a> <span>/</span> <span>@Model.Name</span> <span>/</span> <span>Перенос на прод</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>Перенести на прод <span class="mono-title">@Model.Name</span></h1>
+        <p class="muted">
+            Отчёт из ветки <code>@Model.Source</code> уходит через Merge Request в <code>main</code>. На сервер @(main?.Title ?? "прод")
+            он попадёт только после успешного pipeline, затем MR вливается. Если merge не удастся, сервер откатится.
+        </p>
+    </div>
+    @if (Model.Repo is not null)
+    {
+        <a class="btn" href="@Model.Repo.WebUrl/-/compare/main...@Model.Source" target="_blank" rel="noopener">Сравнить main…@Model.Source в GitLab</a>
+    }
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.Repo is not null && main is not null)
+{
+    <div class="promote-flow">
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>@Model.Source</code></div>
+            <div class="h3 mono">@(Model.DevPath ?? "нет .repx")</div>
+            @if (dev is null || Model.TestedOnTest is null)
+            {
+                <span class="badge">@(Model.TestReport is null ? $"нет на сервере {dev?.Title}" : "-")</span>
+            }
+            else if (Model.TestedOnTest == true)
+            {
+                <span class="badge badge-synced">= сервер @dev.Title</span>
+            }
+            else
+            {
+                <span class="badge badge-differs">≠ сервер @dev.Title</span>
+            }
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Ветка <code>main</code></div>
+            <div class="h3">@(Model.BranchesEqual ? "= " + Model.Source : "будет обновлена")</div>
+            <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "Merge Request " + Model.Source + " / main")</span>
+        </div>
+        <div class="promote-arrow">/</div>
+        <div class="card promote-step">
+            <div class="muted small">Сервер @main.Title</div>
+            <div class="h3">@(Model.ProdReport is null ? "нет" : Model.ProdReport.Folder is { Length: > 0 } f ? f : "корень отчётов")</div>
+            <span class="badge @(Model.ProdUpToDate == true ? "badge-synced" : "badge-onlypilot")">
+                @(Model.ProdUpToDate == true ? "уже эта версия" : Model.ProdReport is null ? "будет создан" : "будет обновлён")
+            </span>
+        </div>
+    </div>
+
+    @if (Model.TestedOnTest == false)
+    {
+        <div class="alert alert-warn">Отчёт в ветке <code>@Model.Source</code> отличается от того, что сейчас на сервере @dev!.Title, - на тесте проверялась другая версия.</div>
+    }
+    @if (Model.OpenMergeRequestUrl is not null)
+    {
+        <div class="alert alert-info">Уже есть открытый <a href="@Model.OpenMergeRequestUrl" target="_blank" rel="noopener">Merge Request @Model.Source / main</a> - он будет использован.</div>
+    }
+    @if (Model.BranchesEqual && Model.ProdUpToDate == true)
+    {
+        <div class="alert alert-ok">Ветки и продовый сервер уже содержат эту версию - переносить нечего.</div>
+    }
+
+    <section class="card narrow-card">
+        <h2>Перенос / версия <span class="mono">@Model.NextVersion</span></h2>
+        <p class="muted small">
+            Номер - дата переноса. Он попадёт в релиз <code>v@(Model.NextVersion)</code> (к нему можно будет откатиться),
+            в раздел <code>@Changelog.FileName</code> и в причину версии отчёта в Pilot.
+            @if (Model.LastRelease is not null)
+            {
+                @:Предыдущий релиз: <code>@Model.LastRelease</code> · <a href="/Reports/Rollback?name=@Uri.EscapeDataString(Model.Name)">откат</a>.
+            }
+        </p>
+        <form method="post" class="form" data-confirm="Перенести отчёт «@Model.Name» на прод?">
+            <input type="hidden" asp-for="Name" />
+            <input type="hidden" asp-for="From" />
+            @if (main.RequireTaskReference)
+            {
+                <label class="field">
+                    <span>Задача</span>
+                    <input asp-for="Task" placeholder="TASK-123" autocomplete="off" required />
+                </label>
+            }
+            <label class="field">
+                <span>Что изменилось в отчёте</span>
+                <textarea asp-for="Description" rows="5" required></textarea>
+                <small class="muted">
+                    Каждая строка - пункт нового раздела с датой в <code>@Changelog.FileName</code> (коммитом в <code>@Model.Source</code>, в <code>main</code> он придёт вместе с отчётом).
+                    Пункты также попадут в Merge Request и журнал операций.
+                    @if (Model.NotesSource is not null)
+                    {
+                        <br />@:Подставлено: @Model.NotesSource. Отредактируйте, объедините мелкие правки.
+                    }
+                </small>
+            </label>
+            @if (Model.ProdReport is null && Model.ProdFolders.Count > 0)
+            {
+                <label class="field">
+                    <span>Папка отчётов на сервере @main.Title</span>
+                    <select asp-for="FolderId">
+                        @foreach (var f in Model.ProdFolders)
+                        {
+                            <option value="@f.Id">@(f.Path.Length == 0 ? "(корень папки отчётов)" : f.Path)</option>
+                        }
+                    </select>
+                    <small class="muted">Отчёта на проде ещё нет - он будет создан в этой папке.</small>
+                </label>
+            }
+            <button class="btn btn-primary" type="submit" disabled="@(!canPromote)">Перенести на прод</button>
+        </form>
+    </section>
+}

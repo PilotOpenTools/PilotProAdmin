@@ -1,0 +1,188 @@
+@using ProAdmin.Migration
+@model ProAdmin.Pages.Migration.RequestFieldsModel
+@{
+    var f = Model.Form;
+    var envs = Model.Envs.Where(e => e.Configured).ToList();
+    var import = Model.Import;
+    var files = import?.Files ?? new List<ImportFileDto>();
+}
+<div class="mig-direction">
+    <label class="field">
+        <span>Откуда (источник)</span>
+        <select name="Form.Source">
+            @foreach (var e in envs)
+            {
+                <option value="@e.Key" selected="@(f.Source == e.Key)">@e.Title</option>
+            }
+            @if (Model.AllowFileSource)
+            {
+                <option value="@ProAdmin.Pages.Migration.RequestForm.FileSourceValue" selected="@f.IsFileSource">Файловая база (.dbp)</option>
+            }
+        </select>
+    </label>
+    <span class="mig-arrow" aria-hidden="true">/</span>
+    <label class="field">
+        <span>Куда (приёмник)</span>
+        <select name="Form.Target">
+            @foreach (var e in envs.Where(e => e.Key != "prod"))
+            {
+                <option value="@e.Key" selected="@(f.Target == e.Key)">@e.Title</option>
+            }
+            @if (Model.AllowFileSource)
+            {
+                <option value="@ProAdmin.Pages.Migration.RequestForm.FileSourceValue" selected="@f.IsFileTarget">Файлы (выгрузка .dbp)</option>
+            }
+        </select>
+    </label>
+</div>
+<p class="muted small" data-contour>Переносить можно из прода в тест и стейдж и между тестом и стейджем. В прод перенос запрещён.</p>
+
+@if (Model.AllowFileSource)
+{
+    <fieldset class="mig-options" data-export>
+        <legend>Выгрузка в файлы</legend>
+        <label class="field">
+            <span>Имя папки выгрузки</span>
+            <input name="Form.ExportName" value="@f.ExportName" placeholder="пусто - контур и дата, например prod-20261101-1200" maxlength="100" />
+        </label>
+        <div class="mig-checks">
+            <label class="check"><input type="checkbox" checked disabled /><span>Основная база <span class="muted small">(base.dbp: объекты, типы, пользователи, права, история)</span></span></label>
+            <label class="check"><input type="checkbox" name="Form.ExportChats" value="true" checked="@f.ExportChats" /><input type="hidden" name="Form.ExportChats" value="false" /><span>Чаты и сообщения <span class="muted small">(chats.dbp)</span></span></label>
+            <label class="check"><input type="checkbox" name="Form.ExportJournal" value="true" checked="@f.ExportJournal" /><input type="hidden" name="Form.ExportJournal" value="false" /><span>Журнал действий пользователей <span class="muted small">(journal.dbp; обычно в разы больше самой базы)</span></span></label>
+            <label class="check"><input type="checkbox" name="Form.ExportFileArchive" value="true" checked="@f.ExportFileArchive" /><input type="hidden" name="Form.ExportFileArchive" value="false" /><span>Файловый архив <span class="muted small">(тела файлов в папку FileArchive; без них после импорта файлы не откроются)</span></span></label>
+        </div>
+        <p class="muted small">
+            Источник не останавливается и не меняется: все таблицы читаются на один момент времени.
+            Выгрузка появится в каталоге выгрузок: переменная <code>EXPORT_ROOT</code> в <code>.env</code> (в сервисе миграции он виден как <code>/mnt/export</code>).
+            Чтобы залить её на другом компьютере, скопируйте папку в его каталог импорта и выберите «Откуда / Файловая база (.dbp)»:
+            папка <code>FileArchive</code> рядом с <code>base.dbp</code> подхватится сама.
+        </p>
+    </fieldset>
+
+    <fieldset class="mig-options" data-file>
+        <legend>Присланная файловая база</legend>
+        @if (files.Count == 0)
+        {
+            <p class="lvl-warn">
+                В каталоге импорта <code>@(import?.Directory ?? "/mnt/import")</code> нет файлов <code>.dbp</code>.
+                Положите их в каталог, заданный переменной <code>IMPORT_ROOT</code> в <code>.env</code>: в сервисе миграции он виден как <code>/mnt/import</code> и смонтирован только на чтение.
+            </p>
+        }
+        else
+        {
+            @await Html.PartialAsync("_ImportFile", new ImportFileField(
+                "Form.ImportMainFile", "Основная база", "объекты, типы, пользователи, права, история", "Main", f.ImportMainFile, import!, Required: true))
+            @await Html.PartialAsync("_ImportFile", new ImportFileField(
+                "Form.ImportChatsFile", "Чаты и сообщения", "необязательно", "Chats", f.ImportChatsFile, import!, Required: false))
+            @await Html.PartialAsync("_ImportFile", new ImportFileField(
+                "Form.ImportJournalFile", "Журнал действий пользователей", "необязательно; обычно в разы больше самой базы и грузится долго", "Journal", f.ImportJournalFile, import!, Required: false))
+            <p class="muted small">
+                Каталог импорта: <code>@import!.Directory</code>. Файлы открываются только на чтение, вид определяется по таблицам внутри,
+                а не по имени. Все выбранные файлы должны быть сняты с одной базы.
+            </p>
+        }
+
+        <div class="mig-checks">
+            <label class="check"><input type="checkbox" name="Form.ImportFileArchive" value="true" checked="@f.ImportFileArchive" /><input type="hidden" name="Form.ImportFileArchive" value="false" /><span>Файловый архив <span class="muted small">(тела файлов; без него файлы в приёмнике не откроются)</span></span></label>
+        </div>
+
+        <div class="mig-sub" data-file-archive>
+            <p class="muted small">Тел файлов в <code>.dbp</code> нет - в базе только их индекс. Укажите, откуда их брать: папка архива внутри каталога импорта <b>или</b> S3.</p>
+            <label class="field">
+                <span>Папка архива</span>
+                <input name="Form.ArchiveFolder" value="@f.ArchiveFolder" placeholder="например: база ГП/Files" />
+            </label>
+            <div class="mig-direction">
+                <label class="field">
+                    <span>S3: адрес</span>
+                    <input name="Form.ArchiveS3Url" value="@f.ArchiveS3Url" placeholder="http://rustfs-test:9000" />
+                </label>
+                <label class="field">
+                    <span>Бакет</span>
+                    <input name="Form.ArchiveS3Bucket" value="@f.ArchiveS3Bucket" />
+                </label>
+            </div>
+            <div class="mig-direction">
+                <label class="field">
+                    <span>Access key</span>
+                    <input name="Form.ArchiveAccessKey" value="@f.ArchiveAccessKey" autocomplete="off" />
+                </label>
+                <label class="field">
+                    <span>Secret key</span>
+                    <input name="Form.ArchiveSecretKey" type="password" autocomplete="off" />
+                </label>
+            </div>
+            <p class="muted small">Ключ S3 не сохраняется: в журнале запуска он заменён маской, при повторном запуске его вводят заново.</p>
+        </div>
+
+        <p class="muted small">
+            Импорт только целиком: база приёмника останавливается, все её данные заменяются присланными в одной транзакции.
+            Свой идентификатор базы и свои файловые архивы у приёмника остаются. Версии сверяются по структуре таблиц -
+            в файловой базе её номера нет.
+        </p>
+    </fieldset>
+}
+
+<div class="mig-modes" data-contour>
+    <label class="mig-mode">
+        <input type="radio" name="Form.Mode" value="Full" checked="@(f.Mode != "Selective")" />
+        <span>
+            <b>Полная копия</b>
+            <span class="muted small">База приёмника удаляется целиком и заменяется копией источника. Файловые архивы приёмника, общие с источником, не трогаются.</span>
+        </span>
+    </label>
+    <label class="mig-mode">
+        <input type="radio" name="Form.Mode" value="Selective" checked="@(f.Mode == "Selective")" />
+        <span>
+            <b>Выбрать, что переносить</b>
+            <span class="muted small">Отмеченное удаляется в приёмнике и переносится из источника. Остальное в приёмнике не меняется.</span>
+        </span>
+    </label>
+</div>
+
+<fieldset class="mig-options" data-selective>
+    <legend>Что переносить</legend>
+    <div class="mig-option-tree">
+        <label class="check">
+            <input type="checkbox" name="Form.Tree" value="true" checked="@f.Tree" /><input type="hidden" name="Form.Tree" value="false" />
+            <span><b>Дерево объектов</b> <span class="muted small">(IDataObject)</span></span>
+        </label>
+        <div class="mig-sub" data-tree>
+            <label class="check">
+                <input type="radio" name="Form.TreeAll" value="true" checked="@f.TreeAll" />
+                <span>всё дерево (кроме отчётов и модулей - они отмечаются отдельно)</span>
+            </label>
+            <label class="check">
+                <input type="radio" name="Form.TreeAll" value="false" checked="@(!f.TreeAll)" />
+                <span>только объекты с Id - вместе со всеми родителями и всеми потомками</span>
+            </label>
+            <textarea name="Form.TreeIds" rows="3" class="mono" placeholder="Id объектов, по одному в строке или через запятую">@f.TreeIds</textarea>
+        </div>
+    </div>
+    <div class="mig-checks">
+        <label class="check"><input type="checkbox" name="Form.Users" value="true" checked="@f.Users" /><input type="hidden" name="Form.Users" value="false" /><span>Пользователи и оргструктура</span></label>
+        <label class="check"><input type="checkbox" name="Form.ClientModules" value="true" checked="@f.ClientModules" /><input type="hidden" name="Form.ClientModules" value="false" /><span>Клиентские модули</span></label>
+        <label class="check"><input type="checkbox" name="Form.WebModules" value="true" checked="@f.WebModules" /><input type="hidden" name="Form.WebModules" value="false" /><span>Веб-модули</span></label>
+        <label class="check"><input type="checkbox" name="Form.ServerModules" value="true" checked="@f.ServerModules" /><input type="hidden" name="Form.ServerModules" value="false" /><span>Серверные модули</span></label>
+        <label class="check"><input type="checkbox" name="Form.Automations" value="true" checked="@f.Automations" /><input type="hidden" name="Form.Automations" value="false" /><span>Автоматизации</span></label>
+        <label class="check"><input type="checkbox" name="Form.Reports" value="true" checked="@f.Reports" /><input type="hidden" name="Form.Reports" value="false" /><span>Отчёты</span></label>
+        <label class="check"><input type="checkbox" name="Form.FileArchive" value="true" checked="@f.FileArchive" /><input type="hidden" name="Form.FileArchive" value="false" /><span>Файловый архив <span class="muted small">(тела файлов переносимых объектов)</span></span></label>
+    </div>
+    <p class="muted small">Id объектов и пользователей сохраняются. Если архив приёмника общий с источником, файлы не копируются - приёмник читает их из общего архива.</p>
+</fieldset>
+
+<fieldset class="mig-options" data-contour>
+    <legend>Настройки сервера</legend>
+    <label class="check">
+        <input type="checkbox" name="Form.CopyServerSettings" value="true" checked="@f.CopyServerSettings" /><input type="hidden" name="Form.CopyServerSettings" value="false" />
+        <span>
+            <b>Скопировать поведение сервера</b> <span class="muted small">(проверка автора изменений, запрет параллельных изменений, снимки - как в settings.xml источника)</span>
+        </span>
+    </label>
+    <p class="muted small">
+        По умолчанию настройки сервера не переносятся ни в каком режиме: <code>settings.xml</code> приёмника не меняется.
+        Логирование автоматизаций, расширенное логирование, журнал чтения файлов и отладка C# свои у каждого контура и не копируются никогда -
+        иначе перенос с прода выключил бы сбор статистики на тесте и стейдже.
+        Скопированное вступает в силу после перезапуска контейнера сервера приёмника (см. «Серверы»).
+    </p>
+</fieldset>

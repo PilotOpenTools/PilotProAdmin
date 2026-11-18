@@ -1,0 +1,18 @@
+# Общие правила для всего репозитория. Сборочные папки (bin, obj) и данные сервисов игнорируются в .gitignore своих папок.
+
+# Visual Studio, Rider, VS Code: настройки рабочего места и индексы
+.vs/
+*.user
+*.suo
+*.rsuser
+.idea/
+.vscode/
+
+# Файлы операционных систем
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# DocFX and local release archives
+/_site/
+/artifacts/

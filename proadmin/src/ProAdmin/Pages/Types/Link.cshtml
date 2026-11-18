@@ -1,0 +1,132 @@
+@page
+@model ProAdmin.Pages.Types.LinkModel
+@using ProAdmin.GitLab
+@using ProAdmin.Modules
+@using ProAdmin.Types
+@{
+    ViewData["Title"] = "Связать изменение типов";
+    var changeQuery = "change=" + Uri.EscapeDataString(Model.Change ?? "");
+}
+
+<div class="page-head">
+    <div>
+        <div class="crumbs"><a href="/Types">Типы</a> / <a href="/Types#changes">Изменения</a> /</div>
+        <h1>Связать: @Model.ChangeTitle</h1>
+        <p class="muted">
+            Выберите коммит модуля или автоматизации. Когда он уйдёт на стейдж («Релиз / стейдж») и в прод («Выпустить в прод»),
+            это изменение типов перенесётся в <code>release</code> / <code>main</code> и запишется на сервер в той же операции - перед модулем.
+            Модуль не выпустился на прод - типы откатываются.
+        </p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+
+@if (Model.ChangeTitle is null)
+{
+    return;
+}
+
+<section class="card">
+    <div class="muted small">Изменение типов</div>
+    <div>
+        @if (Model.ChangeCommit is { } cc) { <a class="mono" href="@cc.WebUrl" target="_blank" rel="noopener">@cc.ShortId</a> <span class="badge badge-synced">в dev</span> }
+        else { <span class="mono">@Model.ChangeBranch</span> <span class="badge badge-differs">ветка, ещё не в dev</span> }
+        <b>@Model.ChangeTitle</b>
+    </div>
+    @if (Model.ChangeBranch is not null)
+    {
+        <p class="muted small">Связь сработает после «Влить / тест»: выпуск модуля остановится, если ветка типов к тому времени не влита в dev.</p>
+    }
+    @if (Model.Existing.Count > 0)
+    {
+        <div class="small">Уже связано:
+            @foreach (var l in Model.Existing) { <span class="chip">@l.TargetName · <span class="mono">@l.TargetRef</span></span> }
+        </div>
+    }
+</section>
+
+<section class="card">
+    <h2>1. Модуль или автоматизация</h2>
+    <nav class="seg" aria-label="Что">
+        @foreach (var k in Model.Kinds)
+        {
+            <a class="seg-btn @(Model.TargetKind == k ? "active" : "")" href="/Types/Link?@(changeQuery)&kind=@k.Key()">@k.Title()</a>
+        }
+    </nav>
+    @if (Model.Kinds.Count == 0)
+    {
+        <p class="muted">В настройках не указаны группы GitLab модулей и автоматизаций.</p>
+    }
+    else
+    {
+        <form method="get" class="btn-row" style="margin-top: 12px">
+            <input type="hidden" name="change" value="@Model.Change" />
+            <input type="hidden" name="kind" value="@Model.Kind" />
+            <label class="field grow"><span>Репозиторий</span>
+                <select name="project" data-autosubmit>
+                    <option value="">- выберите -</option>
+                    @foreach (var p in Model.Projects)
+                    {
+                        <option value="@p.PathWithNamespace" selected="@(p == Model.Selected)">@p.Name - @p.PathWithNamespace</option>
+                    }
+                </select>
+            </label>
+        </form>
+    }
+</section>
+
+@if (Model.Selected is { } project)
+{
+    <form method="post" class="form">
+        <input type="hidden" name="Change" value="@Model.Change" />
+        <input type="hidden" name="Kind" value="@Model.Kind" />
+        <input type="hidden" name="Project" value="@project.PathWithNamespace" />
+        <section class="card">
+            <h2>2. Коммит или ветка задачи <span class="muted small">- @project.Name</span></h2>
+            @if (Model.Candidates.Count == 0)
+            {
+                <p class="muted">В <code>dev</code> нет задач, которых нет в <code>main</code>, и веток задач тоже нет. Сначала влейте задачу модуля в dev.</p>
+            }
+            else
+            {
+                <ul class="checklist">
+                    @foreach (var c in Model.Candidates)
+                    {
+                        <li>
+                            <label class="check">
+                                <input type="radio" name="Target" value="@c.Value" required />
+                                <span>
+                                    @if (c.Sha is not null)
+                                    {
+                                        <a class="mono small" href="@c.WebUrl" target="_blank" rel="noopener">@ModuleDeploy.Short(c.Sha)</a>
+                                        <span class="badge badge-synced">dev</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="mono small">@c.Branch</span> <span class="badge badge-differs">ветка задачи</span>
+                                    }
+                                    <b>@c.Title</b>
+                                    @if (c.InRelease) { <span class="badge badge-running" title="Коммит уже в @Model.ActiveRelease">уже на стейдже</span> }
+                                    <span class="muted small">· @c.Author, @BranchActivity.Ago(c.Date)</span>
+                                </span>
+                            </label>
+                        </li>
+                    }
+                </ul>
+                @if (Model.Candidates.Any(c => c.InRelease))
+                {
+                    <p class="muted small">Коммит «уже на стейдже» в релизе @Model.ActiveRelease: типы запишутся на стейдж при следующем «На стейдж» этого релиза
+                        или сразу перед выпуском в прод.</p>
+                }
+            }
+        </section>
+        <div class="form-actions">
+            <button class="btn btn-primary" type="submit" disabled="@(Model.Candidates.Count == 0)">Связать</button>
+            <a class="btn btn-ghost" href="/Types#changes">Отмена</a>
+        </div>
+    </form>
+}

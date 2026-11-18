@@ -1,0 +1,15 @@
+@page
+@model ErrorModel
+@{
+    ViewData["Title"] = "Ошибка";
+    ViewData["Bare"] = true;
+}
+<div class="card narrow">
+    <h1>@Model.Heading</h1>
+    <p class="muted">@Model.Text</p>
+    @if (!string.IsNullOrEmpty(Model.RequestId))
+    {
+        <p class="muted small">Request ID: <code>@Model.RequestId</code></p>
+    }
+    <a class="btn" href="/">На главную</a>
+</div>

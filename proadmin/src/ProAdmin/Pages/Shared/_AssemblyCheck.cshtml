@@ -1,0 +1,16 @@
+@model ProAdmin.Modules.AssemblyCheckResult
+@using ProAdmin.Pages.Modules
+<table class="table">
+    <thead><tr><th>Файл</th><th>AssemblyVersion</th><th>Версия файла</th><th>Результат</th></tr></thead>
+    <tbody>
+    @foreach (var i in Model.Items)
+    {
+        <tr>
+            <td class="mono small">@i.Subject</td>
+            <td class="mono small">@(i.IsFile ? i.Assembly.AssemblyVersion ?? "native" : "")</td>
+            <td class="mono small">@(i.IsFile ? i.Assembly.FileVersion : "")</td>
+            <td class="small"><span class="badge @AssembliesModel.VerdictCss(i.Verdict)">@AssembliesModel.VerdictLabel(i.Verdict)</span> @i.Text</td>
+        </tr>
+    }
+    </tbody>
+</table>

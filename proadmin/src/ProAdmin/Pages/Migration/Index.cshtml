@@ -1,0 +1,268 @@
+@page "/Migration"
+@model ProAdmin.Pages.Migration.IndexModel
+@using ProAdmin.Migration
+@{
+    ViewData["Title"] = "Миграция";
+}
+<div class="page-head">
+    <div>
+        <h1>Миграция данных</h1>
+        <p class="muted">Перенос данных между контурами Pilot: вручную по кнопке или по расписанию. Сам перенос выполняет сервис <code>pilot-migration</code>.</p>
+    </div>
+    <div class="btn-row">
+        <a class="btn" href="/Migration/Schedule">+ Расписание</a>
+        <a class="btn btn-ghost" href="/Migration/Connections">Подключения</a>
+    </div>
+</div>
+<partial name="_ProdAdminBanner" model="Model" />
+
+@if (!Model.Configured)
+{
+    <div class="alert alert-warn">
+        Сервис миграции не подключён. Запустите его (<code>proadmin/migration</code>, <code>docker compose up -d</code>)
+        и задайте админке <code>MIGRATION_URL</code> и <code>MIGRATION_API_KEY</code> в <code>.env</code> (тот же ключ, что у сервиса).
+    </div>
+    return;
+}
+@if (Model.ServiceError is not null)
+{
+    <div class="alert alert-error">@Model.ServiceError</div>
+    return;
+}
+
+@if (Model.Status?.Active is { } active)
+{
+    <div class="alert alert-info">
+        <span class="badge badge-running"><span class="spinner"></span>идёт перенос</span>
+        @MigrationTexts.EnvTitle(active.Request.Source) / @MigrationTexts.EnvTitle(active.Request.Target): @MigrationTexts.Describe(active.Request)
+        @(active.Phase is not null ? $"- {active.Phase}" : "")
+        · <a href="/Migration/Run/@active.Id">открыть журнал</a>
+    </div>
+}
+
+<form method="post" class="form" id="mig-form">
+    <section class="card">
+        <h2>Перенос сейчас</h2>
+        <partial name="_RequestFields" model="new ProAdmin.Pages.Migration.RequestFieldsModel(Model.Form, Model.Envs, Model.Import, AllowFileSource: true)" />
+        <div class="form-actions">
+            <button class="btn btn-primary" type="submit" asp-page-handler="Plan" formnovalidate data-busy="Проверяю…">Проверить</button>
+            <span class="muted small">Проверка ничего не меняет: покажет, что будет сделано и что мешает. Запуск - после проверки.</span>
+        </div>
+    </section>
+
+    @if (Model.Plan is { } plan)
+    {
+        <section class="card" id="plan">
+            <h2>
+                Проверка: @MigrationTexts.EnvTitle(plan.Request.Source) / @MigrationTexts.EnvTitle(plan.Request.Target)
+                <span class="muted small">- @MigrationTexts.Describe(plan.Request)</span>
+            </h2>
+            @if (plan.Checks.Count > 0)
+            {
+                <ul class="checklist">
+                    @foreach (var c in plan.Checks.OrderByDescending(c => c.Level == "Blocker").ThenByDescending(c => c.Level == "Warning"))
+                    {
+                        <li class="lvl-@c.Css">@c.Text</li>
+                    }
+                </ul>
+            }
+            @if (plan.Summary.Count > 0)
+            {
+                <h3 class="mig-h">Что будет сделано</h3>
+                <ul class="checklist">
+                    @foreach (var s in plan.Summary)
+                    {
+                        <li class="lvl-ok">@s</li>
+                    }
+                </ul>
+            }
+
+            @if (!plan.CanRun)
+            {
+                <div class="alert alert-error mig-gap">Перенос невозможен, пока не устранены ошибки (отмечены X). Приёмник не изменялся.</div>
+            }
+            else
+            {
+                @if (plan.Request.IsFileExport)
+                {
+                    <div class="form-actions mig-gap">
+                        <button class="btn btn-primary" type="submit" asp-page-handler="Start" data-busy="Запускаю…">Запустить выгрузку</button>
+                        <span class="muted small">База источника не останавливается. При ошибке или отмене недописанная папка удаляется.</span>
+                    </div>
+                }
+                else
+                {
+                <div class="danger-zone mig-gap">
+                    @if (plan.Request.IsFull)
+                    {
+                        <label class="field narrow-field">
+                            <span>Для подтверждения введите имя базы приёмника: <code>@plan.TargetDatabase</code></span>
+                            <input asp-for="Confirmation" autocomplete="off" value="" required />
+                        </label>
+                    }
+                    else
+                    {
+                        <label class="check">
+                            <input type="checkbox" required />
+                            <span>Понимаю: отмеченное в «@MigrationTexts.EnvTitle(plan.Request.Target)» будет удалено и заменено данными «@MigrationTexts.EnvTitle(plan.Request.Source)»</span>
+                        </label>
+                    }
+                    <div class="form-actions">
+                        <button class="btn btn-danger" type="submit" asp-page-handler="Start" data-busy="Запускаю…">
+                            Запустить перенос
+                        </button>
+                        <span class="muted small">База приёмника будет остановлена на время переноса. При ошибке изменения базы откатываются, база запускается снова.</span>
+                    </div>
+                </div>
+                }
+            }
+        </section>
+    }
+</form>
+
+<section class="card">
+    <div class="mig-head-row">
+        <h2>Расписания</h2>
+        <a class="btn btn-sm" href="/Migration/Schedule">+ Добавить</a>
+    </div>
+    @if (Model.Schedules.Count == 0)
+    {
+        <p class="muted">Расписаний нет. Например: «каждую ночь в 03:00 - полная копия прода в тест».</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr><th>Название</th><th>Направление и что</th><th>Когда</th><th>Следующий</th><th>Последний</th><th></th></tr>
+                </thead>
+                <tbody>
+                @foreach (var s in Model.Schedules.OrderBy(s => s.Name))
+                {
+                    <tr>
+                        <td>
+                            <a class="strong" href="/Migration/Schedule?id=@s.Id">@s.Name</a>
+                            @if (!s.Enabled)
+                            {
+                                <span class="badge badge-paused">выключено</span>
+                            }
+                        </td>
+                        <td>@MigrationTexts.EnvTitle(s.Request.Source) / @MigrationTexts.EnvTitle(s.Request.Target) <span class="muted">· @MigrationTexts.Describe(s.Request)</span></td>
+                        <td class="nowrap">@s.Description</td>
+                        <td class="nowrap">@(s.NextRunAt?.ToLocalTime().ToString("dd.MM HH:mm") ?? "-")</td>
+                        <td class="nowrap">
+                            @if (s.LastRunId is { } lastId)
+                            {
+                                <a href="/Migration/Run/@lastId">@s.LastRunAt?.ToLocalTime().ToString("dd.MM HH:mm")</a>
+                            }
+                            else
+                            {
+                                @(s.LastResult ?? "-")
+                            }
+                        </td>
+                        <td class="nowrap row-actions">
+                            <form method="post" class="inline" asp-page-handler="ToggleSchedule" asp-route-id="@s.Id">
+                                <button class="btn btn-ghost btn-sm" type="submit">@(s.Enabled ? "Выключить" : "Включить")</button>
+                            </form>
+                            <details class="mig-confirm">
+                                <summary class="btn btn-ghost btn-sm">Удалить</summary>
+                                <form method="post" class="inline" asp-page-handler="DeleteSchedule" asp-route-id="@s.Id">
+                                    <button class="btn btn-danger btn-sm" type="submit">Точно удалить</button>
+                                </form>
+                            </details>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@if (Model.Exports is { } exports)
+{
+    <section class="card">
+        <h2>Выгрузки в файлы</h2>
+        @if (exports.Exports.Count == 0)
+        {
+            <p class="muted">Выгрузок нет. Каталог выгрузок: <code>@exports.Directory</code> (на хосте - <code>EXPORT_ROOT</code>).</p>
+        }
+        else
+        {
+            <p class="muted small">Каталог выгрузок: <code>@exports.Directory</code> (на хосте - <code>EXPORT_ROOT</code>). Чтобы залить выгрузку на другом компьютере, скопируйте её папку в каталог импорта.</p>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                    <tr><th>Папка</th><th>Откуда</th><th>Когда</th><th>Состав</th><th>Размер</th></tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var e in exports.Exports)
+                    {
+                        var m = e.Manifest;
+                        <tr>
+                            <td class="strong">@e.Name</td>
+                            <td class="nowrap">@(m is null ? "-" : $"{m.SourceTitle} · {m.Database}")</td>
+                            <td class="nowrap">@((m?.CreatedAt ?? e.Modified).ToLocalTime().ToString("dd.MM.yyyy HH:mm")) @(m is null ? "" : $"· {m.CreatedBy}")</td>
+                            <td>
+                                @if (m is null)
+                                {
+                                    <span class="lvl-warn">@e.Problem</span>
+                                }
+                                else
+                                {
+                                    @(string.Join(", ", m.Files.Values))
+                                    @(m.FileArchive is null ? " · без тел файлов" : $" · файлов {m.FileBodiesCopied} из {m.FileBodies}")
+                                    @if (m.FileBodiesMissing > 0)
+                                    {
+                                        <span class="lvl-warn"> (нет в архиве источника: @m.FileBodiesMissing)</span>
+                                    }
+                                }
+                            </td>
+                            <td class="nowrap">@e.Size</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+<section class="card">
+    <h2>Последние запуски</h2>
+    @if (Model.Runs.Count == 0)
+    {
+        <p class="muted">Переносов ещё не было.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                <tr><th>Когда</th><th>Направление</th><th>Что</th><th>Кто</th><th>Длительность</th><th>Статус</th></tr>
+                </thead>
+                <tbody>
+                @foreach (var r in Model.Runs)
+                {
+                    <tr>
+                        <td class="nowrap"><a href="/Migration/Run/@r.Id">@r.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm:ss")</a></td>
+                        <td class="nowrap">@MigrationTexts.EnvTitle(r.Request.Source) / @MigrationTexts.EnvTitle(r.Request.Target)</td>
+                        <td class="ellipsis" title="@MigrationTexts.Describe(r.Request)">@MigrationTexts.Describe(r.Request)</td>
+                        <td class="nowrap">@r.RequestedBy</td>
+                        <td class="nowrap">@(r.Duration is { } d ? (d.TotalMinutes >= 1 ? $"{(int)d.TotalMinutes} мин {d.Seconds} с" : $"{d.Seconds} с") : "-")</td>
+                        <td><span class="badge @MigrationTexts.StatusCss(r.Status)">@MigrationTexts.Status(r.Status)</span></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@section Scripts {
+    <script src="~/js/migration.js" asp-append-version="true"></script>
+    @if (Model.Plan is not null)
+    {
+        <script>document.getElementById('plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' });</script>
+    }
+}

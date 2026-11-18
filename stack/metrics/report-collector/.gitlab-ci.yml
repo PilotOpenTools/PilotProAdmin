@@ -1,0 +1,20 @@
+stages:
+  - test
+  - build
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0.404@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb
+  script:
+    - dotnet test tests/ReportMetrics.Collector.Tests -c Release
+
+# Проверка, что сервис публикуется так же, как в Dockerfile.
+# Сборку и запуск образа на сервере делает docker compose up -d --build.
+publish:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:10.0.404@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb
+  script:
+    - dotnet publish src/ReportMetrics.Collector/ReportMetrics.Collector.csproj -c Release -o out /p:UseAppHost=false

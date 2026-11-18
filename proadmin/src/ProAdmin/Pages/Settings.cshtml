@@ -1,0 +1,280 @@
+@page
+@model SettingsModel
+@{
+    ViewData["Title"] = "Настройки";
+}
+<div class="page-head">
+    <div>
+        <h1>Общие настройки</h1>
+        <p class="muted">Одни на всех пользователей. Каждый сервер Pilot привязан к своей ветке: что в ветке - то и на сервере.</p>
+    </div>
+</div>
+<nav class="settings-index" aria-label="Разделы настроек">
+    <a class="action-link" href="#pilot">Серверы Pilot</a>
+    <a class="action-link" href="#gitlab">GitLab</a>
+    <a class="action-link" href="#automation-ci">CI/CD</a>
+    <a class="action-link" href="#reports">Отчёты</a>
+    <a class="action-link" href="#checks">Проверки</a>
+    <a class="action-link" href="#libraries">Библиотеки</a>
+</nav>
+<partial name="_ProdAdminBanner" model="Model" />
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@if (Model.CheckResults.Count > 0)
+{
+    <section class="card">
+        <h2>Результат проверки <span class="muted small">- проверены введённые значения; чтобы применить их, нажмите «Сохранить»</span></h2>
+        <ul class="checklist">
+            @foreach (var r in Model.CheckResults)
+            {
+                <li class="lvl-@r.Level"><b>@r.Title.</b> @r.Text</li>
+            }
+        </ul>
+    </section>
+}
+
+<form method="post" class="form settings-form">
+    <section class="card" id="pilot">
+        <h2>Серверы Pilot</h2>
+        <div class="env-grid">
+            <div class="env-grid-head">Контур</div>
+            <div class="env-grid-head">Адрес сервера с базой</div>
+            <div class="env-grid-head">Ветка GitLab</div>
+            <div class="env-grid-head">Задача в коммите</div>
+            @for (var i = 0; i < Model.Form.Environments.Count; i++)
+            {
+                var env = Model.Form.Environments[i];
+                <input type="hidden" name="Form.Environments[@i].Key" value="@env.Key" />
+                <div class="env-name"><span class="env-dot env-@env.Key"></span>@env.Title</div>
+                <input name="Form.Environments[@i].PilotUrl" value="@env.PilotUrl" placeholder="@(env.Key == AdminSettings.Prod ? "http://localhost:5546/pilot-ice_ru" : "http://localhost:5547/pilot-ice_ru")" aria-label="Адрес сервера @env.Title" />
+                <input name="Form.Environments[@i].Branch" value="@env.Branch" aria-label="Ветка @env.Title" />
+                <label class="check">
+                    <input type="checkbox" name="Form.Environments[@i].RequireTaskReference" value="true" @(env.RequireTaskReference ? "checked" : "") />
+                    <span>обязательна</span>
+                </label>
+            }
+        </div>
+        <div class="env-grid">
+            <div class="env-name"><span class="env-dot env-stage"></span>Стейдж</div>
+            <input asp-for="Form.StagePilotUrl" placeholder="http://localhost:5549/pilot-ice_ru" aria-label="Адрес сервера стейджа" />
+            <div class="muted small">ветки <code>release/X.Y.Z</code></div>
+            <div class="muted small">только модули</div>
+        </div>
+        <p class="muted small">Контур без ветки доступен только для просмотра. Учётные данные - те же, что при входе; если на каком-то сервере пароль администратора другой, его спросят на странице автоматизаций.</p>
+    </section>
+
+    <section class="card" id="gitlab">
+        <h2>GitLab</h2>
+        <label class="field">
+            <span>Группа с автоматизациями</span>
+            <input asp-for="Form.GitLabGroupUrl" placeholder="http://localhost:8080/automation" />
+            <small class="muted">
+                Каждая автоматизация - отдельный репозиторий в этой группе, подгруппы - папки
+                (например <code>automation/notification</code>). В репозитории ветки <code>main</code> и <code>dev</code>,
+                файлы <code>Имя.json</code>, <code>Имя/Имя.cs</code>, <code>README.md</code>. Сервер GitLab для входа берётся из этого адреса.
+            </small>
+            @await Html.PartialAsync("_AccessLine", Model.GroupAccess)
+        </label>
+        <label class="field">
+            <span>Группа с отчётами</span>
+            <input asp-for="Form.ReportsGitLabGroupUrl" placeholder="http://localhost:8080/reports" />
+            <small class="muted">
+                Каждый отчёт - отдельный репозиторий в этой группе, подгруппы - папки. <b>Имя проекта = имя отчёта в Pilot</b>
+                (символы, недопустимые в GitLab, при сравнении не учитываются), путь проекта - любой.
+                Ветки: <code>dev</code> - тестовый сервер, <code>main</code> - продовый. Сервер GitLab - тот же, что у автоматизаций. Пусто - вкладка «Отчёты» выключена.
+            </small>
+            @await Html.PartialAsync("_AccessLine", Model.ReportsGroupAccess)
+        </label>
+        <label class="field">
+            <span>Группа с клиентскими модулями</span>
+            <input asp-for="Form.ModulesGitLabGroupUrl" placeholder="http://localhost:8080/modules" />
+            <small class="muted">
+                Каждый модуль - отдельный репозиторий (проект .NET с <code>.gitlab-ci.yml</code>, собирающим zip модуля). Ветки:
+                <code>dev</code> - тестовый сервер, <code>release/X.Y.Z</code> - стейдж, <code>main</code> - прод; задачи - <code>feature/KTN-…</code>.
+                Модуль в Pilot находится по AssemblyProduct / имени проекта / коду в скобках. Пусто - вкладка «Модули» выключена.
+            </small>
+            @await Html.PartialAsync("_AccessLine", Model.ModulesGroupAccess)
+        </label>
+        <label class="field">
+            <span>Группа с серверными модулями</span>
+            <input asp-for="Form.ServerModulesGitLabGroupUrl" placeholder="http://localhost:8080/server-modules" />
+            <small class="muted">
+                Репозитории модулей Pilot-Server (.servext). Нужна только для таблицы «Активные работы» на вкладке «Серверные модули»
+                (сами модули загружаются архивом). Пусто - таблица не показывается.
+            </small>
+            @await Html.PartialAsync("_AccessLine", Model.ServerModulesGroupAccess)
+        </label>
+        <label class="field">
+            <span>Репозиторий с типами</span>
+            <input asp-for="Form.TypesGitLabProjectUrl" placeholder="http://localhost:8080/pilot-config/types" />
+            <small class="muted">
+                Типы, атрибуты, состояния и группы состояний базы как код - <b>один проект</b> GitLab (не группа).
+                Ветки: <code>dev</code> - тестовый сервер, <code>release</code> - стейдж, <code>main</code> - прод.
+                Изменять типы можно <b>только в dev</b> (ветки изменений <code>types/…</code> и Merge Request); в <code>release</code> и <code>main</code>
+                изменения попадают только переносом выбранных коммитов с проверкой pipeline. Пусто - вкладка «Типы» только сравнивает серверы.
+            </small>
+            @await Html.PartialAsync("_AccessLine", Model.TypesProjectAccess)
+        </label>
+        <div class="grid-3">
+            <label class="field">
+                <span>Job сборки модуля в CI</span>
+                <input asp-for="Form.ModulesBuildJob" placeholder="build_module" />
+                <small class="muted">Его артефакт (zip) админка выкладывает на серверы.</small>
+            </label>
+            <label class="field">
+                <span>Номер задачи (regex)</span>
+                <input asp-for="Form.TaskPattern" placeholder="KTN-\d+" />
+                <small class="muted">В именах веток и коммитов: <code>feature/KTN-1234</code>.</small>
+            </label>
+            <label class="field">
+                <span>Ссылка на задачу Kaiten</span>
+                <input asp-for="Form.TaskUrlTemplate" placeholder="https://company.kaiten.ru/space/1/card/{number}" />
+                <small class="muted"><code>{task}</code> - KTN-1234, <code>{number}</code> - 1234. Пусто - без ссылок.</small>
+            </label>
+        </div>
+        <label class="check">
+            <input type="checkbox" asp-for="Form.RequireDevReview" />
+            <span>Вливать в <code>dev</code> только после Code Review - MR одобрен (Approve) не автором. Администратор GitLab может влить без ревью с причиной. Если разработчик один, одобрить MR некому - выключите: зелёный pipeline обязателен в любом случае.</span>
+        </label>
+        <label class="field narrow-field">
+            <span>Код лицензии для отчётов</span>
+            <input asp-for="Form.ReportsLicenseType" type="number" min="1" />
+            <small class="muted">Отчёты и модули - объекты базы: админка входит в базу пользователем с этим кодом лицензии (как PILOT_LICENSE_TYPE у MCP).</small>
+        </label>
+    </section>
+
+    <section class="card" id="automation-ci">
+        <h2>CI/CD автоматизаций</h2>
+        <p class="muted small">Как автоматизация попадает на стейдж (нужен сервер стейджа в настройках выше).</p>
+        <label class="check">
+            <input type="radio" name="Form.AutomationsAutoStage" value="false" @(Model.Form.AutomationsAutoStage ? "" : "checked") />
+            <span><b>Тест / стейдж / прод</b>, как у клиентских модулей: после проверки на тесте «Релиз / стейдж» создаёт <code>release/X.Y.Z</code> и записывает её на стейдж, «Выпустить в прод» переносит релиз.</span>
+        </label>
+        <label class="check">
+            <input type="radio" name="Form.AutomationsAutoStage" value="true" @(Model.Form.AutomationsAutoStage ? "checked" : "") />
+            <span><b>Тест и стейдж вместе</b>: «Влить / тест» сразу записывает то же на стейдж; на прод переносится <code>dev</code> (без веток <code>release/*</code>).</span>
+        </label>
+    </section>
+
+    <section class="card" id="reports">
+        <h2>Отчёты</h2>
+        <p class="muted small">У отчётов два контура: где их правят (ветка <code>dev</code>) и прод (<code>main</code>). Стейджа и веток <code>release/*</code> у отчётов нет.</p>
+        <label class="check">
+            <input type="radio" name="Form.ReportsEditOnStage" value="false" @(Model.Form.ReportsEditOnStage ? "" : "checked") />
+            <span>Отчёты делают <b>на тестовом сервере</b>: тест / <code>dev</code>, прод / <code>main</code>.</span>
+        </label>
+        <label class="check">
+            <input type="radio" name="Form.ReportsEditOnStage" value="true" @(Model.Form.ReportsEditOnStage ? "checked" : "") />
+            <span>Отчёты делают <b>на стейдже</b>: стейдж / <code>dev</code>, прод / <code>main</code> (нужен сервер стейджа в настройках выше).</span>
+        </label>
+    </section>
+
+    <section class="card" id="checks">
+        <h2>Проверки</h2>
+        <div class="grid-3">
+            <label class="check">
+                <input type="checkbox" asp-for="Form.RequireVersion" />
+                <span>Требовать «Version: X.Y.Z» в <code>_comment_</code> и её повышение</span>
+            </label>
+            <label class="field">
+                <span>Ожидать старта pipeline, сек</span>
+                <input asp-for="Form.PipelineStartTimeoutSeconds" type="number" min="15" max="3600" />
+            </label>
+            <label class="field">
+                <span>Максимум на pipeline, мин</span>
+                <input asp-for="Form.PipelineTimeoutMinutes" type="number" min="1" max="1440" />
+            </label>
+            <label class="check">
+                <input type="checkbox" asp-for="Form.AllowPublishWithoutCi" />
+                <span>Аварийный обход: разрешать отправку, если у репозитория нет CI (без ожидания pipeline). В обычной работе выключено.</span>
+            </label>
+            <label class="field">
+                <span>Проверки автоматизаций</span>
+                <input asp-for="Form.AutomationsCiConfigPath" placeholder="automation.yml@pilot-ci/checks" />
+                <small class="muted">Настройка <code>ci_config_path</code> репозиториев автоматизаций. Пусто - не подключать.</small>
+            </label>
+            <label class="field">
+                <span>Проверки отчётов</span>
+                <input asp-for="Form.ReportsCiConfigPath" placeholder="report.yml@pilot-ci/checks" />
+                <small class="muted">Настройка <code>ci_config_path</code> репозиториев отчётов. Пусто - не подключать.</small>
+            </label>
+            <label class="check">
+                <input type="checkbox" asp-for="Form.BlockPublishOnLintWarnings" />
+                <span>Не отправлять при предупреждениях проверки сценария (неизвестные атрибуты, состояния, параметры). Ошибки блокируют всегда.</span>
+            </label>
+        </div>
+    </section>
+
+    <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Сохранить</button>
+        <button class="btn" type="submit" asp-page-handler="Check">Проверить подключения</button>
+        @if (Model.AppSettings.UpdatedAt is { } at)
+        {
+            <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm"), @Model.AppSettings.UpdatedBy</span>
+        }
+    </div>
+</form>
+
+<form method="post" asp-page-handler="Libraries" class="form settings-form">
+    <section class="card" id="libraries">
+        <h2>Библиотеки модулей</h2>
+        <p class="muted small">
+            Как модули получают сторонние библиотеки (dll). Проверяется в CI модуля (job <code>check_libraries</code> шаблона CI)
+            и при каждой выкладке на тест, стейдж и прод. Список библиотек и библиотеки общего модуля - на страницах
+            <a href="/Modules#libraries">«Модули»</a> и <a href="/Modules?kind=server#libraries">«Серверные модули»</a>.
+        </p>
+        @foreach (var (kind, prefix, title) in new[] { (ProAdmin.Modules.ModuleKind.Client, "ClientLibraries", "Клиентские модули"), (ProAdmin.Modules.ModuleKind.Server, "ServerLibraries", "Серверные модули") })
+        {
+            var spec = Model.LibrariesSpec(kind);
+            var repos = Model.ModuleRepos.TryGetValue(kind, out var r) ? r : new List<string>();
+            var boxId = prefix + "-shared";
+            <fieldset class="mig-options">
+                <legend>@title</legend>
+                <div class="lib-modes">
+                    @foreach (var m in ProAdmin.Modules.AssemblySpec.Modes)
+                    {
+                        <label class="mig-mode">
+                            <input type="radio" name="@(prefix).Mode" value="@m" checked="@(spec.Mode == m)"
+                                   data-show-target="@boxId" data-show-when="SharedModule" />
+                            <span><b>@(Array.IndexOf(ProAdmin.Modules.AssemblySpec.Modes, m) + 1). @ProAdmin.Modules.AssemblySpec.ModeTitle(m)</b><span class="muted small">@ProAdmin.Modules.AssemblySpec.ModeHint(m)</span></span>
+                        </label>
+                    }
+                </div>
+                <div id="@boxId" hidden="@(spec.Mode != ProAdmin.Modules.AssemblySpecMode.SharedModule)">
+                    <label class="field narrow-field">
+                        <span>Общий модуль - подгружает все доп. библиотеки</span>
+                        <input name="@(prefix).SharedModule" value="@spec.SharedModule" list="@(prefix)-repos"
+                               placeholder="@(kind == ProAdmin.Modules.ModuleKind.Client ? ProAdmin.Modules.AssemblySpec.DefaultSharedModule : "имя модуля")" />
+                        <datalist id="@(prefix)-repos">
+                            @foreach (var name in repos)
+                            {
+                                <option value="@name"></option>
+                            }
+                        </datalist>
+                        <small class="muted">
+                            Имя модуля в Pilot, код в скобках, сборка или репозиторий.
+                            @if (kind == ProAdmin.Modules.ModuleKind.Client)
+                            {
+                                <span>Общий модуль кладут в папку расширений <code>@ProAdmin.Modules.AssemblySpec.PreloadFolder</code>: клиент Pilot грузит его первым, а недостающие dll остальных модулей ищет и в его папке.</span>
+                            }
+                            else
+                            {
+                                <span>ServerHost ищет недостающие dll модуля в папках других модулей (нужна версия хоста с этой возможностью).</span>
+                            }
+                        </small>
+                    </label>
+                </div>
+                @if (spec.UpdatedAt is { } at)
+                {
+                    <p class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @spec.UpdatedBy</p>
+                }
+            </fieldset>
+        }
+        <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Сохранить режим библиотек</button>
+        </div>
+    </section>
+</form>

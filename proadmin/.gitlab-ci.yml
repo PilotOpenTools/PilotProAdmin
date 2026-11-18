@@ -1,0 +1,24 @@
+# Проверка репозитория стека: тесты админки (в них же - сверка копий файлов, см. RepoCopiesTests) и сервиса миграции.
+# Сверка копий читает соседние папки монорепозитория (stack, Клиентские модули, Серверные расширения): job запускается
+# в корне монорепозитория, а в неполной копии папки proadmin эти тесты падают, а не молча пропускаются.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  TZ: "Europe/Moscow"   # тест расписания миграции считает локальное время
+
+test:
+  image: mcr.microsoft.com/dotnet/sdk:10.0.404@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb   # тот же, что в Dockerfile
+  script:
+    - if [ -f proadmin/PilotProAdmin.sln ]; then cd proadmin; fi
+    - dotnet restore PilotProAdmin.sln -s https://api.nuget.org/v3/index.json
+    - dotnet test PilotProAdmin.sln --no-restore
+    - dotnet restore migration/PilotMigration.sln -s https://api.nuget.org/v3/index.json
+    - dotnet test migration/PilotMigration.sln --no-restore
