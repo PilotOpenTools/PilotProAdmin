@@ -83,40 +83,9 @@ docker run -d --name redis-test --network pilot-test --restart unless-stopped \
 
 ## 3. Конфигурационная база: PostgresMigration
 
-Утилита `/App/PostgresMigration` есть в образе Pilot-Server. Она создаёт базу `configurationdb`, переносит в неё конфигурацию из `settings.xml`
-и прописывает Redis. Аргументы по порядку:
+Для создания конфигурационной базы используйте `initialize.sh` из кластерного комплекта. Подготовьте `node.env`, копию `settings.xml` и общий архив, затем выполните команду из инструкции. [Создание конфигурационной базы](cluster-installation.md#создайте-конфигурационную-базу)
 
-1. путь к `settings.xml` монолита;
-2. строка подключения к PostgreSQL **к базе `postgres`** (не к базе Pilot);
-3. строка Redis: `redis-test:6379, password=<пароль Redis>`;
-4. имя конфигурационной базы: `configurationdb`;
-5. логин администратора Pilot;
-6. пароль администратора Pilot.
-
-```bash
-docker run --rm --network pilot-test \
-  -v <корень данных>/test/databases:/usr/share/ascon/databases \
-  -v <корень данных>/test/pilot-server/settings:/usr/share/ascon/pilot-server/settings \
-  --entrypoint /App/PostgresMigration \
-  "$PILOT_SERVER_IMAGE" \
-  /usr/share/ascon/pilot-server/settings/settings.xml \
-  "Host=postgres-test:5432;Username=pilotuser;Password=$PILOT_PG_PASSWORD;Include Error Detail=true;DataBase=postgres" \
-  "redis-test:6379, password=$REDIS_PASSWORD" \
-  configurationdb admin "$PILOT_ADMIN_PASSWORD"
-```
-
-`PILOT_PG_PASSWORD` и `PILOT_ADMIN_PASSWORD` - из `.env` комплекта (`<КОНТУР>_PILOT_PG_PASSWORD` важнее общего). Образ - тот же, что у монолита
-(`docker inspect -f '{{.Config.Image}}' pilot-server-test`).
-
-Что наблюдалось на стенде: утилита печатает `Created configuration base.`, после чего может упасть с необработанным исключением
-`System.ArgumentException: The value cannot be an empty string. (Parameter 'path')` (метод `IsFileInUse`), код возврата 139. Конфигурационная база к этому моменту
-была создана, и узлы стартовали. Не опирайтесь на код возврата: проверьте результат -
-
-```bash
-docker exec postgres-test sh -c 'psql -U postgres -d configurationdb -Atc "select id from config.settings order by id"'
-```
-
-В списке должна быть строка `1` (и `2`, резервирования). Строка `id = 1` - XML того же формата, что `settings.xml`, пароль PostgreSQL в нём не открытый (атрибут `EncryptedPassword`).
+Установщик переносит файловые базы штатной утилитой `PostgresMigration` и отдельно загружает журнал действий SQLite. Для баз, уже работающих в PostgreSQL, он сохраняет подключения, идентификаторы и ссылки на архивы.
 
 ## 4. Узлы и балансировщик
 

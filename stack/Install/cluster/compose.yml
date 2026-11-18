@@ -100,3 +100,8 @@ services:
         target: /check-pg.sh
         read_only: true
         bind: *existing
+      - type: bind
+        source: ./restore-journal.sql
+        target: /restore-journal.sql
+        read_only: true
+        bind: *existing

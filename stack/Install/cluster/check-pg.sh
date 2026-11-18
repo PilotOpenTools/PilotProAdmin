@@ -11,6 +11,11 @@ SQL
         psql -XqAt -w --set=ON_ERROR_STOP=1 --dbname="$CLUSTER_CONFIG_DATABASE" \
             -c 'SELECT EXISTS (SELECT FROM config.settings WHERE id = 1);'
         ;;
+    journal)
+        export PGDATABASE="$2"
+        exec psql -XqAt -w --set=ON_ERROR_STOP=1 --set=database_id="$3" \
+            --set=expected_rows="$4" --file=/restore-journal.sql
+        ;;
     *)
         exit 2
         ;;

@@ -26,7 +26,7 @@ Set-Location PilotProAdmin
 Скачайте публичный образ из GitHub Container Registry. Вход в GitHub не требуется.
 
 ```bash
-docker pull ghcr.io/pilotopentools/pilotproadmin:1.0.0
+docker pull ghcr.io/pilotopentools/pilotproadmin:1.0.1
 ```
 
 Задайте установочный ключ и запустите админку.
@@ -39,7 +39,7 @@ docker run --detach --name pilotproadmin \
   --publish 127.0.0.1:5300:8080 \
   --volume pilotproadmin-data:/data \
   --env App__SetupKey \
-  ghcr.io/pilotopentools/pilotproadmin:1.0.0
+  ghcr.io/pilotopentools/pilotproadmin:1.0.1
 unset App__SetupKey
 ```
 
@@ -50,21 +50,32 @@ unset App__SetupKey
 Если нужен импорт, экспорт или перенос базы, скачайте образ сервиса.
 
 ```bash
-docker pull ghcr.io/pilotopentools/pilotproadmin-migration:1.0.0
+docker pull ghcr.io/pilotopentools/pilotproadmin-migration:1.0.1
 ```
 
 Выделите сервису отдельный том, подключите его к сети админки и задайте общий ключ API. При обновлении используйте одинаковый тег для обоих образов. [Настройка миграции](configuration.md#миграция).
 
 ### Офлайн-установка
 
-На машине с интернетом скачайте `PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz` и `SHA256SUMS-CONTAINERS.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.0). Перенесите оба файла на сервер, проверьте контрольную сумму и загрузите образы.
+На машине с интернетом скачайте `PilotProAdmin-v1.0.1-linux-amd64-images.tar.gz` и `SHA256SUMS-CONTAINERS.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.1). Перенесите оба файла на сервер, проверьте контрольную сумму и загрузите образы.
 
 ```bash
 sha256sum --check SHA256SUMS-CONTAINERS.txt
-docker load --input PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz
+docker load --input PilotProAdmin-v1.0.1-linux-amd64-images.tar.gz
 ```
 
-Запустите админку той же командой `docker run`. Архив содержит оба образа с тегом `1.0.0`.
+Запустите админку той же командой `docker run`. Архив содержит оба образа с тегом `1.0.1`.
+
+## Кластер Pilot
+
+Скачайте `PilotProAdmin-v1.0.1-cluster.tar.gz` и `SHA256SUMS-CLUSTER.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.1). Сверьте контрольную сумму и распакуйте архив на узлах Linux.
+
+```bash
+sha256sum --check SHA256SUMS-CLUSTER.txt
+tar -xzf PilotProAdmin-v1.0.1-cluster.tar.gz
+```
+
+Комплект содержит скрипты и Compose для узлов и балансировщика. Подготовьте образ Pilot-Server из своего дистрибутива, PostgreSQL, Redis и общий файловый архив. [Установка кластера](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/cluster-installation.html)
 
 ## Полный стенд
 

@@ -28,7 +28,7 @@ dotnet docfx docfx.json --warningsAsErrors
 Команда для локальной проверки Windows-архивов:
 
 ```powershell
-./scripts/package-release.ps1 -Version 1.0.0
+./scripts/package-release.ps1 -Version 1.0.1
 ```
 
-Workflow Release можно запустить вручную с основной ветки, чтобы собрать архивы и проверить оба контейнера. Тег вида `v1.0.0` публикует ZIP для Windows и архив образов Linux в GitHub Releases. Образы также загружаются в GitHub Container Registry организации. Версию веб-приложения задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.
+Workflow Release можно запустить вручную с основной ветки, чтобы собрать архивы, проверить оба контейнера и запустить самопроверку кластерного установщика. Тег вида `v1.0.1` публикует ZIP для Windows, архив образов Linux и комплект кластерной установки в GitHub Releases. Образы также загружаются в GitHub Container Registry организации. Версию веб-приложения задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.

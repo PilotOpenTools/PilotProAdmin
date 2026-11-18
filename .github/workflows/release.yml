@@ -61,6 +61,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Check and package cluster installer
+        shell: bash
+        run: |
+          bash stack/build/selftest/cluster-selftest.sh
+          mkdir images
+          filename="PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
+          git archive --format=tar.gz --output="images/$filename" --prefix="PilotProAdmin-v$RELEASE_VERSION/" HEAD \
+            stack/Install/cluster \
+            stack/Install/wait-for-postgres.sh \
+            stack/Install/docs/cluster-installation.md \
+            stack/Install/docs/Pilot-Server_cluster.md \
+            proadmin/migration/README.md
+          cd images
+          sha256sum "$filename" > SHA256SUMS-CLUSTER.txt
       - name: Build and check images
         shell: bash
         run: |
@@ -98,7 +112,6 @@ jobs:
         run: |
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           filename="PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
-          mkdir images
           cd images
           docker save "$repository:$RELEASE_VERSION" "$repository-migration:$RELEASE_VERSION" | gzip -n > "$filename"
           sha256sum "$filename" > SHA256SUMS-CONTAINERS.txt
@@ -131,7 +144,8 @@ jobs:
           cd artifacts
           sha256sum --check SHA256SUMS.txt
           sha256sum --check SHA256SUMS-CONTAINERS.txt
-          assets=(./*.zip ./*.tar.gz SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt)
+          sha256sum --check SHA256SUMS-CLUSTER.txt
+          assets=(./*.zip ./*.tar.gz SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt SHA256SUMS-CLUSTER.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
           else
