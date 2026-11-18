@@ -23,17 +23,17 @@ Set-Location PilotProAdmin
 
 ## Docker Linux amd64
 
-Скачайте `PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.0) и сверьте его SHA-256 с `SHA256SUMS-CONTAINERS.txt`. Загрузите оба образа в Docker.
+Скачайте публичный образ из GitHub Container Registry. Вход в GitHub не требуется.
 
 ```bash
-sha256sum --check SHA256SUMS-CONTAINERS.txt
-docker load --input PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz
+docker pull ghcr.io/pilotopentools/pilotproadmin:1.0.0
 ```
 
-Запустите админку из загруженного образа.
+Задайте установочный ключ и запустите админку.
 
 ```bash
-read -rs App__SetupKey
+read -rsp 'Установочный ключ PilotProAdmin: ' App__SetupKey
+printf '\n'
 export App__SetupKey
 docker run --detach --name pilotproadmin \
   --publish 127.0.0.1:5300:8080 \
@@ -45,7 +45,26 @@ unset App__SetupKey
 
 Ввод ключа после `read` скрыт. Откройте <http://127.0.0.1:5300>. Укажите адрес Pilot, доступный из контейнера. Если Pilot запущен на той же машине, адрес зависит от настроек сети Docker.
 
-Образ сервиса миграции: `ghcr.io/pilotopentools/pilotproadmin-migration:1.0.0`. Для него выделите отдельный том и подключите его к сети админки. При обновлении укажите одинаковую версию тега для обоих образов.
+### Сервис миграции
+
+Если нужен импорт, экспорт или перенос базы, скачайте образ сервиса.
+
+```bash
+docker pull ghcr.io/pilotopentools/pilotproadmin-migration:1.0.0
+```
+
+Выделите сервису отдельный том, подключите его к сети админки и задайте общий ключ API. При обновлении используйте одинаковый тег для обоих образов. [Настройка миграции](configuration.md#миграция).
+
+### Офлайн-установка
+
+На машине с интернетом скачайте `PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz` и `SHA256SUMS-CONTAINERS.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.0). Перенесите оба файла на сервер, проверьте контрольную сумму и загрузите образы.
+
+```bash
+sha256sum --check SHA256SUMS-CONTAINERS.txt
+docker load --input PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz
+```
+
+Запустите админку той же командой `docker run`. Архив содержит оба образа с тегом `1.0.0`.
 
 ## Полный стенд
 
