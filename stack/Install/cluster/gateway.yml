@@ -1,0 +1,15 @@
+services:
+  traefik:
+    image: traefik:v3.6@sha256:31267173a15b4944e797a76ffd9c419707c8d8b32fe5b610f80cd0cfa05f372d
+    restart: unless-stopped
+    command:
+      - --providers.file.filename=/etc/traefik/routes.yml
+      - --entrypoints.web.address=:5545
+    ports: ["${CLUSTER_GATEWAY_BIND:?Set CLUSTER_GATEWAY_BIND}:${CLUSTER_GATEWAY_PORT:-5545}:5545"]
+    volumes:
+      - type: bind
+        source: ./routes.yml
+        target: /etc/traefik/routes.yml
+        read_only: true
+        bind:
+          create_host_path: false

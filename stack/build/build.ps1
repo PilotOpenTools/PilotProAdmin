@@ -62,7 +62,9 @@ if ($Offline) {
     $ci = foreach ($f in $ciFiles) { [regex]::Matches([IO.File]::ReadAllText($f), '[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}') | ForEach-Object Value }
     $runnerVersion = [regex]::Match($compose, 'gitlab-runner:(v[\d.]+)@').Groups[1].Value
     $ci = @($ci) + "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-$runnerVersion" + 'alpine:3.20' + 'registry.gitlab.com/gitlab-org/cli:latest'
-    $pack = @($pack) + $pinned + $ci | Select-Object -Unique
+    $gateway = [regex]::Match([IO.File]::ReadAllText("$install\cluster\gateway.yml"), '(?m)^\s*image:\s*(\S+)').Groups[1].Value
+    if (-not $gateway) { throw 'Образ балансировщика не найден в cluster/gateway.yml.' }
+    $pack = @($pack) + $pinned + $ci + $gateway | Select-Object -Unique
     foreach ($img in $pack) { if (-not $ours.Contains($img) -and -not (docker images -q $img)) { Run docker pull $img } }
     $info = docker info --format '{{.DriverStatus}}'
     if ($info -notmatch 'containerd') { throw 'Для -Offline нужно хранилище образов containerd: на обычном docker load теряет digest, и compose не найдёт образы.' }

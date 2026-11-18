@@ -16,14 +16,14 @@
 
 ## GitLab
 
-Укажите адрес существующего GitLab и настройте OAuth с callback `<адрес PilotProAdmin>/GitLab/Callback`. Подключите контуры и группы проектов в админке. Роль `gitlab` установочного комплекта нужна, если хотите развернуть собственный GitLab. [Настройка GitLab и шаблоны CI](../gitlab/README.md).
+Укажите адрес существующего GitLab и настройте OAuth с callback `<адрес PilotProAdmin>/GitLab/Callback`. Подключите контуры и группы проектов в админке. Роль `gitlab` установочного комплекта нужна, если хотите развернуть собственный GitLab. [Настройка GitLab и шаблоны CI](https://pilotopentools.github.io/PilotProAdmin/gitlab/README.html).
 
 ## GitHub
 
-Укажите `App__GitHubTypes__Repository=https://github.com/владелец/репозиторий`. [Подключение GitHub и публикация типов](git-hosting.md#githubcom).
+Укажите `App__GitHubTypes__Repository=https://github.com/владелец/репозиторий`. [Подключение GitHub и публикация типов](https://pilotopentools.github.io/PilotProAdmin/git-hosting.html#githubcom).
 
 ## Миграция
 
 Задайте одинаковое случайное значение для `App__Migration__ApiKey` в приложении и `Migration__ApiKey` в сервисе. При локальном запуске используйте `App__Migration__Url=http://127.0.0.1:5320`. В Docker укажите адрес сервиса по общей сети.
 
-Сервис использует PostgreSQL и файловый архив соответствующего контура Pilot. Для существующего S3 укажите настройки архива в Pilot и предоставьте сервису миграции доступ к хранилищу. Раздел «Миграция» проверяет подключения и показывает план операции. [Настройки каталогов, PostgreSQL и архивов](../proadmin/migration/README.md).
+Сервис использует PostgreSQL и файловый архив соответствующего контура Pilot. Для существующего S3 укажите настройки архива в Pilot и предоставьте сервису миграции доступ к хранилищу. Раздел «Миграция» проверяет подключения и показывает план операции. [Настройки каталогов, PostgreSQL и архивов](https://pilotopentools.github.io/PilotProAdmin/proadmin/migration/README.html).

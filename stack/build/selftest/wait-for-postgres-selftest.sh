@@ -96,7 +96,8 @@ ok '[ "$(applied IsAutomationLoggingEnabled)" = true ] && grep -q "^AppliedAt=" 
 
 echo "== кластер: основной сценарий =="
 fresh 'IsAutomationLoggingEnabled=true\nCheckChangeCreator=false\n'
-node
+CLUSTER_LOCK_SETTINGS=1 node
+ok '[ -f "$SS/.apply.lock" ]' "при общем каталоге настроек узлы используют файловую блокировку"
 ok '[ "$(calls)" = "rc rc wc rc start " ]' "порядок: -rc, -rc, -wc, проверочный -rc, запуск узла (получено: $(calls))"
 ok '! grep -q "conn=bad" "$LOG" && grep -q "^start --pgConnectionString=$CONN --indexPath=/idx --httpPort=5545$" "$LOG"' "строка подключения передана Daemon, узел запущен с теми же аргументами"
 ok 'db_has "<IsAutomationLoggingEnabled>true<" && db_has "<CheckChangeCreator>false</CheckChangeCreator>"' "значения записаны в конфигурацию"

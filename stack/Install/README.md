@@ -142,7 +142,7 @@ GitLab и Pilot-Server комплектом не переключаются, т�
 - В логах Loki у каждой строки есть метка `host`: `LOG_HOST` из `.env`, иначе `INTERNAL_BIND`, иначе `localhost`. Так одноимённые контейнеры разных машин различаются: `{host="10.0.0.2", container="pilot-server-test"}`.
 - Сборщики автоматизаций получают только каталог логов контура (чтение), а не все тома Pilot-Server.
 - Артефакты и загрузки GitLab лежат на Docker-томах `<проект>_gitlab_artifacts` и `<проект>_gitlab_uploads`: на папке Windows (NTFS) иначе загрузка отвечает 500. Они входят в бэкап GitLab (`gitlab-backup`), но находятся вне `DATA_ROOT`.
-- Полный CI/CD работает через GitLab. GitHub.com поддерживает публикацию типов на тест. Установщик ставит Pilot-Server в монолитном режиме. Действующий кластер можно подключить по адресу балансировщика. Для нового контура есть [инструкция по ручному переводу в кластер](docs/Pilot-Server_cluster.md). Узел кластера обёртка узнаёт по аргументу `--pgConnectionString=`. Настройки раздела «Серверы» применяются через `Daemon -rc` и `-wc` и вступают в силу после перезапуска всех узлов.
+- Полный CI/CD работает через GitLab. GitHub.com поддерживает публикацию типов на тест. Основной установщик ставит Pilot-Server в монолитном режиме. Для разных машин есть [комплект кластера](docs/cluster-installation.md). Действующий кластер подключается по адресу балансировщика. Настройки раздела «Серверы» вступают в силу после перезапуска всех узлов.
 - Grafana, Loki, Prometheus и RustFS (файлы Pilot) хранят данные в именованных томах вне `DATA_ROOT`, копия `DATA_ROOT` их не содержит.
 
 ## Что есть в папке
@@ -157,7 +157,8 @@ firewall-linux.sh, firewall-windows.ps1   правила брандмауэра 
 .env.example              шаблон настроек
 wait-for-postgres.sh      запуск Pilot-Server (монолит и узел кластера); копия shared/wait-for-postgres.sh, поведение проверяет build/selftest/wait-for-postgres-selftest.sh
 init/                     первичная настройка PostgreSQL (роль pilotuser, пароль PILOT_PG_PASSWORD обязателен; роли метрик и база pilot_metrics - 02-metrics-roles.sh)
-docs/                     ручная настройка Pilot: база, PostgreSQL, S3 (RustFS); перевод контура в кластер (Pilot-Server_cluster.md)
+docs/                     инструкции по установке, настройке Pilot и работе в закрытом контуре
+cluster/                  инициализация конфигурационной базы, Compose для узлов Pilot и Traefik
 modules/                  модули для чистой установки: исходники для GitLab, ServerHost, пакеты NuGet (заполняет build/build.ps1; без неё чистая установка модулей не получит)
 images/, data/, monitoring/, modules/, IMAGES.txt, PASSWORDS.md   заполняет сборка, в git не попадают
 ```

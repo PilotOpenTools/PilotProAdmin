@@ -68,4 +68,4 @@ docker load --input PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz
 
 ## Полный стенд
 
-Шаблоны Compose для контуров Pilot, GitLab и мониторинга, варианты ролей и сборка офлайн-комплекта описаны в [инструкции по установке](../stack/Install/docs/installation.md). Для сборки комплекта нужны исходные образы и файлы вашего дистрибутива Pilot. [Варианты развёртывания](deployment.md).
+Шаблоны Compose для контуров Pilot, GitLab и мониторинга, варианты ролей и сборка офлайн-комплекта описаны в [инструкции по установке](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html). Для сборки комплекта нужны исходные образы и файлы вашего дистрибутива Pilot. [Варианты развёртывания](https://pilotopentools.github.io/PilotProAdmin/deployment.html).

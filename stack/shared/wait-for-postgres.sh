@@ -172,9 +172,13 @@ apply_cluster_in() {
   return 0
 }
 
-apply_cluster_settings() {
+apply_cluster_settings() (
   local d rc
   [ -d "$SERVER_SETTINGS_DIR" ] || return 0
+  if [ "${CLUSTER_LOCK_SETTINGS:-0}" = 1 ]; then
+    exec 9>"$SERVER_SETTINGS_DIR/.apply.lock" || return 1
+    flock -w "$((CLUSTER_TIMEOUT * 2 + 5))" 9 || return 1
+  fi
   # Нет conf - БД не трогаем, но отмечаем режим: иначе админка до первого применения считает контур монолитом.
   if [ ! -f "$SERVER_SETTINGS_DIR/server-settings.conf" ]; then
     write_applied_conf /dev/null "конфигурации кластера" cluster
@@ -185,7 +189,7 @@ apply_cluster_settings() {
   apply_cluster_in "$d"; rc=$?
   rm -rf "$d"
   return "$rc"
-}
+)
 
 [ -n "$CLUSTER_CONN" ] || apply_server_settings || echo "[server-settings] не удалось применить настройки сервера - запуск с текущим settings.xml" >&2
 

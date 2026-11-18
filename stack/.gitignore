@@ -28,6 +28,7 @@ Install/PASSWORDS.md
 Install/certs/
 Install/firewall-linux.sh
 Install/firewall-windows.ps1
+Install/cluster/routes.yml
 
 # Копии прежних секретов (rotate-contour-secrets.ps1) и временные каталоги установки
 *.before-rotate-*

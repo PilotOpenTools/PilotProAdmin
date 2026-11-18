@@ -12,7 +12,7 @@
     - name: Установка стенда
       href: ../stack/Install/docs/installation.md
     - name: Кластерный Pilot
-      href: ../stack/Install/docs/Pilot-Server_cluster.md
+      href: ../stack/Install/docs/cluster-installation.md
     - name: Безопасность
       href: ../stack/Install/docs/security.md
     - name: GitLab без интернета

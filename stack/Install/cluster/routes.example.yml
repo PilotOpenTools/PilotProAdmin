@@ -1,0 +1,20 @@
+http:
+  routers:
+    pilot:
+      rule: PathPrefix(`/`)
+      entryPoints: [web]
+      service: pilot
+  services:
+    pilot:
+      loadBalancer:
+        sticky:
+          cookie:
+            name: pilot_session
+            httpOnly: true
+        healthCheck:
+          path: /
+          interval: 10s
+          timeout: 3s
+        servers:
+          - url: http://10.0.0.11:5545
+          - url: http://10.0.0.12:5545

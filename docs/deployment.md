@@ -7,7 +7,7 @@ PilotProAdmin и PilotMigration можно запустить отдельно �
 | Есть монолитный Pilot-Server | Установите админку, при необходимости добавьте сервис миграции. Укажите адрес действующего Pilot |
 | Есть кластер Pilot-Server | Укажите адрес балансировщика. Для миграции предоставьте доступ к PostgreSQL кластера и файловому архиву |
 | Нужен новый Pilot-Server | Установочный комплект разворачивает монолитный Pilot для выбранных контуров |
-| Нужен кластер Pilot-Server | Установите контур и переведите его в кластер по инструкции. Перевод сейчас выполняется вручную |
+| Нужен кластер Pilot-Server | Подготовьте общие PostgreSQL, Redis и хранилище. Для разных машин в комплекте есть Compose для узлов и балансировщика и скрипт инициализации конфигурационной базы |
 
 [Быстрый старт админки](getting-started.md) · [Настройка кластерной миграции](../proadmin/migration/README.md#кластерный-pilot-server)
 
@@ -21,6 +21,7 @@ PilotProAdmin и PilotMigration можно запустить отдельно �
 ## Инструкции
 
 - [Установка, роли и обновление](../stack/Install/docs/installation.md)
-- [Перевод контура в кластер Pilot-Server](../stack/Install/docs/Pilot-Server_cluster.md)
+- [Установка кластера на нескольких машинах](../stack/Install/docs/cluster-installation.md)
+- [Подготовка данных и перевод существующего контура в кластер](../stack/Install/docs/Pilot-Server_cluster.md)
 - [Сетевые правила, доступы и секреты](../stack/Install/docs/security.md)
 - [GitLab в закрытом контуре](../stack/Install/docs/gitlab-offline.md)
