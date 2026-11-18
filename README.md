@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/images/banner.svg" alt="PilotProAdmin" width="720">
-</p>
+<p align="center"><img src="docs/images/banner.png" alt="PilotProAdmin" width="720"></p>
 
 # PilotProAdmin
 
