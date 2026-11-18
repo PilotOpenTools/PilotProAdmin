@@ -28,6 +28,9 @@ public sealed class PilotAdmin
     public Task<AdminDatabaseInfo> GetDatabaseAsync(EnvConfig env, CancellationToken ct) =>
         RunAsync(env, async (api, database) => await FindAsync(api, database), ct);
 
+    internal Task<bool> AreDatabasesLaunchedAsync(EnvConfig env, IReadOnlyCollection<string> names, CancellationToken ct) =>
+        RunAsync(env, async (api, _) => ClusterReadiness.AllLaunched(names, await api.GetDatabaseInfoListAsync()), ct);
+
     public Task<DMetadata> GetMetadataAsync(EnvConfig env, CancellationToken ct) =>
         RunAsync(env, (api, database) => api.GetMetadataAsync(database, 0), ct);
 

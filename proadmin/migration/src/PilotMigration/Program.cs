@@ -9,6 +9,12 @@ using PilotMigration.Engine;
 using PilotMigration.Pilot;
 using PilotMigration.Scheduling;
 
+if (args is ["--cluster-readiness"])
+{
+    await ClusterReadiness.RunAsync();
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 var options = builder.Configuration.GetSection("Migration").Get<ServiceOptions>() ?? new ServiceOptions();

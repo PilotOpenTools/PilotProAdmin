@@ -54,15 +54,17 @@ bash initialize.sh node.env --restore-journal
 bash initialize.sh node.env --attach pilot-dev /var/lib/pilot-cluster/seed-dev
 ```
 
-Команда добавляет описание базы в общую конфигурацию. После запуска узлов проверьте вход в каждую базу по адресу `http://<балансировщик>:5545/<имя-базы>`.
+Команда добавляет описание базы в общую конфигурацию. Добавьте её имя в `CLUSTER_READY_DATABASES` на каждом узле и запустите узлы по инструкции ниже. Проверьте вход в каждую базу по адресу `http://<балансировщик>:5545/<имя-базы>`.
 
 ## Запустите узлы
 
 На каждой машине задайте одинаковые параметры PostgreSQL и общего хранилища. Значения `CLUSTER_NODE_NAME`, `CLUSTER_NODE_BIND` и `CLUSTER_NODE_ROOT` относятся к конкретной машине. Запустите все узлы на той же версии Pilot, которой создали конфигурацию.
 
+Для работы с Traefik на каждом узле укажите в `CLUSTER_READINESS_IMAGE` образ `ghcr.io/pilotopentools/pilotproadmin-migration:<версия-релиза>` с поддержкой `--cluster-readiness`. Укажите учётную запись администратора Pilot и перечислите через запятую имена всех баз, обслуживаемых этим кластером, в `CLUSTER_READY_DATABASES`. Ограничьте доступ к служебному порту 5546 адресом балансировщика.
+
 ```bash
-docker compose --env-file node.env -f compose.yml config --quiet
-docker compose --env-file node.env -f compose.yml up -d pilot
+docker compose --env-file node.env -f compose.yml -f readiness.yml config --quiet
+docker compose --env-file node.env -f compose.yml -f readiness.yml up -d pilot readiness
 ```
 
 Откройте `http://<адрес-узла>:5545/` для каждого узла. Pilot-Server должен вернуть свою версию. При общем каталоге настроек обёртка использует файловую блокировку, чтобы узлы применяли изменения по очереди.
@@ -70,6 +72,8 @@ docker compose --env-file node.env -f compose.yml up -d pilot
 ## Запустите балансировщик
 
 На машине балансировщика скопируйте `routes.example.yml` в `routes.yml` и укажите адреса узлов, доступные из контейнера Traefik. В отдельном файле `gateway.env` задайте `CLUSTER_GATEWAY_BIND` и при необходимости `CLUSTER_GATEWAY_PORT`.
+
+Traefik проверяет `/ready` на порту 5546 каждого узла. Проверка отвечает HTTP 200, когда Pilot API этого узла сообщает состояние `Launched` для всех баз из `CLUSTER_READY_DATABASES`. При ошибке подключения, отсутствующей или ещё не открытой базе проверка отвечает HTTP 503. При обновлении существующего кластера сначала запустите проверку на каждом узле, затем перенесите секцию `healthCheck` из нового шаблона в действующий `routes.yml`.
 
 ```bash
 docker compose --env-file gateway.env -f gateway.yml up -d

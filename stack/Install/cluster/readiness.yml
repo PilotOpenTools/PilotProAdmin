@@ -1,0 +1,10 @@
+services:
+  readiness:
+    image: ${CLUSTER_READINESS_IMAGE:?Set CLUSTER_READINESS_IMAGE}
+    restart: unless-stopped
+    command: [--cluster-readiness]
+    environment:
+      ClusterReadiness__Databases: ${CLUSTER_READY_DATABASES:?Set CLUSTER_READY_DATABASES}
+      ClusterReadiness__Login: ${CLUSTER_PILOT_ADMIN:?Set CLUSTER_PILOT_ADMIN}
+      ClusterReadiness__Password: ${CLUSTER_PILOT_PASSWORD:?Set CLUSTER_PILOT_PASSWORD}
+    ports: ["${CLUSTER_NODE_BIND:?Set CLUSTER_NODE_BIND}:5546:8080"]

@@ -12,7 +12,10 @@ http:
             name: pilot_session
             httpOnly: true
         healthCheck:
-          path: /
+          path: /ready
+          port: 5546
+          status: 200
+          followRedirects: false
           interval: 10s
           timeout: 3s
         servers:
