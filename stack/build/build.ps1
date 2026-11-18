@@ -58,7 +58,7 @@ if (-not (docker images -q $rustfs)) {
 $pinned = @([regex]::Matches($compose, '(?m)^\s*image:\s*(?:\$\{\w+:-)?([^\s}]+@sha256:[0-9a-f]+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
 if ($Offline) {
     # Образы jobs: runner берёт их с той же машины. Модули со старым шаблоном CI ссылаются на образы без digest.
-    $ciFiles = @("$ws\Клиентские модули\ci-template\.gitlab-ci.yml", "$ws\Серверные расширения\ci-template\.gitlab-ci.yml") + @(Get-ChildItem "$ws\gitlab\ci-checks\*.yml" | ForEach-Object FullName)
+    $ciFiles = @("$ws\client-modules\ci-template\.gitlab-ci.yml", "$ws\server-extensions\ci-template\.gitlab-ci.yml") + @(Get-ChildItem "$ws\gitlab\ci-checks\*.yml" | ForEach-Object FullName)
     $ci = foreach ($f in $ciFiles) { [regex]::Matches([IO.File]::ReadAllText($f), '[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}') | ForEach-Object Value }
     $runnerVersion = [regex]::Match($compose, 'gitlab-runner:(v[\d.]+)@').Groups[1].Value
     $ci = @($ci) + "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-$runnerVersion" + 'alpine:3.20' + 'registry.gitlab.com/gitlab-org/cli:latest'
@@ -115,7 +115,7 @@ $mod = "$install\modules"
 if (Test-Path $mod) { Remove-Item -Recurse -Force $mod }
 New-Item -ItemType Directory -Force "$mod\sources", "$mod\packages" | Out-Null
 $repos = [ordered]@{
-    'Pilot.ClientSdk' = "$ws\Клиентские модули\Pilot.ClientSdk"
+    'Pilot.ClientSdk' = "$ws\client-modules\Pilot.ClientSdk"
     'Reports'          = "$ws\Reports"
 }
 # Модуль - отдельный репозиторий (раскладка автора) или папка монорепозитория: во втором случае бандл собирается
@@ -188,7 +188,7 @@ foreach ($name in $repos.Keys) {
         Copy-Item $nupkg "$mod\packages\$id.$v.nupkg" -Force
     }
 }
-$hostProj = "$ws\Серверные расширения\ServerHost\ServerHost"
+$hostProj = "$ws\server-extensions\ServerHost\ServerHost"
 if (-not $NoBuild) { Run dotnet build "$hostProj\ServerHost.csproj" -c Release -v q -nologo }
 $hostZip = "$hostProj\dist\ServerHost.zip"
 if (-not (Test-Path $hostZip)) { throw "Нет ${hostZip}: соберите ServerHost в Release" }

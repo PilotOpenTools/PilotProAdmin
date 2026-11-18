@@ -24,7 +24,7 @@ dotnet build -c Release
 
 ## Ветки и выкладка
 
-CI - `.gitlab-ci.yml` (копия `Серверные расширения/ci-template`; переменные группы GitLab для выкладки - в `Серверные расширения/README.md`):
+CI - `.gitlab-ci.yml` (копия `server-extensions/ci-template`; переменные группы GitLab для выкладки - в `server-extensions/README.md`):
 
 | Ветка | Контур |
 |---|---|

@@ -36,7 +36,7 @@ public class RepoCopiesTests
             .Select(l => l.Trim())
             .Where(l => l.Length > 0 && !l.StartsWith("//") && !l.StartsWith("namespace ")));
 
-        var host = Read("Серверные расширения", "ServerHost", "ServerHost", "Contract", "IServerModulesApi.cs");
+        var host = Read("server-extensions", "ServerHost", "ServerHost", "Contract", "IServerModulesApi.cs");
         var admin = Read("proadmin", "src", "ProAdmin", "Pilot", "ServerModules", "ServerModulesContract.cs");
         Assert.Equal(Code(host), Code(admin));
     }

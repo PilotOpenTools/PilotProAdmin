@@ -63,7 +63,7 @@ debug --server http://сервер:порт/база --login admin --source <gui
 ## Пример: TestServerAction
 
 ```
-Серверные расширения\
+server-extensions\
 ├─ Debug\                          / утилита; zip из админки не нужен, если репозиторий уже есть
 │  └─ bin\Release\net8.0\publish\debug.exe   (dotnet publish -c Release)
 └─ TestServerAction\

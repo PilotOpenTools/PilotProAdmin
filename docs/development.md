@@ -8,7 +8,7 @@ dotnet test proadmin/migration/PilotMigration.sln -c Release
 dotnet run --project proadmin/src/ProAdmin/PilotProAdmin.csproj -- --urls http://127.0.0.1:5300
 ```
 
-Часть интеграционных тестов требует отдельного Pilot или PostgreSQL. Параметры подключения описаны в [документации приложения](https://github.com/PilotOpenTools/PilotProAdmin/tree/main/proadmin).
+Часть интеграционных тестов требует отдельного Pilot или PostgreSQL. Параметры подключения описаны в [документации приложения](../proadmin/README.md#разработка).
 
 ## Сайт документации
 
@@ -20,6 +20,8 @@ dotnet docfx docfx.json --warningsAsErrors
 ```
 
 Результат в `_site`. Workflow Docs публикует его через GitHub Pages после сборки основной ветки.
+
+Из этого же HTML собираются PDF инструкций. После DocFX запустите `node scripts/build-guide-pdfs.mjs` с установленным Google Chrome. Если Chrome не в `PATH`, передайте путь к исполняемому файлу аргументом.
 
 ## Сборка релиза
 

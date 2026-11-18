@@ -72,7 +72,7 @@
         <section class="card">
             <h2>Как установить ServerHost (один раз на сервер)</h2>
             <ol>
-                <li>Соберите <code>Серверные расширения/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>.</li>
+                <li>Соберите <code>server-extensions/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>.</li>
                 <li>В клиенте Pilot: «Модули расширения» / добавить <code>ServerHost.zip</code> как расширение Pilot-Server.</li>
                 <li>Перезапустите сервер Pilot (контейнер) - это последний перезапуск: дальше модули обновляются отсюда.</li>
                 <li>Модули, которые сейчас установлены штатно (например, ApprovalDocumentVersionSaving), загрузите здесь и удалите из «Модулей расширения».</li>
@@ -326,7 +326,7 @@ else if (state is not null && Model.HostLookupError is null)
                 }
                 else
                 {
-                    <span>Возьмите debug у администратора (<code>Серверные расширения/Debug</code>: <code>dotnet publish -c Release</code>).</span>
+                    <span>Возьмите debug у администратора (<code>server-extensions/Debug</code>: <code>dotnet publish -c Release</code>).</span>
                 }
             </li>
             <li>У нужной активности в таблице выше нажмите «Отладить локально» / <b>debug.json</b> (можно сразу указать Id объекта;

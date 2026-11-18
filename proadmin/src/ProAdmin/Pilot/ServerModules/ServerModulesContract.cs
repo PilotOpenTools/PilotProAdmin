@@ -1,4 +1,4 @@
-// Копия контракта из «Серверные расширения/ServerHost/ServerHost/Contract/IServerModulesApi.cs».
+// Копия контракта из «server-extensions/ServerHost/ServerHost/Contract/IServerModulesApi.cs».
 // Транспорт Pilot сопоставляет интерфейс по имени (IServerModulesApi), а JSON - по именам полей:
 // при изменении контракта правьте оба файла (сверяет RepoCopiesTests).
 namespace ProAdmin.Pilot.ServerModules;

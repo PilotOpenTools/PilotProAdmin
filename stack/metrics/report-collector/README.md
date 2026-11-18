@@ -182,7 +182,7 @@ python grafana/gen_dashboard.py grafana/dashboard-pilot-reports.json
 
 ## События модулей (Pilot.ClientSdk)
 
-Клиентский модуль [Pilot.ClientSdk](../../../Клиентские%20модули/Pilot.ClientSdk/README.md) (`113Pilot.ClientSdk.ext2`) шлёт пачки событий модулей:
+Клиентский модуль [Pilot.ClientSdk](../../../client-modules/Pilot.ClientSdk/README.md) (`113Pilot.ClientSdk.ext2`) шлёт пачки событий модулей:
 действия пользователей (`ModuleStats.Run/Use`) и «модуль загружен» с версией (через минуту после старта клиента).
 
 ### `POST /api/module-events`

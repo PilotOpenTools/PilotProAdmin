@@ -4,8 +4,23 @@
   href: getting-started.md
 - name: Конфигурация
   href: configuration.md
+- name: Git-хостинг
+  href: git-hosting.md
+- name: Развёртывание
+  href: deployment.md
+  items:
+    - name: Установка стенда
+      href: ../stack/Install/docs/installation.md
+    - name: Кластерный Pilot
+      href: ../stack/Install/docs/Pilot-Server_cluster.md
+    - name: Безопасность
+      href: ../stack/Install/docs/security.md
+    - name: GitLab без интернета
+      href: ../stack/Install/docs/gitlab-offline.md
 - name: Работа с контурами
   href: workflows.md
+- name: Миграция
+  href: ../proadmin/migration/README.md
 - name: Архитектура
   href: architecture.md
 - name: Разработка

@@ -1,7 +1,30 @@
 {
   "build": {
     "content": [
-      { "src": "docs", "files": ["*.md", "toc.yml"] }
+      { "src": "docs", "files": ["*.md", "toc.yml"] },
+      {
+        "files": [
+          "stack/Install/docs/*.md",
+          "stack/README.md",
+          "stack/backup/README.md",
+          "stack/metrics/automation-collector/README.md",
+          "stack/metrics/report-collector/README.md",
+          "proadmin/README.md",
+          "proadmin/migration/README.md",
+          "gitlab/README.md",
+          "gitlab/ci-checks/README.md",
+          "client-modules/README.md",
+          "client-modules/Pilot.ClientSdk/README.md",
+          "client-modules/Test-module/README.md",
+          "server-extensions/README.md",
+          "server-extensions/ServerHost/README.md",
+          "server-extensions/Debug/README.md",
+          "server-extensions/TestServerAction/README.md",
+          "Reports/README.md",
+          "Reports/CHANGELOG.md",
+          "Reports/lib/README.md"
+        ]
+      }
     ],
     "resource": [
       { "src": "docs", "files": ["images/banner.svg"] },
@@ -13,6 +36,7 @@
       "_appName": "PilotProAdmin",
       "_appLogoPath": "images/icon.svg",
       "_appFaviconPath": "images/icon.svg",
+      "_disableContribution": true,
       "_enableSearch": true,
       "_lang": "ru"
     },

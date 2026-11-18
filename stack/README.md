@@ -1,6 +1,6 @@
 # CI/CD-стенд Pilot
 
-Стек лежит в папке `stack` монорепозитория; рядом, в корне репозитория, находятся `proadmin` (веб-админка и миграция), `gitlab`, `Серверные расширения`, `Клиентские модули` и `Reports` ([корневой README](../README.md)). Скрипты `build/build.ps1`, `backup/backup.ps1` и `shared/stack.ps1` ищут эти папки рядом со стеком. Пути `C:\CICD` и `C:\Ascon-Docker` в документах - раскладка автора: каталог данных задаётся переменной `DATA_ROOT`. Контейнеры сгруппированы по папкам, в каждой свой `docker-compose.yml` и `.env.example`. Свой README есть у `stage`, `metrics` и `backup`; `prod` и `test` устроены так же, как `stage`.
+Стек лежит в папке `stack` монорепозитория; рядом, в корне репозитория, находятся `proadmin` (веб-админка и миграция), `gitlab`, `server-extensions`, `client-modules` и `Reports` ([описание проекта](../docs/index.md)). Скрипты `build/build.ps1`, `backup/backup.ps1` и `shared/stack.ps1` ищут эти папки рядом со стеком. Пути `C:\CICD` и `C:\Ascon-Docker` в документах - раскладка автора: каталог данных задаётся переменной `DATA_ROOT`. Контейнеры сгруппированы по папкам, в каждой свой `docker-compose.yml` и `.env.example`. Свой README есть у `stage`, `metrics` и `backup`; `prod` и `test` устроены так же, как `stage`.
 Запуск и остановка: `.\shared\stack.ps1 up|down|ps|build [prod|test|stage|admin|metrics]`. Цель `admin` здесь - `gitlab` и `proadmin` (с миграцией); в `Install` роль `admin` - только админка и миграция, GitLab - отдельная роль `gitlab`.
 
 | Папка | Compose-проект | Контейнеры |
@@ -25,9 +25,9 @@
 
 | Папка | Что внутри |
 |---|---|
-| `../Клиентские модули/` | `Pilot.ClientSdk` (общий клиентский модуль, до 2.0.0 - Modules), `Test-module`, шаблон CI |
+| `../client-modules/` | `Pilot.ClientSdk` (общий клиентский модуль, до 2.0.0 - Modules), `Test-module`, шаблон CI |
 | `../Reports/` | модуль отчётов |
-| `../Серверные расширения/` | Три решения: `ServerHost` (загрузчик серверных модулей и тесты), `Debug` (локальная отладка), `TestServerAction` (пример модуля); шаблон CI - см. README папки |
+| `../server-extensions/` | Три решения: `ServerHost` (загрузчик серверных модулей и тесты), `Debug` (локальная отладка), `TestServerAction` (пример модуля); шаблон CI - см. README папки |
 | `../gitlab/ci-checks/` | проверки автоматизаций и отчётов для GitLab CI, свой репозиторий `pilot-ci/checks` |
 | `backup/` | ежедневные резервные копии (Postgres, файлы Pilot и RustFS, GitLab, админка, тома Grafana, Loki и Prometheus) в `D:\Backups`, проверка и восстановление - см. README папки |
 | `Install/` | установочная папка для другого сервера, с текущими данными или чистая. Передаётся целиком, заполняет её `build/build.ps1` - см. `build/README.md`. Ручная настройка Pilot - `Install/docs/` |

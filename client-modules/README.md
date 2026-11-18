@@ -15,7 +15,7 @@
 | Папка | Что это |
 |---|---|
 | [`Pilot.ClientSdk/`](Pilot.ClientSdk/README.md) | клиентский модуль `113Pilot.ClientSdk.ext2` (NuGet-пакет `Pilot.ClientSdk`; до 2.0.0 - Modules): статистика модулей в Grafana + общие методы SDK |
-| [`ci-template/.gitlab-ci.yml`](ci-template/.gitlab-ci.yml) | шаблон CI для репозитория модуля: схема веток в MR, проверка версии и CHANGELOG, сборка zip, проверка библиотек, выкладка dev/release/main (тег `vX.Y.Z` и GitLab Release ставит веб-админка при выпуске в прод) |
+| `ci-template/.gitlab-ci.yml` | шаблон CI для репозитория модуля: схема веток в MR, проверка версии и CHANGELOG, сборка zip, проверка библиотек, выкладка dev/release/main (тег `vX.Y.Z` и GitLab Release ставит веб-админка при выпуске в прод) |
 | [`Test-module/`](Test-module/README.md) | тестовый модуль `114TestModule.ext2` для проверки CI/CD и ошибок в Grafana |
 | `../proadmin` | веб-админка, вкладка **«Модули»**: все операции CI/CD, запись модулей на серверы |
 | [`../stack/metrics/report-collector`](../stack/metrics/report-collector/README.md) | сервис статистики: `POST /api/module-events` / `metrics.module_events`, дашборд «Pilot - клиентские модули» |
@@ -67,7 +67,7 @@ hotfix/KTN-… (от main) ──MR──main ──прод, тег vX.Y.(Z+1) 
 
 ## Автоматическая выкладка из GitLab CI
 
-Слияние, сделанное прямо в GitLab, выкладывается без кнопок админки - это делает pipeline шаблона [`ci-template/.gitlab-ci.yml`](ci-template/.gitlab-ci.yml):
+Слияние, сделанное прямо в GitLab, выкладывается без кнопок админки - это делает pipeline шаблона `ci-template/.gitlab-ci.yml`:
 
 | Ветка | Job | Куда |
 |---|---|---|
@@ -87,7 +87,7 @@ hotfix/KTN-… (от main) ──MR──main ──прод, тег vX.Y.(Z+1) 
    - `DEPLOY_KEY_STAGE` - Masked **и Protected**;
    - `DEPLOY_KEY_PROD` - Masked **и Protected**.
 
-   Protected-переменная доступна только заданиям на защищённых ветках (`main`, `release/*`), поэтому разработчик не прочитает ключ стейджа и прода из своей ветки. Флаг Protect у этих двух переменных **не снимайте**. Если админка не на этом же Docker-хосте - ещё `ADMIN_URL`, лучше `https://…`: по HTTP ключи и zip идут открытым текстом. Как выпустить ключи и в какие группы их класть - [Серверные расширения/README.md](../Серверные%20расширения/README.md). Установщик стека на машине с ролью `gitlab` задаёт эти переменные в группах модулей сам (значения из `.env`, старую `DEPLOY_KEY` удаляет); вручную - если его шаг GitLab пропущен или не удался.
+   Protected-переменная доступна только заданиям на защищённых ветках (`main`, `release/*`), поэтому разработчик не прочитает ключ стейджа и прода из своей ветки. Флаг Protect у этих двух переменных **не снимайте**. Если админка не на этом же Docker-хосте - ещё `ADMIN_URL`, лучше `https://…`: по HTTP ключи и zip идут открытым текстом. Как выпустить ключи и в какие группы их класть - [server-extensions/README.md](../server-extensions/README.md). Установщик стека на машине с ролью `gitlab` задаёт эти переменные в группах модулей сам (значения из `.env`, старую `DEPLOY_KEY` удаляет); вручную - если его шаг GitLab пропущен или не удался.
 2. `.env` админки: `MODULES_DEPLOY_KEY_TEST`, `MODULES_DEPLOY_KEY_STAGE`, `MODULES_DEPLOY_KEY_PROD` и служебные учётки Pilot `MODULES_DEPLOY_{TEST,STAGE,PROD}_{LOGIN,PASSWORD}` (пользователь базы с правами на папку расширений), затем `docker compose up -d`.
 3. Runner: Docker-executor с доступом к админке (`host.docker.internal:5300`). Локальный runner - [`../gitlab`](../gitlab/README.md), сеть заданий `gitlab_gitlab-net`.
 
@@ -105,7 +105,7 @@ hotfix/KTN-… (от main) ──MR──main ──прод, тег vX.Y.(Z+1) 
 
 1. Проект в группе модулей GitLab (настройка «Группа с клиентскими модулями», на этом стенде `http://localhost:8080/client-modules`). Имя проекта - лучше код модуля из скобок (`OpenStoradge`).
 2. В корне - `*.csproj` модуля с `AssemblyName` `NNNИмя.ext2`, в `AssemblyInfo.cs` - `AssemblyProduct("NN.NNN - Название - (Код) - (CICD)")`, `AssemblyCompany("CICD")`; версия - только `<Version>X.Y.Z</Version>` в csproj (при `GenerateAssemblyInfo` включена генерация одних атрибутов версии, см. Test-module).
-3. Release-сборка должна собирать `bin/*.zip` (target `CreateReleaseZip`, как в [Pilot.ClientSdk.csproj](Pilot.ClientSdk/Pilot.ClientSdk.csproj)). Если zip нет, шаблон CI соберёт его из папки Release сам.
+3. Release-сборка должна собирать `bin/*.zip` (target `CreateReleaseZip`, как в Pilot.ClientSdk.csproj). Если zip нет, шаблон CI соберёт его из папки Release сам.
 4. Вкладка «Модули» / модуль / «Подключить»: сайт создаст `dev` от `main` и положит шаблон `.gitlab-ci.yml` в `dev`.
 5. Защитите ветки в GitLab (Settings / Repository / Protected branches): `main` - Allowed to push: **No one**, `release/*` - Allowed to push: **Maintainers** (сайт создаёт `release/X.Y.Z` и коммитит в неё версию и `CHANGELOG.md`, при No one эти коммиты отклонятся), у обеих Allowed to merge: **Maintainers**; `dev` - push и merge - Maintainer (при подключении сайт от имени выпускающего коммитит `.gitlab-ci.yml` в `dev`). Установщик стека ставит эту защиту сам на машине с ролью `gitlab`: `main` и `master` - push No one, merge Maintainers, `release/*` и `dev` - push и merge Maintainers. Защита `main` и `release/*` обязательна: на ней держатся Protected-ключи стейджа и прода (см. «Настройка, один раз»). В Merge requests включите *Squash commits when merging: Encourage* и *Pipelines must succeed* - синхронизирующие MR (release / dev, hotfix / dev) сайт тогда ставит на автослияние после pipeline. «Pipelines must succeed» оценивается по `.gitlab-ci.yml` из ветки MR, который автор MR вправе менять, поэтому реальный барьер перед `main` - ревью Maintainer.
 6. Если модуль тянет пакеты из внутреннего NuGet (Pilot.ClientSdk), положите в репозиторий `nuget.config` из `Test-module` и подставьте в нём адрес вашего GitLab и id проекта Pilot.ClientSdk (в образце - `gitlab.example.local` и `PROJECT_ID`). CI входит в источник сам (токен job, шаг в `build_module`), но только если хост в адресе источника совпадает с хостом этого GitLab (`CI_SERVER_HOST`, без порта): источнику на другом хосте токен не отдаётся, и его пакеты не восстановятся, поэтому пишите в `nuget.config` то же имя, по которому GitLab видит сам себя. Разработчику один раз нужно подключить источник GitLab на своей машине и войти логином GitLab и личным токеном - пошагово в [README Pilot.ClientSdk, 4.2](Pilot.ClientSdk/README.md#42-источник-gitlab-на-своей-машине).

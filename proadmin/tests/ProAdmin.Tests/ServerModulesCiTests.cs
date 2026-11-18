@@ -129,13 +129,13 @@ public class ServerModulesCiTests
     }
 
     /// <summary>
-    /// Копии шаблона для репозиториев модулей: CICD/Серверные расширения/ci-template/.gitlab-ci.yml (серверные)
-    /// и CICD/Клиентские модули/ci-template/.gitlab-ci.yml (клиентские).
+    /// Копии шаблона для репозиториев модулей: CICD/server-extensions/ci-template/.gitlab-ci.yml (серверные)
+    /// и CICD/client-modules/ci-template/.gitlab-ci.yml (клиентские).
     /// UPDATE_CI_TEMPLATES=1 - перезаписать её из кода.
     /// </summary>
     [RepoCopiesTheory]
-    [InlineData(ModuleKind.Server, "Серверные расширения")]
-    [InlineData(ModuleKind.Client, "Клиентские модули")]
+    [InlineData(ModuleKind.Server, "server-extensions")]
+    [InlineData(ModuleKind.Client, "client-modules")]
     public void Template_copy_is_in_sync(ModuleKind kind, string folder)
     {
         var copy = Path.Combine(RepoCopies.Root(), folder, "ci-template", ".gitlab-ci.yml");

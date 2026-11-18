@@ -6,7 +6,7 @@ namespace ProAdmin.Modules;
 /// Шаблон .gitlab-ci.yml для репозитория клиентского модуля: схема веток в MR, проверка версии и CHANGELOG.md,
 /// сборка zip (job <see cref="AdminSettings.ModulesBuildJob"/>), выкладка dev / тест, release/* / стейдж, main / прод
 /// через <see cref="ModuleCiDeployEndpoint"/>; тег и GitLab Release ставит веб-админка при выпуске в прод.
-/// Та же копия лежит в CICD/Клиентские модули/ci-template/.gitlab-ci.yml.
+/// Та же копия лежит в CICD/client-modules/ci-template/.gitlab-ci.yml.
 /// </summary>
 public static class ModuleCiTemplate
 {
@@ -17,7 +17,7 @@ public static class ModuleCiTemplate
     /// <summary>
     /// Серверный модуль: та же схема веток, проверка версии и релиз; сборка ищет *.servext.dll, выкладка идёт в
     /// ServerHost контура (<see cref="ModuleCiDeployEndpoint.ServerRoute"/>) - без перезапуска сервера.
-    /// Та же копия лежит в CICD/Серверные расширения/ci-template/.gitlab-ci.yml.
+    /// Та же копия лежит в CICD/server-extensions/ci-template/.gitlab-ci.yml.
     /// </summary>
     private static string ForKind(string template, ModuleKind kind) => kind == ModuleKind.Client
         ? template
