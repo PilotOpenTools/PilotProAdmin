@@ -93,6 +93,21 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$repository:$RELEASE_VERSION"
           docker push "$repository-migration:$RELEASE_VERSION"
+      - name: Package images for offline loading
+        shell: bash
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          filename="PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
+          mkdir images
+          cd images
+          docker save "$repository:$RELEASE_VERSION" "$repository-migration:$RELEASE_VERSION" | gzip -n > "$filename"
+          sha256sum "$filename" > SHA256SUMS-CONTAINERS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: container-release
+          path: images/
+          if-no-files-found: error
+          compression-level: 0
 
   publish:
     if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -105,15 +120,21 @@ jobs:
         with:
           name: windows-release
           path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: container-release
+          path: artifacts
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd artifacts
           sha256sum --check SHA256SUMS.txt
+          sha256sum --check SHA256SUMS-CONTAINERS.txt
+          assets=(./*.zip ./*.tar.gz SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber ./*.zip SHA256SUMS.txt
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
           else
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-              --title "PilotProAdmin $GITHUB_REF_NAME" --generate-notes ./*.zip SHA256SUMS.txt
+              --title "PilotProAdmin $GITHUB_REF_NAME" --generate-notes "${assets[@]}"
           fi

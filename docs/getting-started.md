@@ -11,7 +11,7 @@ PilotProAdmin подключается к действующему Pilot-Server.
 | `PilotProAdmin-vX.Y.Z-win-x64-lite.zip` | Установлен ASP.NET Core Runtime 10 x64 |
 | `PilotProAdmin-vX.Y.Z-win-x64-portable.zip` | Среда .NET включена в архив |
 
-Сверьте SHA-256 ZIP с `SHA256SUMS.txt`. В PowerShell откройте каталог архива. Для подключения первого Pilot задайте свой установочный ключ и запустите приложение.
+Сверьте SHA-256 ZIP с `SHA256SUMS.txt`. В PowerShell 7 откройте каталог архива. Для подключения первого Pilot задайте свой установочный ключ и запустите приложение.
 
 ```powershell
 $env:App__SetupKey = Read-Host 'Установочный ключ PilotProAdmin' -MaskInput
@@ -22,6 +22,15 @@ Set-Location PilotProAdmin
 Откройте <http://127.0.0.1:5300> и войдите учётной записью администратора первой базы Pilot. Для миграции запустите `PilotMigration/PilotMigration.exe` с `--urls http://127.0.0.1:5320` и настройте общий ключ [по инструкции](configuration.md#миграция).
 
 ## Docker Linux amd64
+
+Скачайте `PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.0) и сверьте его SHA-256 с `SHA256SUMS-CONTAINERS.txt`. Загрузите оба образа в Docker.
+
+```bash
+sha256sum --check SHA256SUMS-CONTAINERS.txt
+docker load --input PilotProAdmin-v1.0.0-linux-amd64-images.tar.gz
+```
+
+Запустите админку из загруженного образа.
 
 ```bash
 read -rs App__SetupKey
