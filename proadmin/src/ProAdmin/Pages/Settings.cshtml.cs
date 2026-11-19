@@ -34,6 +34,23 @@ public class SettingsModel : AppPageModel
     public AssemblySpec LibrariesSpec(ModuleKind kind) => _libraries.For(kind);
 
     [BindProperty] public AdminSettings Form { get; set; } = new();
+    [BindProperty] public List<DeployAccountInput> Deploy { get; set; } = [];
+    public List<DeployAccountInput> DeployPrefill =>
+        HttpContext.RequestServices.GetRequiredService<DeployAccounts>().Prefill(AppSettings);
+
+    public async Task<IActionResult> OnPostDeployAsync([FromServices] DeployAccounts accounts, CancellationToken ct)
+    {
+        var before = SettingsStore.Current;
+        var updated = before.Clone();
+        if (await accounts.ApplyAsync(updated, Deploy, _pilot, ct) is { } error)
+            TempData["FlashError"] = error;
+        else
+        {
+            SettingsStore.UpdateDeployLogins(before, updated);
+            TempData["Flash"] = "Служебные учётные записи Pilot сохранены.";
+        }
+        return RedirectToPage(null, null, null, "deploy-accounts");
+    }
 
     public List<(string Title, string Level, string Text)> CheckResults { get; } = new();
     public List<string> Errors { get; } = new();
@@ -122,6 +139,8 @@ public class SettingsModel : AppPageModel
     {
         ViewData["Section"] = "settings";
         Validate();
+        if (Form.GrafanaUrl.Length > 0 && !SetupModel.TryWebUrl(Form.GrafanaUrl, out _))
+            Errors.Add("Проверьте адрес Grafana.");
         if (Errors.Count > 0)
             return Page();
 
@@ -171,7 +190,7 @@ public class SettingsModel : AppPageModel
         var before = AppSettings.Clone();
         Form.UpdatedAt = DateTimeOffset.UtcNow;
         Form.UpdatedBy = CurrentSession.PilotLogin;
-        SettingsStore.Save(Form);
+        SettingsStore.SaveGeneral(Form);
         // Значения не пишем (там адреса и пути), только что изменилось и кем.
         HttpContext.RequestServices.GetRequiredService<ILogger<SettingsModel>>().LogInformation(
             "Общие настройки изменены: {Login} с адреса {Address}; изменено: {Fields}", CurrentSession.PilotLogin,

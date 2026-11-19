@@ -21,6 +21,9 @@ $stack = Join-Path $tmp 'stack'; $bin = Join-Path $tmp 'bin'
 $vols = Join-Path $tmp 'vols'; $running = Join-Path $tmp 'running'
 New-Item -ItemType Directory $stack, "$stack\backup", $bin, $vols, $running | Out-Null
 Copy-Item "$stackSrc\backup\backup.ps1", "$stackSrc\backup\restore.ps1", "$stackSrc\backup\monitoring.ps1" "$stack\backup"
+$transfer = Join-Path (Split-Path $stack -Parent) 'proadmin/transfer'
+New-Item -ItemType Directory -Force $transfer | Out-Null
+Copy-Item (Join-Path (Split-Path $stackSrc -Parent) 'proadmin/transfer/*.ps1') $transfer
 
 # --- заглушка docker: журнал вызовов; тома и запущенные контейнеры - каталоги и файлы во временной папке ---
 $stub = @'

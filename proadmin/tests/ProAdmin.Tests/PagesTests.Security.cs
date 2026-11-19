@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using ProAdmin.Infrastructure;
 using ProAdmin.Settings;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -331,21 +333,21 @@ public sealed partial class PagesTests
     public void FirstSetupLoginNeedsTheSetupKey()
     {
         // Пока серверы не настроены, адрес Pilot вводит посетитель: без ключа установки такой вход закрыт.
-        Assert.Contains("ADMIN_SETUP_KEY", ProAdmin.Pages.LoginModel.SetupKeyError("", "anything"));
-        Assert.Contains("ADMIN_SETUP_KEY", ProAdmin.Pages.LoginModel.SetupKeyError(null, null));
-        Assert.Equal("Неверный ключ установки.", ProAdmin.Pages.LoginModel.SetupKeyError("setup-key", "wrong"));
-        Assert.Equal("Неверный ключ установки.", ProAdmin.Pages.LoginModel.SetupKeyError("setup-key", null));
-        Assert.Null(ProAdmin.Pages.LoginModel.SetupKeyError("setup-key", "setup-key"));
+        Assert.Contains("ADMIN_SETUP_KEY", ProAdmin.Pages.PilotConnectionModel.SetupKeyError("", "anything"));
+        Assert.Contains("ADMIN_SETUP_KEY", ProAdmin.Pages.PilotConnectionModel.SetupKeyError(null, null));
+        Assert.Equal("Неверный ключ установки.", ProAdmin.Pages.PilotConnectionModel.SetupKeyError("setup-key", "wrong"));
+        Assert.Equal("Неверный ключ установки.", ProAdmin.Pages.PilotConnectionModel.SetupKeyError("setup-key", null));
+        Assert.Null(ProAdmin.Pages.PilotConnectionModel.SetupKeyError("setup-key", "setup-key"));
     }
 
     [Fact]
-    public async Task LoginDoesNotLetTheVisitorChooseThePilotServer()
+    public async Task LoginOnlyAsksForGitLab()
     {
-        _factory.NewSession(withGitLab: true); // серверы заданы в настройках
         var html = WebUtility.HtmlDecode(await _factory.CreateClient().GetStringAsync("/Login?manual=true"));
+        Assert.Contains("name=\"AccessToken\"", html);
+        Assert.DoesNotContain("name=\"Login\"", html);
+        Assert.DoesNotContain("name=\"Password\"", html);
         Assert.DoesNotContain("name=\"ServerUrl\"", html);
-        Assert.DoesNotContain("Указать адрес сервера вручную", html);
-        Assert.Contains("Вход будет проверен на серверах", html);
     }
 
     [Fact]
@@ -359,13 +361,138 @@ public sealed partial class PagesTests
         HttpResponseMessage last = null!;
         for (var i = 0; i < 2; i++)
         {
-            last = await PostForm(client, "/Login", "/Login", ("Login", "admin"), ("Password", "wrong" + i), ("AccessToken", "glpat-x"));
+            last = await PostForm(client, "/Login", "/Login?handler=Token", ("AccessToken", "glpat-wrong" + i));
             Assert.Equal(HttpStatusCode.OK, last.StatusCode);
         }
-        Assert.Contains("Не удалось войти ни на один сервер Pilot", await Text(last));
+        Assert.Contains("alert-error", await Text(last));
 
-        var blocked = await PostForm(client, "/Login", "/Login", ("Login", "admin"), ("Password", "right"), ("AccessToken", "glpat-x"));
+        var blocked = await PostForm(client, "/Login", "/Login?handler=Token", ("AccessToken", "glpat-x"));
         Assert.Equal((HttpStatusCode)429, blocked.StatusCode);
         Assert.Contains("Слишком много попыток", await Text(blocked));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GitLabSignsInWithoutPilot(bool oauth)
+    {
+        using var host = GitLabLoginHost();
+        _factory.NewSession(withGitLab: false, services: host.Services);
+        using var client = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        HttpResponseMessage login;
+        if (oauth)
+        {
+            var request = await PostForm(client, "/Login", "/Login?handler=GitLab", ("ReturnUrl", "/Jobs"));
+            Assert.Equal(HttpStatusCode.Redirect, request.StatusCode);
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.Headers.Location!.Query);
+            var state = query["state"].ToString();
+
+            using var otherBrowser = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var callback = "/GitLab/Callback?code=test-code&state=" + state;
+            Assert.Contains("Сеанс входа устарел", await Text(await otherBrowser.GetAsync(callback)));
+            Assert.Contains("Сеанс входа устарел", await Text(await client.GetAsync(callback + "wrong")));
+            login = await client.GetAsync(callback);
+        }
+        else
+        {
+            login = await PostForm(client, "/Login", "/Login?handler=Token",
+                ("ReturnUrl", "/Jobs"), ("AccessToken", "glpat-test"));
+        }
+
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        Assert.Equal("/Jobs", login.Headers.Location?.OriginalString);
+        var jobs = await client.GetAsync("/Jobs");
+        Assert.Equal(HttpStatusCode.OK, jobs.StatusCode);
+        Assert.Contains("Подключить Pilot", await Text(jobs));
+        var connection = await client.GetAsync("/PilotConnection");
+        Assert.Contains("name=\"Password\"", await Text(connection));
+        var automations = await client.GetAsync("/Automations");
+        Assert.Equal(HttpStatusCode.OK, automations.StatusCode);
+        Assert.Contains("name=\"EnvPassword\"", await Text(automations));
+        Assert.Equal(HttpStatusCode.Forbidden, (await PostForm(client, "/Jobs", "/Settings")).StatusCode);
+    }
+
+    [Fact]
+    public async Task GitLabAccountWithoutGroupAccessDoesNotSignIn()
+    {
+        using var host = GitLabLoginHost(member: false);
+        _factory.NewSession(withGitLab: false, services: host.Services);
+        using var client = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var login = await PostForm(client, "/Login", "/Login?handler=Token", ("AccessToken", "glpat-test"));
+        Assert.Contains("не подтверждён доступ", await Text(login));
+        var jobs = await client.GetAsync("/Jobs");
+        Assert.Equal(HttpStatusCode.Redirect, jobs.StatusCode);
+        Assert.StartsWith("/Login", jobs.Headers.Location?.PathAndQuery);
+    }
+
+    [Fact]
+    public async Task FirstRunRequiresSetupKeyAndSavesSettingsBeforeRegularLogin()
+    {
+        using var loginHost = GitLabLoginHost();
+        using var host = loginHost.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            services.PostConfigure<AppOptions>(options =>
+            {
+                options.FirstRunSetup = true;
+                options.SetupKey = "test-setup-key";
+            })));
+        _factory.NewSession(withGitLab: false, services: host.Services);
+        using var client = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var settings = host.Services.GetRequiredService<SettingsStore>();
+
+        Assert.Equal("/Setup", (await client.GetAsync("/Login")).Headers.Location?.OriginalString);
+        var wrong = await PostForm(client, "/Setup", "/Setup?handler=Connect",
+            ("SetupKey", "wrong"), ("GitLabUrl", "https://git.example"), ("Token", "glpat-test"));
+        Assert.Contains("Неверный ключ установки", await Text(wrong));
+        Assert.False(settings.Current.FirstRunCompleted);
+
+        var connected = await PostForm(client, "/Setup", "/Setup?handler=Connect",
+            ("SetupKey", "test-setup-key"), ("GitLabUrl", "https://git.example"), ("Token", "glpat-test"));
+        Assert.Equal(HttpStatusCode.Redirect, connected.StatusCode);
+        var next = await Text(await client.GetAsync("/Setup"));
+        Assert.Contains("name=\"Deploy[0].Login\"", next);
+        Assert.Contains("name=\"Deploy[2].Password\"", next);
+        Assert.DoesNotContain("glpat-test", next);
+
+        var saved = await PostForm(client, "/Setup", "/Setup?handler=Finish",
+            ("Input.Test", "http://pilot.example:5547"), ("Input.Grafana", "https://grafana.example"),
+            ("Input.Automation", "https://git.example/automation"), ("Deploy[0].Disable", "false"),
+            ("Deploy[1].Disable", "false"), ("Deploy[2].Disable", "false"));
+        Assert.Equal(HttpStatusCode.Redirect, saved.StatusCode);
+        Assert.True(settings.Current.FirstRunCompleted);
+        Assert.Equal("https://grafana.example", settings.Current.GrafanaUrl);
+        Assert.Equal("/Login", (await client.GetAsync("/Setup")).Headers.Location?.OriginalString);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/Jobs")).StatusCode);
+    }
+
+    private WebApplicationFactory<Program> GitLabLoginHost(bool member = true) =>
+        _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.PostConfigure<AuthenticationOptions>(options =>
+            {
+                options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            });
+            services.PostConfigure<AppOptions>(options =>
+            {
+                options.GitLab.ClientId = "test-client";
+                options.GitLab.ClientSecret = "test-secret";
+            });
+            services.AddHttpClient("gitlab").ConfigurePrimaryHttpMessageHandler(() => new LoginGitLabHandler(member));
+            services.AddHttpClient("gitlab-probe").ConfigurePrimaryHttpMessageHandler(() => new LoginGitLabHandler(member));
+        }));
+
+    private sealed class LoginGitLabHandler(bool member) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(request.RequestUri?.AbsolutePath switch
+            {
+                "/oauth/token" => GitLabAnswer("""{"access_token":"glpat-test","token_type":"Bearer"}"""),
+                "/api/v4/user" => GitLabAnswer("""{"id":42,"username":"tester","name":"Tester"}"""),
+                "/api/v4/groups/automation" => GitLabAnswer("""{"id":1,"full_path":"automation"}"""),
+                "/api/v4/groups/automation/members/all/42" when member => GitLabAnswer("""{"access_level":30}"""),
+                _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            });
     }
 }

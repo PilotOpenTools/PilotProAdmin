@@ -61,15 +61,22 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AllowAnonymousToPage("/Login");
+    options.Conventions.AllowAnonymousToPage("/Setup");
+    options.Conventions.AllowAnonymousToPage("/GitLab/Callback");
+    if (appOptions.GitHubTypes.IsConfigured)
+        options.Conventions.AllowAnonymousToPage("/PilotConnection");
+    options.Conventions.ConfigureFilter(new ProAdmin.Pages.PilotCredentialsFilter());
     options.Conventions.AllowAnonymousToPage("/Error");
     options.Conventions.AllowAnonymousToPage("/Process");
     // Запись в общих настройках, миграции и настройках серверов - только вошедшим администратором Pilot прода.
     options.Conventions.AddFolderApplicationModelConvention("/Migration", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
     options.Conventions.AddPageApplicationModelConvention("/Servers/Index", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
-    options.Conventions.AddPageApplicationModelConvention("/Settings", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries")));
+    options.Conventions.AddPageApplicationModelConvention("/Settings", model => model.Filters.Add(
+        new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries") { AllowGitLabAdminWithoutProd = true }));
 });
 
-builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.FromSeconds(60))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 // Проверка job-токена выкладки: тайм-аут 15 с и без редиректов (токен не должен уйти на другой хост).
 builder.Services.AddHttpClient(ProAdmin.Modules.CiJobVerifier.ClientName, client => client.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
@@ -89,10 +96,12 @@ builder.Services.AddSingleton(new ProAdmin.Infrastructure.AuthFailureLimiter());
 builder.Services.AddSingleton<ProAdmin.Modules.CiJobVerifier>();
 builder.Services.AddSingleton<ProAdmin.Modules.CiAuth>();
 builder.Services.AddSingleton<SettingsStore>();
+builder.Services.AddSingleton<DeployAccounts>();
 builder.Services.AddSingleton<ProAdmin.Servers.ServerSettingsStore>();
 builder.Services.AddSingleton<SessionVault>();
 builder.Services.AddSingleton<PilotGateway>();
 builder.Services.AddSingleton<GitLabAuthService>();
+builder.Services.AddSingleton<GitLabSignIn>();
 builder.Services.AddSingleton<GitLabClientFactory>();
 builder.Services.AddSingleton<AutomationCatalog>();
 builder.Services.AddSingleton<AutomationOperations>();

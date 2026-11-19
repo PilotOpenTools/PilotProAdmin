@@ -17,7 +17,8 @@
   .\install.ps1 -SkipLoad       # образы из images\ уже загружены
   .\install.ps1 -Roles prod     # только эти сервисы: prod, test, stage, admin, metrics, gitlab; адреса других машин - в .env
 #>
-param([string]$FromBackup, [string]$GitLabHost, [string[]]$Roles, [switch]$NoData, [switch]$WithGitLab, [switch]$WithMyAdmin, [switch]$SkipLoad)
+param([string]$FromBackup, [string]$GitLabHost, [string[]]$Roles, [switch]$NoData, [switch]$WithGitLab, [switch]$WithMyAdmin, [switch]$SkipLoad,
+    [switch]$ReleaseInstall, [string]$ReleaseGitLabUrl, [string]$ReleaseGrafanaUrl, [hashtable]$ReleasePilotUrls)
 $ErrorActionPreference = 'Stop'
 # До перехода в папку комплекта: путь к бэкапу может быть относительным.
 if ($FromBackup) { $FromBackup = (Resolve-Path $FromBackup).Path.TrimEnd([char]92, [char]47) }
@@ -239,6 +240,9 @@ $myContours = @($contours | Where-Object { $roleList -contains $_ })
 $isAdmin   = $roleList -contains 'admin'
 $isMetrics = $roleList -contains 'metrics'
 $restore = $snap -and -not (Test-Path "$root/.installed")
+if ($ReleaseInstall -and $snap -and -not $restore) {
+    throw "В $root уже есть установленный стенд. Для восстановления выберите новый каталог установки."
+}
 if ($snap -and -not $restore) { Write-Host "Стек в $root уже установлен (метка .installed): данные из $snap не восстанавливаю." -ForegroundColor Yellow }
 if ($restore) {
     if (Test-Path "$root/.restore-started") { throw "Прошлое восстановление GitLab в $root не завершилось (метка .restore-started): данные могли измениться, повторное восстановление их затрёт. Журнал: $root/gitlab/logs/restore.log. Очистите $root и запустите установку снова." }
@@ -248,7 +252,7 @@ if ($restore) {
 
     # Пароли должны совпасть с бэкапом: они записаны в settings.xml, в ролях PostgreSQL и в служебных данных RustFS.
     # DATA_ROOT и пути исходной машины не переносим.
-    $skip = '^(DATA_ROOT|[A-Z]+_ROOT|PG_HOST|PG_PORT|PG_DB|PG_USER|PG_PASSWORD|MIGRATION_URL)$'
+    $skip = '^(DATA_ROOT|[A-Z]+_ROOT|PG_HOST|PG_PORT|PG_DB|PG_USER|PG_PASSWORD|MIGRATION_URL|COMPOSE_PROJECT_NAME|COMPOSE_FILE|COMPOSE_PROFILES|RELEASE_.*)$'
     foreach ($f in 'gitlab', 'proadmin', 'metrics') {
         # Бэкапы до 2026-11-05 хранят настройки админки и GitLab на уровень глубже.
         $file = "$snap\admin\env\$f\.env"
@@ -261,6 +265,9 @@ if ($restore) {
         foreach ($k in $b.Keys) { if ($k -notmatch $skip) { Set-EnvValue "$($c.ToUpper())_$k" $b[$k] } }
     }
     $cfg = Read-Env $envPath
+    if ($ReleaseInstall -and $cfg.RELEASE_RESTORE_GITLAB_IMAGE) {
+        Set-EnvValue GITLAB_IMAGE $cfg.RELEASE_RESTORE_GITLAB_IMAGE
+    }
     if ($cfg.PROD_PILOT_ADMIN) { Set-EnvValue PILOT_ADMIN_LOGIN $cfg.PROD_PILOT_ADMIN; Set-EnvValue PILOT_ADMIN_PASSWORD $cfg.PROD_PILOT_PASSWORD }
     $oldHost = $cfg.GITLAB_HOST_IP
     if ($GitLabHost) {
@@ -346,6 +353,7 @@ if (-not $cfg.MIGRATION_API_KEY) { Set-EnvValue MIGRATION_API_KEY (New-Secret); 
 # Ключи выкладки из CI: отдельные на контур. Старый общий ключ становится ключом test, для stage и prod создаются новые.
 if ($isAdmin) {
     $cfg = Read-Env $envPath
+    if ($ReleaseInstall -and -not $cfg.ADMIN_SETUP_KEY) { Set-EnvValue ADMIN_SETUP_KEY (New-Secret); $generated += 'ADMIN_SETUP_KEY' }
     if ($cfg.MODULES_DEPLOY_KEY -and -not $cfg.MODULES_DEPLOY_KEY_TEST) { Set-EnvValue MODULES_DEPLOY_KEY_TEST $cfg.MODULES_DEPLOY_KEY; Set-EnvValue MODULES_DEPLOY_KEY '' }
     foreach ($s in 'TEST', 'STAGE', 'PROD') {
         if (-not (Read-Env $envPath)["MODULES_DEPLOY_KEY_$s"]) { Set-EnvValue "MODULES_DEPLOY_KEY_$s" (New-Secret); $generated += "MODULES_DEPLOY_KEY_$s" }
@@ -389,6 +397,49 @@ if ($tlsOn) {
     if ($cfg.ADMIN_PUBLIC_URL -match '^http://') { Write-Warning 'ADMIN_PUBLIC_URL в .env начинается с http://: укажите https://, а в Redirect URI OAuth-приложения GitLab и в переменной группы ADMIN_URL (CI модулей) - адрес админки по https.' }
 }
 $scheme = if ($tlsOn) { 'https' } else { 'http' }
+
+if ($ReleaseInstall) {
+    . "$PSScriptRoot/release-ports.ps1"
+    Set-EnvValue ADMIN_FIRST_RUN true
+    $oldGitLabPort = if ($cfg.GITLAB_HTTP_PORT) { $cfg.GITLAB_HTTP_PORT } else { '8080' }
+    $oldPorts = @{ prod = 5546; test = 5547; stage = 5549 }
+    foreach ($c in $contours) {
+        $value = $cfg["$($c.ToUpperInvariant())_PILOT_PORT"]
+        if ($value) { $oldPorts[$c] = $value }
+    }
+    $ports = Select-ReleasePorts
+    foreach ($key in $ports.Keys) { Set-EnvValue $key $ports[$key] }
+
+    if ($WithGitLab) {
+        $publicHost = if ($GitLabHost) { $GitLabHost } elseif ($cfg.GITLAB_HOST_IP) { $cfg.GITLAB_HOST_IP } else { 'localhost' }
+        Set-EnvValue GITLAB_HOST_IP $publicHost
+        $gitLabBase = "http://${publicHost}:$($ports.GITLAB_HTTP_PORT)"
+        if (-not $restore) { Set-EnvValue GITLAB_GROUP_URL "$gitLabBase/automation" }
+    } elseif ($ReleaseGitLabUrl) {
+        $gitLabBase = $ReleaseGitLabUrl
+        Set-EnvValue GITLAB_GROUP_URL "$gitLabBase/automation"
+    }
+    if ($isMetrics) { Set-EnvValue GRAFANA_URL "${scheme}://localhost:$($ports.GRAFANA_PORT)" }
+    elseif (-not $restore) { Set-EnvValue GRAFANA_URL $ReleaseGrafanaUrl }
+
+    foreach ($c in $contours) {
+        $prefix = $c.ToUpperInvariant()
+        if ($c -in $myContours) {
+            $newPort = $ports["${prefix}_PILOT_PORT"]
+            $url = "http://localhost:$newPort"
+            if ($restore) {
+                $previous = $cfg["PILOT_${prefix}_URL"]
+                $uri = $null
+                if ([uri]::TryCreate($previous, [UriKind]::Absolute, [ref]$uri)) {
+                    $url += $uri.AbsolutePath.TrimEnd('/')
+                }
+            }
+        } else { $url = $ReleasePilotUrls[$c] }
+        Set-EnvValue "PILOT_${prefix}_URL" $url
+    }
+    Set-EnvValue ENV_MAP ":$($ports.STAGE_PILOT_PORT)=stage;:$($ports.TEST_PILOT_PORT)=test;stage=stage;test=test;*=prod"
+    $cfg = Read-Env $envPath
+}
 
 # --- образы из комплекта ---
 # Сверка загруженного образа с IMAGES.txt (строка: имя, полный идентификатор, дата, отпечаток слоёв). Идентификатор зависит от
@@ -456,6 +507,28 @@ if ($restore) {
         Replace-InFile "$root/gitlab/runner-config/config.toml" $oldHost $GitLabHost
         # Адрес в nuget.config правит шаг после установки GitLab; $oldHost живёт только в этом запуске, поэтому его запоминаем.
         if ($WithGitLab -and $oldHost -ne $GitLabHost) { [IO.File]::WriteAllText("$root/.gitlab-old-host", "$oldHost`n") }
+    }
+    if ($ReleaseInstall) {
+        $settingsPath = "$root/services/proadmin/settings.json"
+        if ($gitLabBase -and $WithGitLab) {
+            foreach ($address in @($oldHost, $publicHost, 'localhost', '127.0.0.1', 'host.docker.internal') | Where-Object { $_ } | Select-Object -Unique) {
+                Replace-InFile $settingsPath "http://${address}:$oldGitLabPort/" "$gitLabBase/"
+                Replace-InFile "$root/gitlab/runner-config/config.toml" "http://${address}:$oldGitLabPort" $gitLabBase
+            }
+            foreach ($key in 'GITLAB_GROUP_URL', 'REPORTS_GITLAB_GROUP_URL', 'MODULES_GITLAB_GROUP_URL', 'SERVER_MODULES_GITLAB_GROUP_URL', 'TYPES_GITLAB_PROJECT_URL') {
+                $uri = $null
+                if ([uri]::TryCreate($cfg[$key], [UriKind]::Absolute, [ref]$uri)) {
+                    Set-EnvValue $key "$gitLabBase$($uri.AbsolutePath)"
+                }
+            }
+        }
+        if (Test-Path -LiteralPath $settingsPath) {
+            $settings = [IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json
+            Update-RestoredPilotPorts $settings $oldPorts $ports $myContours
+            $settings | Add-Member -NotePropertyName firstRunCompleted -NotePropertyValue $false -Force
+            if ($isMetrics) { $settings | Add-Member -NotePropertyName grafanaUrl -NotePropertyValue $cfg.GRAFANA_URL -Force }
+            [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 50))
+        }
     }
 }
 
@@ -527,29 +600,39 @@ foreach ($c in $myContours) {
     }
 }
 
+# The release images are already loaded. Start the two applications after their backup files are in place.
+if ($ReleaseInstall -and $isAdmin) {
+    Step 'PilotProAdmin'
+    Run docker compose up -d --pull never --wait --wait-timeout 90 proadmin
+    Step 'PilotMigration'
+    Run docker compose up -d --pull never --wait --wait-timeout 90 migration
+}
+
 # Не «compose pull --policy missing»: он всё равно лезет в реестр за нашими образами и падает.
 if ($restore) {
     # Контейнеры и тома создаём, не запуская: том надо наполнить до старта Grafana, а базы - до старта Pilot-Server.
     Step "Скачивание недостающих образов (Pilot-Server, PostgreSQL, Grafana…)"
     Retry { Run docker compose up --no-start --pull missing }
 
-    if ($isMetrics -and (Test-Path "$snap\grafana\grafana_grafana_data.tgz")) {
-        Step "Grafana из бэкапа"
-        # Промежуточная копия: Docker Desktop не монтирует съёмные диски, откуда может идти восстановление.
-        $staging = "$root/.restore-grafana"
-        New-Item -ItemType Directory -Force $staging | Out-Null
-        Copy-Item "$snap\grafana\grafana_grafana_data.tgz" $staging
-        $grafana = (docker compose config --images | Where-Object { $_ -match 'grafana/grafana' } | Select-Object -First 1)
-        $gvol = "${project}_grafana_data"
-        # Распаковка поверх существующих данных Grafana смешала бы две базы дашбордов и пользователей.
-        $existing = docker run --rm --user 0 --entrypoint sh -v "${gvol}:/v:ro" $grafana -c 'ls /v/grafana.db 2>/dev/null || true'
-        if ($LASTEXITCODE) { throw "Не удалось прочитать том $gvol" }
-        if ($existing) {
-            Remove-Item -Recurse -Force $staging
-            throw "В томе $gvol уже есть данные Grafana, восстановление поверх них не выполняется. Если они не нужны, удалите том (docker compose down; docker volume rm $gvol) и запустите установку снова."
+    if ($isMetrics) {
+        $tarImage = Run docker compose config --images | Where-Object { $_ -match 'grafana/grafana' } | Select-Object -First 1
+        foreach ($part in 'grafana', 'loki', 'prometheus') {
+            $file = "grafana_${part}_data.tgz"
+            $archive = "$snap/$part/$file"
+            if (-not (Test-Path -LiteralPath $archive)) { continue }
+            Step "Мониторинг из бэкапа: $part"
+            $volume = "${project}_${part}_data"
+            $existing = Run docker run --rm --user 0 --entrypoint sh -v "${volume}:/v:ro" $tarImage -c 'ls -A /v'
+            if ($existing) { throw "В томе $volume уже есть данные. Для восстановления нужен новый стенд с пустыми томами." }
+            # Docker Desktop может не видеть диск, с которого читается резервная копия.
+            $staging = "$root/.restore-$part"
+            New-Item -ItemType Directory -Force $staging | Out-Null
+            $copy = Join-Path $staging $file
+            try {
+                Copy-Item -LiteralPath $archive -Destination $copy
+                Run docker run --rm --user 0 --entrypoint sh -v "${volume}:/v" -v "${staging}:/b:ro" $tarImage -c "tar tzf /b/$file > /dev/null && tar xzf /b/$file -C /v"
+            } finally { Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }
         }
-        Run docker run --rm --user 0 --entrypoint sh -v "${gvol}:/v" -v "${staging}:/b:ro" $grafana -c "tar xzf /b/grafana_grafana_data.tgz -C /v"
-        Remove-Item -Recurse -Force $staging
     }
 
     # Файлы S3: архив тома rustfs\rustfs_<контур>.tgz (тот же формат у бэкапа и у data\ комплекта). До старта pilot-server и до создания бакета.
@@ -587,7 +670,7 @@ if ($restore) {
         # Роли: «already exists» ожидаемо (pilotuser заводит init-скрипт), ALTER ROLE вернёт исходные пароли.
         Run docker exec $pg sh -c "psql -U postgres -q -f /tmp/restore/globals.sql 2>&1 | grep -v 'already exists' || true"
         foreach ($dump in Get-ChildItem "$snap\postgres\$c" -Filter '*.dump') {
-            Run docker exec $pg sh -c "pg_restore -U postgres --clean --if-exists --create --exit-on-error -d postgres '/tmp/restore/$($dump.Name)' 2>&1"
+            Run docker exec $pg pg_restore -U postgres --clean --if-exists --create --exit-on-error -d postgres "/tmp/restore/$($dump.Name)"
             Write-Host "  $($c): $($dump.BaseName)"
         }
         docker exec $pg rm -rf /tmp/restore | Out-Null
@@ -774,6 +857,15 @@ if ($WithGitLab) {
 
 Write-Host "`nГотово." -ForegroundColor Green
 $pilotAt = @{ prod = 'localhost:5546 (myAdmin Web: http://localhost:5601), консоль RustFS http://localhost:9001'; test = 'localhost:5547, консоль RustFS http://localhost:9011'; stage = 'localhost:5549, консоль RustFS http://localhost:9021' }
+if ($ReleaseInstall) {
+    $cfg = Read-Env $envPath
+    foreach ($c in $myContours) {
+        $prefix = $c.ToUpperInvariant()
+        $pilotAt[$c] = "http://localhost:$($cfg["${prefix}_PILOT_PORT"]), консоль RustFS http://localhost:$($cfg["${prefix}_S3_UI_PORT"])"
+        if ($cfg["${prefix}_MYADMIN_PORT"]) { $pilotAt[$c] += ", myAdmin Web http://localhost:$($cfg["${prefix}_MYADMIN_PORT"])" }
+    }
+    Write-Host "Ключ первого входа: ADMIN_SETUP_KEY в $envPath."
+}
 foreach ($c in $myContours) { Write-Host "  Pilot $c    $($pilotAt[$c])" -ForegroundColor Green }
 if ($isAdmin)   { Write-Host "  Админка     ${scheme}://localhost:$($cfg.ADMIN_PORT)" -ForegroundColor Green }
 if ($isMetrics) { Write-Host "  Grafana     ${scheme}://localhost:$($cfg.GRAFANA_PORT)" -ForegroundColor Green }

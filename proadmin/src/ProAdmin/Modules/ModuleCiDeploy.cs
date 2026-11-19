@@ -36,22 +36,21 @@ public static class ModuleCiDeployEndpoint
 
     public static void Map(WebApplication app)
     {
-        app.MapPost(Route, (HttpRequest request, CiAuth auth, IOptions<AppOptions> options, SettingsStore settings, JobStore store, ModuleTargets targets,
+        app.MapPost(Route, (HttpRequest request, CiAuth auth, IOptions<AppOptions> options, DeployAccounts accounts, SettingsStore settings, JobStore store, ModuleTargets targets,
                 TypesStore types, AssemblySpecStore assemblies, DisabledModuleStore disabled, IHostApplicationLifetime lifetime, ILogger<ModuleCiDeployWorkflow> logger) =>
-            HandleAsync(request, auth, options, settings, store, targets.Get(ModuleKind.Client), types, assemblies, disabled, lifetime, logger))
+            HandleAsync(request, auth, options.Value.PublicUrl, accounts, settings, store, targets.Get(ModuleKind.Client), types, assemblies, disabled, lifetime, logger))
             .AllowAnonymous().DisableAntiforgery();
-        app.MapPost(ServerRoute, (HttpRequest request, CiAuth auth, IOptions<AppOptions> options, SettingsStore settings, JobStore store, ModuleTargets targets,
+        app.MapPost(ServerRoute, (HttpRequest request, CiAuth auth, IOptions<AppOptions> options, DeployAccounts accounts, SettingsStore settings, JobStore store, ModuleTargets targets,
                 TypesStore types, AssemblySpecStore assemblies, DisabledModuleStore disabled, IHostApplicationLifetime lifetime, ILogger<ModuleCiDeployWorkflow> logger) =>
-            HandleAsync(request, auth, options, settings, store, targets.Get(ModuleKind.Server), types, assemblies, disabled, lifetime, logger))
+            HandleAsync(request, auth, options.Value.PublicUrl, accounts, settings, store, targets.Get(ModuleKind.Server), types, assemblies, disabled, lifetime, logger))
             .AllowAnonymous().DisableAntiforgery();
     }
 
-    private static async Task<IResult> HandleAsync(HttpRequest request, CiAuth auth, IOptions<AppOptions> options, SettingsStore settings,
+    private static async Task<IResult> HandleAsync(HttpRequest request, CiAuth auth, string? publicUrl, DeployAccounts accounts, SettingsStore settings,
         JobStore store, IModuleTarget pilot, TypesStore types, AssemblySpecStore assemblies, DisabledModuleStore disabled, IHostApplicationLifetime lifetime,
         ILogger<ModuleCiDeployWorkflow> logger)
     {
         var kind = pilot.Kind;
-        var ci = options.Value.CiDeploy;
         var authorized = await auth.AuthorizeAsync(request, kind, requireDeployKey: true, lifetime.ApplicationStopping);
         if (authorized.Rejection is { } rejection)
             return rejection;
@@ -71,11 +70,12 @@ public static class ModuleCiDeployEndpoint
         var project = verified.ProjectPath;
         var reference = verified.Ref;
         var sha = verified.Sha;
-        var env = ModuleEnv.Find(settings.Current, envKey);
+        var current = settings.Current;
+        var env = ModuleEnv.Find(current, envKey);
         if (env is null)
             return Results.Text($"В настройках админки нет сервера Pilot для контура «{envKey}».\n", statusCode: 503);
-        if (ci.Login(envKey) is not { } login)
-            return Results.Text($"Нет служебной учётки Pilot для контура «{envKey}»: App__CiDeploy__Logins__{envKey}__Login / __Password.\n", statusCode: 503);
+        if (accounts.Get(current, envKey) is not { } login)
+            return Results.Text($"Нет служебной учётки Pilot для контура «{envKey}». Задайте её в настройках админки.\n", statusCode: 503);
 
         byte[] zip;
         await using (var stream = file.OpenReadStream())
@@ -165,7 +165,7 @@ public static class ModuleCiDeployEndpoint
         var text = new StringBuilder();
         foreach (var line in job.Log)
             text.Append('[').Append(line.Level).Append("] ").Append(line.Text).Append('\n');
-        text.Append("Операция в админке: ").Append(JobLink(options.Value.PublicUrl, job.Id)).Append('\n');
+        text.Append("Операция в админке: ").Append(JobLink(publicUrl, job.Id)).Append('\n');
         return Results.Text(text.ToString(), "text/plain; charset=utf-8", statusCode: ok ? 200 : 502);
     }
 

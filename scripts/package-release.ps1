@@ -3,70 +3,89 @@
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string] $Version
+    [string]$Version,
+    [ValidatePattern('^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+$')]
+    [string]$Repository = 'ghcr.io/pilotopentools/pilotproadmin',
+    [string]$OutputDirectory,
+    [switch]$WithPortable
 )
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path $PSScriptRoot
-$admin = Join-Path $root 'proadmin/src/ProAdmin/PilotProAdmin.csproj'
-$migration = Join-Path $root 'proadmin/migration/src/PilotMigration/PilotMigration.csproj'
-$project = [xml](Get-Content -LiteralPath $admin -Raw)
-if ($project.Project.PropertyGroup.Version -ne $Version) {
-    throw "Тег v$Version расходится с версией в PilotProAdmin.csproj."
+$project = [xml](Get-Content (Join-Path $root 'proadmin/src/ProAdmin/PilotProAdmin.csproj') -Raw)
+if ($project.Project.PropertyGroup.Version -ne $Version) { throw "Версия $Version расходится с PilotProAdmin.csproj." }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'artifacts' }
+$output = (New-Item -ItemType Directory -Path $OutputDirectory -Force).FullName
+
+function Add-Text($zip, $name, $content) {
+    $writer = [IO.StreamWriter]::new($zip.CreateEntry($name).Open(), [Text.UTF8Encoding]::new($true))
+    try { $writer.Write($content) } finally { $writer.Dispose() }
 }
 
-function Test-ReleaseExecutable($Directory, $Name, $Port) {
-    $url = "http://127.0.0.1:$Port"
-    $log = Join-Path $Directory 'startup.log'
-    $errors = Join-Path $Directory 'errors.log'
-    $process = Start-Process -FilePath (Join-Path $Directory "$Name.exe") -ArgumentList @('--urls', $url) `
-        -WorkingDirectory $Directory -RedirectStandardOutput $log -RedirectStandardError $errors -PassThru -WindowStyle Hidden
-    try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        do {
-            if ($process.HasExited) { break }
-            if ((Get-Content -LiteralPath $log -Raw) -like "*Now listening on: $url*" -and
-                (Invoke-RestMethod "$url/health" -TimeoutSec 2) -eq 'ok') { return }
-            Start-Sleep -Milliseconds 300
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw "$Name не прошёл проверку /health: $(Get-Content -LiteralPath $log, $errors -Raw)"
-    } finally {
-        if (!$process.HasExited) { Stop-Process -Id $process.Id }
-        $process.Dispose()
-    }
-}
-
-$scratch = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) "PilotProAdmin-release-$([guid]::NewGuid())")
-$checksums = @()
-$assets = @()
+$memory = [IO.MemoryStream]::new()
 try {
-    foreach ($edition in 'lite', 'portable') {
-        $bundle = Join-Path $scratch.FullName $edition
-        $zip = Join-Path $scratch.FullName "PilotProAdmin-v$Version-win-x64-$edition.zip"
-        $selfContained = ($edition -eq 'portable').ToString().ToLowerInvariant()
-        dotnet publish $admin -c Release -r win-x64 --self-contained $selfContained -o (Join-Path $bundle 'PilotProAdmin')
-        dotnet publish $migration -c Release -r win-x64 --self-contained $selfContained -o (Join-Path $bundle 'PilotMigration')
-        Copy-Item (Join-Path $root 'docs/getting-started.md') (Join-Path $bundle 'QUICKSTART.md')
-        Copy-Item (Join-Path $root 'docs/configuration.md') $bundle
-        [IO.Compression.ZipFile]::CreateFromDirectory($bundle, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
-        $extracted = "$bundle-check"
-        [IO.Compression.ZipFile]::ExtractToDirectory($zip, $extracted)
-        foreach ($name in 'PilotProAdmin', 'PilotMigration') {
-            $app = Join-Path $extracted $name
-            if ((Test-Path -LiteralPath (Join-Path $app 'coreclr.dll')) -ne ($edition -eq 'portable')) {
-                throw "$edition/$name имеет неверный состав среды .NET."
-            }
-            $port = if ($name -eq 'PilotProAdmin') { 15300 } else { 15320 }
-            Test-ReleaseExecutable $app $name $port
+    $payloadZip = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Create, $true)
+    try {
+        $install = 'stack/Install'
+        $metrics = 'stack/metrics'
+        $files = [ordered]@{
+            'install-stack.ps1' = "$install/install.ps1"
+            'release-ports.ps1' = "$install/release-ports.ps1"
+            '.env.example' = "$install/.env.example"
+            'docker-compose.yml' = "$install/docker-compose.yml"
+            'docker-compose.tls.yml' = "$install/docker-compose.tls.yml"
+            'wait-for-postgres.sh' = "$install/wait-for-postgres.sh"
+            'gitlab-post-restore.rb' = "$install/gitlab-post-restore.rb"
+            'monitoring/grafana/provisioning/datasources/pilot-metrics.yml' = 'stack/build/pilot-metrics.yml'
+            'monitoring/grafana/dashboards/pilot-automation.json' = "$metrics/automation-collector/grafana_dashboard_pilot_automation.json"
+            'monitoring/grafana/dashboards/pilot-reports.json' = "$metrics/report-collector/grafana/dashboard-pilot-reports.json"
         }
-        $assets += $zip
-        $checksums += '{0}  {1}' -f (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $zip -Leaf)
-    }
-    $output = New-Item -ItemType Directory -Path (Join-Path $root 'artifacts') -Force
-    Copy-Item -LiteralPath $assets -Destination $output.FullName -Force
-    $checksums | Set-Content -LiteralPath (Join-Path $output.FullName 'SHA256SUMS.txt') -Encoding ascii
-} finally {
-    # The scratch path belongs to this build. Never recursively delete the output directory.
-    [IO.Directory]::Delete($scratch.FullName, $true)
+        foreach ($file in (git -C $root ls-files -- "$install/init" "$metrics/config" "$metrics/report-collector" "$metrics/automation-collector")) {
+            $entry = $file.Replace("$install/init/", 'init/').Replace("$metrics/config/", 'monitoring/')
+            $entry = $entry.Replace("$metrics/report-collector/", 'collectors/report-collector/')
+            $entry = $entry.Replace("$metrics/automation-collector/", 'collectors/automation-collector/')
+            $files[$entry] = $file
+        }
+        foreach ($entry in $files.Keys) {
+            $path = Join-Path $root $files[$entry]
+            if ($entry -like '*.ps1' -or $entry -like '*.sh') {
+                $content = [IO.File]::ReadAllText($path)
+                if ($entry -like '*.ps1') { Add-Text $payloadZip $entry $content }
+                else {
+                    $writer = [IO.StreamWriter]::new($payloadZip.CreateEntry($entry).Open())
+                    try { $writer.Write($content.Replace("`r`n", "`n")) } finally { $writer.Dispose() }
+                }
+            } else {
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($payloadZip, $path, $entry)
+            }
+        }
+    } finally { $payloadZip.Dispose() }
+    $payload = [Convert]::ToBase64String($memory.ToArray())
+} finally { $memory.Dispose() }
+
+$setup = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-release.ps1'))
+$setup = $setup.Replace('__RELEASE_VERSION__', $Version).Replace('__RELEASE_REPOSITORY__', $Repository).Replace('__RELEASE_PAYLOAD__', $payload)
+$name = "PilotProAdmin-v$Version-lite.zip"
+$path = Join-Path $output $name
+$stream = [IO.File]::Create($path)
+try {
+    $zip = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        Add-Text $zip 'install.ps1' $setup
+        $readme = [IO.File]::ReadAllText((Join-Path $root 'docs/getting-started.md'))
+        Add-Text $zip 'README.md' ($readme.Replace('vX.Y.Z', "v$Version"))
+    } finally { $zip.Dispose() }
+} finally { $stream.Dispose() }
+$assets = @($name)
+if ($WithPortable) {
+    & (Join-Path $PSScriptRoot 'package-windows-portable.ps1') -Version $Version -OutputDirectory $output
+    $assets += "PilotProAdmin-v$Version-win-x64-portable.zip"
 }
+$checksums = foreach ($asset in $assets) {
+    $file = Join-Path $output $asset
+    $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host $file
+    "$hash  $asset"
+}
+$checksums | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii

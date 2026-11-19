@@ -25,10 +25,12 @@ dotnet docfx docfx.json --warningsAsErrors
 
 ## Сборка релиза
 
-Команда для локальной проверки Windows-архивов:
+Команда для локальной сборки и проверки lite:
 
 ```powershell
-./scripts/package-release.ps1 -Version 1.0.2
+./scripts/package-release.ps1 -Version 1.0.3
 ```
 
-Workflow Release можно запустить вручную с основной ветки, чтобы собрать архивы, проверить оба контейнера и запустить самопроверку кластерного установщика. Тег вида `v1.0.2` публикует ZIP для Windows, архив образов Linux и комплект кластерной установки в GitHub Releases. Образы также загружаются в GitHub Container Registry организации. Версию веб-приложения задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.
+На Windows добавьте `-WithPortable`, чтобы собрать и проверить запуск приложений из архива Portable.
+
+Workflow Release проверяет контейнеры и сборку архивов в PR в `main`. Его также можно запустить вручную. После слияния тег `v1.0.3` публикует Docker Lite, архив Docker-образов, Windows Portable и комплект кластера с контрольными суммами. Оба образа получают тег `1.0.3` в GHCR. Workflow проверяет доступ к ним без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.

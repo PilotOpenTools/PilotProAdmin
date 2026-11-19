@@ -32,6 +32,7 @@ public sealed class AppOptions
     /// такой вход закрыт, иначе первый посетитель вошёл бы через свой сервер и получил права на настройки.
     /// </summary>
     public string SetupKey { get; set; } = "";
+    public bool FirstRunSetup { get; set; }
 
     public GitLabOAuthOptions GitLab { get; set; } = new();
 
@@ -101,6 +102,7 @@ public sealed class DefaultSettingsOptions
     public string? TestPilotUrl { get; set; }
     public string? ProdPilotUrl { get; set; }
     public string? GitLabGroupUrl { get; set; }
+    public string? GrafanaUrl { get; set; }
     public string? ReportsGitLabGroupUrl { get; set; }
     public string? ModulesGitLabGroupUrl { get; set; }
     public string? ServerModulesGitLabGroupUrl { get; set; }

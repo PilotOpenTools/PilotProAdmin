@@ -88,7 +88,7 @@ public class AutomationCatalog
         var result = new CatalogResult();
         result.Envs.AddRange(settings.Environments.Where(e => e.HasServer));
 
-        var pilotTasks = result.Envs.ToDictionary(e => e.Key, e => LoadPilotAsync(e, login(e.Key), result, ct), StringComparer.OrdinalIgnoreCase);
+        var pilotTasks = result.Envs.ToDictionary(e => e.Key, e => LoadPilotAsync(e, login, result, ct), StringComparer.OrdinalIgnoreCase);
         var branches = result.Envs.Select(e => e.Branch).Where(b => b.Length > 0).Distinct().ToList();
         var gitTask = settings.GitLabGroupPath is { } group
             ? LoadGitAsync(git, group, branches, result, ct)
@@ -163,11 +163,12 @@ public class AutomationCatalog
         return row;
     }
 
-    private async Task<IReadOnlyList<AutomationSnapshot>?> LoadPilotAsync(EnvironmentSettings env, PilotLogin login, CatalogResult result, CancellationToken ct)
+    private async Task<IReadOnlyList<AutomationSnapshot>?> LoadPilotAsync(
+        EnvironmentSettings env, Func<string, PilotLogin> login, CatalogResult result, CancellationToken ct)
     {
         try
         {
-            return await _pilot.GetAutomationsAsync(env.PilotUrl, login, ct);
+            return await _pilot.GetAutomationsAsync(env.PilotUrl, login(env.Key), ct);
         }
         catch (PilotGatewayException ex)
         {

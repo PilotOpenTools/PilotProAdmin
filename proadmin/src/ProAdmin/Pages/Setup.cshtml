@@ -1,0 +1,63 @@
+@page
+@model ProAdmin.Pages.SetupModel
+@{
+    ViewData["Title"] = "Первоначальная настройка";
+    ViewData["Bare"] = true;
+}
+@section Head {
+    <script src="~/js/setup.js" asp-append-version="true" defer></script>
+}
+<h1>Первоначальная настройка</h1>
+@if (Model.Error is { } error)
+{
+    <p class="alert alert-error" role="alert">@error</p>
+}
+@if (Model.GitLabUser is null)
+{
+    <form method="post" asp-page-handler="Connect" class="form settings-form">
+        <h2>Подключение к GitLab</h2>
+        <label asp-for="GitLabUrl">Адрес GitLab</label>
+        <input asp-for="GitLabUrl" type="url" required />
+        <label asp-for="SetupKey">Ключ установки</label>
+        <input asp-for="SetupKey" type="password" autocomplete="off" required />
+        <label asp-for="Token">Personal Access Token с правом api</label>
+        <input asp-for="Token" type="password" autocomplete="off" required />
+        <button type="submit">Проверить вход</button>
+    </form>
+}
+else
+{
+    <p>GitLab подключён под учётной записью @Model.GitLabUser.</p>
+    <form method="post" asp-page-handler="Restart">
+        <button type="submit">Изменить подключение к GitLab</button>
+    </form>
+    <form method="post" asp-page-handler="Finish" class="form settings-form" data-setup-wizard="@(Model.Error is null ? "steps" : "review")">
+        <section data-setup-step>
+            <h2>Серверы Pilot</h2>
+            <p>Проверьте адреса. Если контур не используется, оставьте его поле пустым.</p>
+            <label asp-for="Input.Test">Тест</label><input asp-for="Input.Test" type="url" />
+            <label asp-for="Input.Stage">Стейдж</label><input asp-for="Input.Stage" type="url" />
+            <label asp-for="Input.Prod">Прод</label><input asp-for="Input.Prod" type="url" />
+        </section>
+        <section data-setup-step>
+            <partial name="_DeployAccounts" for="Deploy" />
+        </section>
+        <section data-setup-step>
+            <h2>Статистика</h2>
+            <label asp-for="Input.Grafana">Адрес Grafana</label><input asp-for="Input.Grafana" type="url" />
+        </section>
+        <section data-setup-step>
+            <h2>Группы и проекты GitLab</h2>
+            <label asp-for="Input.Automation">Группа автоматизаций</label><input asp-for="Input.Automation" type="url" />
+            <label asp-for="Input.Reports">Группа отчётов</label><input asp-for="Input.Reports" type="url" />
+            <label asp-for="Input.Modules">Группа клиентских модулей</label><input asp-for="Input.Modules" type="url" />
+            <label asp-for="Input.ServerModules">Группа серверных модулей</label><input asp-for="Input.ServerModules" type="url" />
+            <label asp-for="Input.Types">Репозиторий типов</label><input asp-for="Input.Types" type="url" />
+        </section>
+        <div class="form-actions">
+            <button type="button" data-setup-back hidden>Назад</button>
+            <button type="button" data-setup-next hidden>Далее</button>
+            <button type="submit">Сохранить и открыть админку</button>
+        </div>
+    </form>
+}

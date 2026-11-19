@@ -21,16 +21,15 @@ public static class ModuleCiLibrariesEndpoint
     public static void Map(WebApplication app)
     {
         foreach (var (route, kind) in new[] { (Route, ModuleKind.Client), (ServerRoute, ModuleKind.Server) })
-            app.MapPost(route, (HttpRequest request, CiAuth auth, IOptions<AppOptions> options, SettingsStore settings, AssemblySpecStore libraries,
+            app.MapPost(route, (HttpRequest request, CiAuth auth, DeployAccounts accounts, SettingsStore settings, AssemblySpecStore libraries,
                     AssemblyScanService scan, IHostApplicationLifetime lifetime) =>
-                HandleAsync(request, auth, kind, options.Value, settings.Current, libraries, scan, lifetime.ApplicationStopping))
+                HandleAsync(request, auth, kind, accounts, settings.Current, libraries, scan, lifetime.ApplicationStopping))
                 .AllowAnonymous().DisableAntiforgery();
     }
 
-    private static async Task<IResult> HandleAsync(HttpRequest request, CiAuth auth, ModuleKind kind, AppOptions options, AdminSettings settings,
+    private static async Task<IResult> HandleAsync(HttpRequest request, CiAuth auth, ModuleKind kind, DeployAccounts accounts, AdminSettings settings,
         AssemblySpecStore libraries, AssemblyScanService scan, CancellationToken ct)
     {
-        var ci = options.CiDeploy;
         var authorized = await auth.AuthorizeAsync(request, kind, requireDeployKey: false, ct);
         if (authorized.Rejection is { } rejection)
             return rejection;
@@ -80,8 +79,8 @@ public static class ModuleCiLibrariesEndpoint
             var env = ModuleEnv.Find(settings, envKey);
             if (env is null)
                 incomplete.Add($"в настройках нет сервера контура «{envKey}»");
-            else if (ci.Login(envKey) is not { } login)
-                incomplete.Add($"нет служебной учётки Pilot контура «{envKey}» (App__CiDeploy__Logins__{envKey}__…)");
+            else if (accounts.Get(settings, envKey) is not { } login)
+                incomplete.Add($"нет служебной учётки Pilot контура «{envKey}» в настройках админки");
             else
             {
                 try

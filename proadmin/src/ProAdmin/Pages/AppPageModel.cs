@@ -161,7 +161,4 @@ public abstract class AppPageModel : PageModel
 
     protected IActionResult RedirectToGitLab() =>
         RedirectToPage("/Login", new { returnUrl = Request.Path + Request.QueryString });
-
-    protected static bool IsLocalUrl(string? url) =>
-        !string.IsNullOrEmpty(url) && url.StartsWith('/') && !url.StartsWith("//") && !url.StartsWith("/\\");
 }
