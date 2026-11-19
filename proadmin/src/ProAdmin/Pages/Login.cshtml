@@ -3,16 +3,16 @@
 @{
     ViewData["Title"] = "Вход";
     ViewData["Bare"] = true;
-    var pilotDone = Model.PilotSession is not null;
 }
 <div class="auth">
-    <div class="brand auth-brand">
-        PilotProAdmin
-    </div>
+    <div class="brand auth-brand">PilotProAdmin</div>
     <div class="auth-card">
         <header class="auth-head">
             <h1>Вход в админку</h1>
-            <p class="muted">@(Model.GitHubTypesMode ? "Войдите в Pilot, чтобы работать с типами из GitHub." : "Войдите в Pilot и подключите GitLab.")</p>
+            @if (Model.GitLabBaseUrl is not null)
+            {
+                <p class="muted">Используйте учётную запись GitLab на @Model.GitLabBaseUrl.</p>
+            }
         </header>
 
         @if (Model.Error is not null)
@@ -20,135 +20,30 @@
             <div class="alert alert-error" role="alert">@Model.Error</div>
         }
 
-        @if (Model.Access is { Count: > 0 } access)
+        @if (Model.GitLabBaseUrl is null)
         {
-            <ul class="access-list">
-                @foreach (var a in access)
-                {
-                    <li class="@(a.Ok ? "ok" : "fail")">
-                        <span class="access-mark" aria-hidden="true">@(a.Ok ? "" : "X")</span>
-                        <div>
-                            <div class="env-name"><span class="env-dot env-@a.Key"></span>@a.Title</div>
-                            <code class="small">@a.PilotUrl</code>
-                            <div class="small @(a.Ok ? "access-ok" : "access-fail")">@(a.Ok ? "Вход выполнен" : a.Error)</div>
-                        </div>
-                    </li>
-                }
-            </ul>
-        }
-
-        @if (pilotDone)
-        {
-            @* В Pilot уже вошли - дальше не пускаем, пока не подключён GitLab. *@
-            <div class="alert alert-ok">Pilot: вход выполнен как <b>@Model.PilotSession!.PilotLogin</b>. Осталось войти в GitLab.</div>
-            <div class="login-step">
-                <h2>GitLab</h2>
-                @if (Model.GitLabBaseUrl is null)
-                {
-                    <p class="muted small">В настройках не задана группа GitLab.</p>
-                    <a href="/Settings" class="btn btn-primary btn-block">К настройкам</a>
-                }
-                else
-                {
-                    <p class="muted small">Коммиты, Merge Request и влития выполняются от вашего имени в @Model.GitLabBaseUrl.</p>
-                    @if (Model.GitLabOAuthEnabled)
-                    {
-                        <form method="post" asp-page-handler="GitLab">
-                            <input type="hidden" asp-for="ReturnUrl" />
-                            <button type="submit" class="btn btn-primary btn-block">Войти через GitLab</button>
-                        </form>
-                    }
-                    <details class="login-token" open="@(!Model.GitLabOAuthEnabled)">
-                        <summary class="small">Подключить по Personal Access Token</summary>
-                        <form method="post" asp-page-handler="Token" class="form">
-                            <input type="hidden" asp-for="ReturnUrl" />
-                            <label class="field">
-                                <span>Токен (scope <code>api</code>)</span>
-                                <input asp-for="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" />
-                            </label>
-                            <button type="submit" class="btn btn-block">Подключить</button>
-                        </form>
-                    </details>
-                }
-                <form method="post" action="/Logout">
-                    @Html.AntiForgeryToken()
-                    <button type="submit" class="btn btn-ghost btn-sm">Выйти и войти под другим пользователем</button>
-                </form>
-            </div>
+            <p class="alert alert-warn">Для входа администратор должен настроить адрес группы GitLab.</p>
         }
         else
         {
-            <form method="post" class="form">
-                <input type="hidden" asp-for="ReturnUrl" />
-
-                <div class="login-section-title">Pilot</div>
-                @if (Model.UseServers)
-                {
-                    @if (Model.Access is null)
-                    {
-                        <div class="muted small">
-                            Вход будет проверен на серверах:
-                            @foreach (var env in Model.Servers)
-                            {
-                                <span class="login-env"><span class="env-dot env-@env.Key"></span>@env.Title</span>
-                            }
-                        </div>
-                    }
-                }
-                else
-                {
+            @if (Model.GitLabOAuthEnabled)
+            {
+                <form method="post" asp-page-handler="GitLab">
+                    <input type="hidden" asp-for="ReturnUrl" />
+                    <button type="submit" class="btn btn-primary btn-block">Войти через GitLab</button>
+                </form>
+            }
+            <details class="login-token" open="@(!Model.GitLabOAuthEnabled)">
+                <summary class="small">Войти с Personal Access Token</summary>
+                <form method="post" asp-page-handler="Token" class="form">
+                    <input type="hidden" asp-for="ReturnUrl" />
                     <label class="field">
-                        <span>Адрес сервера Pilot</span>
-                        <input asp-for="ServerUrl" placeholder="http://localhost:5547/pilot-ice_ru" autocomplete="url" required />
-                        <small class="muted">Адрес Pilot-Server, можно сразу с базой: http://host:порт/база</small>
+                        <span>Токен (scope <code>api</code>)</span>
+                        <input asp-for="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" required />
                     </label>
-                    <label class="field">
-                        <span>Ключ установки</span>
-                        <input asp-for="SetupKey" type="password" autocomplete="off" required />
-                        <small class="muted">@(Model.SetupKeyConfigured
-                            ? "Серверы Pilot ещё не настроены: первая настройка доступна только с ключом установки (ADMIN_SETUP_KEY)."
-                            : "Первая настройка закрыта: задайте ADMIN_SETUP_KEY в .env и перезапустите админку.")</small>
-                    </label>
-                }
-                <label class="field">
-                    <span>Логин</span>
-                    <input asp-for="Login" autocomplete="username" required autofocus />
-                </label>
-                <label class="field">
-                    <span>Пароль</span>
-                    <input asp-for="Password" type="password" autocomplete="current-password" required />
-                </label>
-
-                @if (Model.GitHubTypesMode)
-                {
-                    <button type="submit" class="btn btn-primary btn-block">Войти</button>
-                }
-                else
-                {
-                    <div class="login-section-title">GitLab</div>
-                    @if (Model.GitLabBaseUrl is null)
-                    {
-                        <div class="alert alert-warn small">В настройках не задана группа GitLab - войти не получится.</div>
-                    }
-                    else
-                    {
-                        @if (Model.GitLabOAuthEnabled)
-                        {
-                            <p class="muted small">После проверки Pilot откроется GitLab - войдите и разрешите доступ приложению.</p>
-                        }
-                        <details class="login-token" open="@(!Model.GitLabOAuthEnabled)">
-                            <summary class="small">@(Model.GitLabOAuthEnabled ? "Или войти по Personal Access Token" : "Personal Access Token")</summary>
-                            <label class="field">
-                                <span>Токен (scope <code>api</code>)</span>
-                                <input asp-for="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" />
-                            </label>
-                        </details>
-                    }
-
-                    <button type="submit" class="btn btn-primary btn-block">@(Model.GitLabOAuthEnabled ? "Войти в Pilot и GitLab" : "Войти")</button>
-                }
-            </form>
-            <p class="muted small">Нужна учётная запись администратора сервера Pilot (как для Pilot myAdmin) - только она может менять автоматизации.</p>
+                    <button type="submit" class="btn btn-block">Войти</button>
+                </form>
+            </details>
         }
     </div>
 </div>

@@ -25,10 +25,10 @@ dotnet docfx docfx.json --warningsAsErrors
 
 ## Сборка релиза
 
-Команда для локальной проверки Windows-архивов:
+Команда для локальной сборки и проверки lite:
 
 ```powershell
-./scripts/package-release.ps1 -Version 1.0.2
+./scripts/package-release.ps1 -Version 1.0.3
 ```
 
-Workflow Release можно запустить вручную с основной ветки, чтобы собрать архивы, проверить оба контейнера и запустить самопроверку кластерного установщика. Тег вида `v1.0.2` публикует ZIP для Windows, архив образов Linux и комплект кластерной установки в GitHub Releases. Образы также загружаются в GitHub Container Registry организации. Версию веб-приложения задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.
+Workflow Release проверяет оба контейнера и сборку архивов в PR в `main`. Его также можно запустить вручную. После слияния тег `v1.0.3` публикует два архива в GitHub Releases и оба образа с тегом `1.0.3` в GHCR. Для онлайн установки пакеты `pilotproadmin` и `pilotproadmin-migration` должны быть публичными. Workflow проверяет доступ к обоим без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.

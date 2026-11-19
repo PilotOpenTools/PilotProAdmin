@@ -406,7 +406,16 @@ public sealed class GitLabClient
     {
         using var response = await SendAsync(HttpMethod.Get, relative, null, ct);
         await EnsureSuccessAsync(response, ct);
-        return (await response.Content.ReadFromJsonAsync<T>(Json, ct))!;
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<T>(Json, ct)
+                ?? throw new GitLabApiException((int)response.StatusCode, "GitLab API вернул пустой ответ.");
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            throw new GitLabApiException((int)response.StatusCode,
+                "Ответ GitLab API не является ожидаемым JSON. Проверьте адрес GitLab.");
+        }
     }
 
     private async Task<T?> GetOrNullAsync<T>(string relative, CancellationToken ct) where T : class

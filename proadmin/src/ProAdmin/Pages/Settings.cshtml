@@ -208,6 +208,11 @@
         </div>
     </section>
 
+    <section class="card">
+        <h2>Статистика</h2>
+        <label asp-for="Form.GrafanaUrl">Адрес Grafana</label>
+        <input asp-for="Form.GrafanaUrl" type="url" />
+    </section>
     <div class="form-actions">
         <button class="btn btn-primary" type="submit">Сохранить</button>
         <button class="btn" type="submit" asp-page-handler="Check">Проверить подключения</button>
@@ -216,6 +221,12 @@
             <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm"), @Model.AppSettings.UpdatedBy</span>
         }
     </div>
+</form>
+
+@{ Model.Deploy = Model.DeployPrefill; }
+<form method="post" asp-page-handler="Deploy" id="deploy-accounts" class="form settings-form">
+    <partial name="_DeployAccounts" for="Deploy" />
+    <button type="submit">Сохранить служебные учётные записи</button>
 </form>
 
 <form method="post" asp-page-handler="Libraries" class="form settings-form">

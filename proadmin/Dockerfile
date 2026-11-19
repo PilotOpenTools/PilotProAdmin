@@ -3,6 +3,7 @@ WORKDIR /src
 COPY src/ProAdmin/PilotProAdmin.csproj src/ProAdmin/
 RUN dotnet restore src/ProAdmin/PilotProAdmin.csproj
 COPY src/ProAdmin/ src/ProAdmin/
+COPY transfer/ transfer/
 RUN dotnet publish src/ProAdmin/PilotProAdmin.csproj -c Release -o /app --no-restore /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.15@sha256:bfd912c83295ce66d4b706ebb8541b9f14259b0e76fbb88b2751f58ce2399d2e

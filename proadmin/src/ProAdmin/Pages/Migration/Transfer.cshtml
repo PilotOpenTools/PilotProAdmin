@@ -1,0 +1,19 @@
+@page
+@model ProAdmin.Pages.Migration.TransferModel
+@{
+    ViewData["Title"] = "Подготовить перенос данных";
+    ViewData["Section"] = "migration";
+}
+<div class="page-head">
+    <h1>Подготовить перенос данных</h1>
+    <a asp-page="/Migration/Index" class="btn btn-ghost">К миграции</a>
+</div>
+<section class="card">
+    <p>Комплект снимает копию настроек админки, данных GitLab, статистики и трёх контуров Pilot вместе с базами и файловыми архивами.</p>
+    <ol>
+        <li>Скачайте и распакуйте комплект на компьютере, где работает исходный стек Docker.</li>
+        <li>Откройте инструкцию из комплекта и запустите <code>prepare-transfer.ps1</code> в PowerShell.</li>
+        <li>Перенесите папку с <code>manifest.json</code> на новый компьютер и укажите её в установщике при выборе восстановления.</li>
+    </ol>
+    <a asp-page-handler="Download" class="btn btn-primary">Скачать скрипт и инструкцию</a>
+</section>

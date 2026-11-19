@@ -15,4 +15,6 @@ COPY --from=build /app .
 USER $APP_UID
 VOLUME /data
 EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
 ENTRYPOINT ["dotnet", "PilotMigration.dll"]

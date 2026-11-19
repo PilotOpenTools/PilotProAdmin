@@ -68,7 +68,7 @@ x-rustfs-env: &rustfs-env
   RUSTFS_CONSOLE_ENABLE: "true"
 
 x-metrics: &metrics
-  image: pilot-automation-metrics:latest
+  image: ${RELEASE_AUTOMATION_METRICS_IMAGE:-pilot-automation-metrics:latest}
   restart: unless-stopped
   networks: [pilot-prod]
 
@@ -99,7 +99,7 @@ services:
       # Роли метрик: сборщики пишут под metrics_writer, Grafana читает под metrics_reader (init/postgres/02-metrics-roles.sh).
       METRICS_WRITER_PASSWORD: ${METRICS_WRITER_PASSWORD:?Задайте METRICS_WRITER_PASSWORD в .env}
       METRICS_READER_PASSWORD: ${METRICS_READER_PASSWORD:?Задайте METRICS_READER_PASSWORD в .env}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:5433:5432"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${PROD_PG_PORT:-5433}:5432"]
     volumes:
       - ${DATA_ROOT:-C:/Ascon-Docker}/prod/postgres:/var/lib/postgresql/data
       # Роль pilotuser, роли метрик и база pilot_metrics (на проде) - только при первом старте на пустой папке данных.
@@ -114,7 +114,7 @@ services:
       <<: *rustfs-env
       RUSTFS_ACCESS_KEY: ${PROD_MINIO_USER:-${MINIO_USER:?Задайте MINIO_USER в .env}}
       RUSTFS_SECRET_KEY: ${PROD_MINIO_PASSWORD:-${MINIO_PASSWORD:?Задайте MINIO_PASSWORD в .env}}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:9000:9000", "${INTERNAL_BIND:-127.0.0.1}:9001:9001"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${PROD_S3_PORT:-9000}:9000", "${INTERNAL_BIND:-127.0.0.1}:${PROD_S3_UI_PORT:-9001}:9001"]
     volumes: ["rustfs_prod:/data"]
     networks:
       pilot-prod: {aliases: [rustfs-prod]}
@@ -127,7 +127,7 @@ services:
       <<: *pilot-stats
       PG_WAIT_HOST: ${PROD_EXTERNAL_PG_HOST:-postgres-prod}
       PG_WAIT_PORT: ${PROD_EXTERNAL_PG_PORT:-5432}
-    ports: ["5546:5545"]
+    ports: ["${PROD_PILOT_PORT:-5546}:5545"]
     volumes:
       - ./wait-for-postgres.sh:/wait-for-postgres.sh:ro
       - ${DATA_ROOT:-C:/Ascon-Docker}/prod/databases:/usr/share/ascon/databases
@@ -148,7 +148,7 @@ services:
     profiles: [prod]
     restart: unless-stopped
     environment: ["PilotServer:Url=http://pilot-server-prod:5545"]
-    ports: ["5601:5200"]
+    ports: ["${PROD_MYADMIN_PORT:-5601}:5200"]
     depends_on: [pilot-server-prod]
     networks: [pilot-prod]
 
@@ -160,7 +160,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${TEST_PG_SUPERUSER_PASSWORD:-${PG_SUPERUSER_PASSWORD:?Задайте PG_SUPERUSER_PASSWORD в .env}}
       PILOT_PG_PASSWORD: ${TEST_PILOT_PG_PASSWORD:-${PILOT_PG_PASSWORD:?Задайте PILOT_PG_PASSWORD в .env}}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:5434:5432"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${TEST_PG_PORT:-5434}:5432"]
     volumes:
       - ${DATA_ROOT:-C:/Ascon-Docker}/test/postgres:/var/lib/postgresql/data
       - ./init/postgres:/docker-entrypoint-initdb.d:ro
@@ -174,7 +174,7 @@ services:
       <<: *rustfs-env
       RUSTFS_ACCESS_KEY: ${TEST_MINIO_USER:-${MINIO_USER:?Задайте MINIO_USER в .env}}
       RUSTFS_SECRET_KEY: ${TEST_MINIO_PASSWORD:-${MINIO_PASSWORD:?Задайте MINIO_PASSWORD в .env}}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:9010:9000", "${INTERNAL_BIND:-127.0.0.1}:9011:9001"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${TEST_S3_PORT:-9010}:9000", "${INTERNAL_BIND:-127.0.0.1}:${TEST_S3_UI_PORT:-9011}:9001"]
     volumes: ["rustfs_test:/data"]
     networks:
       pilot-test: {aliases: [rustfs-test]}
@@ -187,7 +187,7 @@ services:
       <<: *pilot-stats
       PG_WAIT_HOST: ${TEST_EXTERNAL_PG_HOST:-postgres-test}
       PG_WAIT_PORT: ${TEST_EXTERNAL_PG_PORT:-5432}
-    ports: ["5547:5545"]
+    ports: ["${TEST_PILOT_PORT:-5547}:5545"]
     volumes:
       - ./wait-for-postgres.sh:/wait-for-postgres.sh:ro
       - ${DATA_ROOT:-C:/Ascon-Docker}/test/databases:/usr/share/ascon/databases
@@ -208,7 +208,7 @@ services:
     profiles: [myadmin-test]
     restart: unless-stopped
     environment: ["PilotServer:Url=http://pilot-server-test:5545"]
-    ports: ["5602:5200"]
+    ports: ["${TEST_MYADMIN_PORT:-5602}:5200"]
     networks: [pilot-test]
 
   # ================================================================ stage
@@ -219,7 +219,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${STAGE_PG_SUPERUSER_PASSWORD:-${PG_SUPERUSER_PASSWORD:?Задайте PG_SUPERUSER_PASSWORD в .env}}
       PILOT_PG_PASSWORD: ${STAGE_PILOT_PG_PASSWORD:-${PILOT_PG_PASSWORD:?Задайте PILOT_PG_PASSWORD в .env}}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:5435:5432"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${STAGE_PG_PORT:-5435}:5432"]
     volumes:
       - ${DATA_ROOT:-C:/Ascon-Docker}/stage/postgres:/var/lib/postgresql/data
       - ./init/postgres:/docker-entrypoint-initdb.d:ro
@@ -233,7 +233,7 @@ services:
       <<: *rustfs-env
       RUSTFS_ACCESS_KEY: ${STAGE_MINIO_USER:-${MINIO_USER:?Задайте MINIO_USER в .env}}
       RUSTFS_SECRET_KEY: ${STAGE_MINIO_PASSWORD:-${MINIO_PASSWORD:?Задайте MINIO_PASSWORD в .env}}
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:9020:9000", "${INTERNAL_BIND:-127.0.0.1}:9021:9001"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${STAGE_S3_PORT:-9020}:9000", "${INTERNAL_BIND:-127.0.0.1}:${STAGE_S3_UI_PORT:-9021}:9001"]
     volumes: ["rustfs_stage:/data"]
     networks:
       pilot-stage: {aliases: [rustfs-stage]}
@@ -247,7 +247,7 @@ services:
       PG_WAIT_HOST: ${STAGE_EXTERNAL_PG_HOST:-postgres-stage}
       PG_WAIT_PORT: ${STAGE_EXTERNAL_PG_PORT:-5432}
     # 5548 на Windows часто занят http.sys (родной Pilot-Server), поэтому 5549.
-    ports: ["5549:5545"]
+    ports: ["${STAGE_PILOT_PORT:-5549}:5545"]
     volumes:
       - ./wait-for-postgres.sh:/wait-for-postgres.sh:ro
       - ${DATA_ROOT:-C:/Ascon-Docker}/stage/databases:/usr/share/ascon/databases
@@ -268,16 +268,16 @@ services:
     profiles: [myadmin-stage]
     restart: unless-stopped
     environment: ["PilotServer:Url=http://pilot-server-stage:5545"]
-    ports: ["5603:5200"]
+    ports: ["${STAGE_MYADMIN_PORT:-5603}:5200"]
     networks: [pilot-stage]
 
   # ================================================================ наши сервисы
   proadmin:
-    image: pilot-proadmin:latest
+    image: ${RELEASE_ADMIN_IMAGE:-pilot-proadmin:latest}
     container_name: pilot-proadmin
     profiles: [admin]
     restart: unless-stopped
-    ports: ["${ADMIN_PORT:-5300}:8080"]
+    ports: ["${ADMIN_BIND:-0.0.0.0}:${ADMIN_PORT:-5300}:8080"]
     environment:
       App__LocalhostAlias: ${LOCALHOST_ALIAS:-host.docker.internal}
       App__GitLab__ClientId: ${GITLAB_OAUTH_CLIENT_ID:-}
@@ -286,19 +286,21 @@ services:
       # Адрес админки, каким его видят браузеры (для возврата из GitLab OAuth). Пусто - из адреса запроса.
       App__PublicUrl: ${ADMIN_PUBLIC_URL:-}
       App__SetupKey: ${ADMIN_SETUP_KEY:-}
+      App__FirstRunSetup: ${ADMIN_FIRST_RUN:-false}
       # Доверять X-Forwarded-* от обратного прокси перед админкой (только если порт админки недоступен в обход прокси).
       App__TrustForwardedHeaders: ${ADMIN_TRUST_PROXY:-false}
       # Допустимые значения Host через «;» (без порта). По умолчанию любой; пример - в .env.example.
       AllowedHosts: ${ADMIN_ALLOWED_HOSTS:-*}
       # Адрес сервера Pilot - с именем базы, как у контуров на этой машине.
-      App__Defaults__TestPilotUrl: ${PILOT_TEST_URL:-http://localhost:5547/pilot-ice_ru}
+      App__Defaults__TestPilotUrl: ${PILOT_TEST_URL-http://localhost:5547/pilot-ice_ru}
       App__GitHubTypes__Repository: ${GITHUB_TYPES_REPOSITORY:-}
-      App__Defaults__ProdPilotUrl: ${PILOT_PROD_URL:-http://localhost:5546/pilot-ice_ru}
+      App__Defaults__ProdPilotUrl: ${PILOT_PROD_URL-http://localhost:5546/pilot-ice_ru}
       App__Defaults__GitLabGroupUrl: ${GITLAB_GROUP_URL:-http://localhost:8080/automation}
       App__Defaults__ReportsGitLabGroupUrl: ${REPORTS_GITLAB_GROUP_URL:-}
       App__Defaults__ModulesGitLabGroupUrl: ${MODULES_GITLAB_GROUP_URL:-}
       App__Defaults__ServerModulesGitLabGroupUrl: ${SERVER_MODULES_GITLAB_GROUP_URL:-}
       App__Defaults__StagePilotUrl: ${PILOT_STAGE_URL:-}
+      App__Defaults__GrafanaUrl: ${GRAFANA_URL:-}
       App__Defaults__TypesGitLabProjectUrl: ${TYPES_GITLAB_PROJECT_URL:-}
       # Внутри одного проекта миграция доступна по имени контейнера.
       App__Migration__Url: http://pilot-migration:8080
@@ -331,7 +333,7 @@ services:
     networks: [default]
 
   migration:
-    image: pilot-migration:latest
+    image: ${RELEASE_MIGRATION_IMAGE:-pilot-migration:latest}
     container_name: pilot-migration
     profiles: [admin]
     restart: unless-stopped
@@ -394,7 +396,7 @@ services:
     networks: [default, pilot-prod, pilot-test, pilot-stage]
 
   report-metrics-collector:
-    image: pilot-report-metrics:latest
+    image: ${RELEASE_REPORT_METRICS_IMAGE:-pilot-report-metrics:latest}
     container_name: report-metrics-collector
     profiles: [metrics]
     restart: unless-stopped
@@ -415,7 +417,7 @@ services:
   automation-metrics-test:
     <<: *metrics
     container_name: automation-metrics-test
-    profiles: [test]
+    profiles: ["${AUTOMATION_TEST_PROFILE:-test}"]
     # Только каталог логов, только чтение (не все тома Pilot-Server: там settings.xml с паролем PostgreSQL).
     volumes: ["${DATA_ROOT:-C:/Ascon-Docker}/test/logs:/App/logs:ro"]
     environment: &metrics-env
@@ -437,7 +439,7 @@ services:
   automation-metrics-stage:
     <<: *metrics
     container_name: automation-metrics-stage
-    profiles: [stage]
+    profiles: ["${AUTOMATION_STAGE_PROFILE:-stage}"]
     volumes: ["${DATA_ROOT:-C:/Ascon-Docker}/stage/logs:/App/logs:ro"]
     environment:
       <<: *metrics-env
@@ -468,7 +470,7 @@ services:
     container_name: node-exporter
     profiles: [agents]
     restart: unless-stopped
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:9100:9100"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${NODE_EXPORTER_PORT:-9100}:9100"]
     pid: host
     # Имя хоста в метриках (node_uname_info) вместо идентификатора контейнера.
     uts: host
@@ -485,7 +487,7 @@ services:
     container_name: cadvisor
     profiles: [agents]
     restart: unless-stopped
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:9101:8080"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${CADVISOR_PORT:-9101}:8080"]
     privileged: true
     volumes:
       - /:/rootfs:ro
@@ -500,7 +502,7 @@ services:
     container_name: loki
     profiles: [metrics]
     restart: unless-stopped
-    ports: ["${INTERNAL_BIND:-127.0.0.1}:3100:3100"]
+    ports: ["${INTERNAL_BIND:-127.0.0.1}:${LOKI_PORT:-3100}:3100"]
     volumes:
       - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki

@@ -76,6 +76,10 @@
                 </div>
                 <div class="nav-group">
                     <p class="nav-label">Администрирование</p>
+                    @if (ProAdmin.Pages.SetupModel.TryWebUrl(settings.GrafanaUrl, out var grafanaUrl))
+                    {
+                        <a href="@grafanaUrl" rel="noreferrer">Статистика Grafana</a>
+                    }
                     <a href="/Jobs" aria-current="@(section == "jobs" ? "page" : null)">Операции</a>
                     @if (!githubMode)
                     {
@@ -104,18 +108,29 @@
                 {
                     <a class="chip chip-warn" href="/GitLab" aria-current="@(section == "gitlab" ? "page" : null)">GitLab не подключён</a>
                 }
-                <div class="session-pilot" title="@PilotChipTitle(session!)">
-                    <span class="chip"><span class="muted">Pilot</span> @session!.PilotLogin</span>
-                    <ul class="session-envs" aria-label="Доступ к контурам Pilot">
-                        @foreach (var a in session.LoginAccess)
-                        {
-                            <li class="chip-env @(a.Ok ? "" : "fail")">
-                                <span class="env-dot env-@a.Key" aria-hidden="true"></span>@a.Title
-                                <span class="visually-hidden">@(a.Ok ? " - вход выполнен" : " - вход не выполнен")</span>
-                            </li>
-                        }
-                    </ul>
-                </div>
+                @if (session!.LoginCredential is null)
+                {
+                    <a class="chip" asp-page="/PilotConnection">Подключить Pilot</a>
+                }
+                else
+                {
+                    <div class="session-pilot" title="@PilotChipTitle(session)">
+                        <span class="chip"><span class="muted">Pilot</span> @session.PilotLogin</span>
+                        <ul class="session-envs" aria-label="Доступ к контурам Pilot">
+                            @foreach (var a in session.LoginAccess)
+                            {
+                                <li class="chip-env @(a.Ok ? "" : "fail")">
+                                    <span class="env-dot env-@a.Key" aria-hidden="true"></span>@a.Title
+                                    <span class="visually-hidden">@(a.Ok ? " - вход выполнен" : " - вход не выполнен")</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                    @if (!githubMode)
+                    {
+                        <a class="chip" asp-page="/PilotConnection">Сменить учётную запись Pilot</a>
+                    }
+                }
                 <form method="post" action="/Logout" class="inline">
                     @Html.AntiForgeryToken()
                     <button type="submit" class="btn btn-ghost btn-sm" title="Выйти из Pilot и GitLab: учётки и токен этой сессии удаляются">Выйти</button>

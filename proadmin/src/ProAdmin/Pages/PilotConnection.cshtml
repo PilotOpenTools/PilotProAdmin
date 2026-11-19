@@ -1,0 +1,78 @@
+@page
+@model PilotConnectionModel
+@{
+    ViewData["Title"] = "Подключение к Pilot";
+    ViewData["Bare"] = Model.GitHubTypesMode;
+}
+<div class="auth">
+    <div class="auth-card">
+        <header class="auth-head">
+            <h1>Подключение к Pilot</h1>
+            <p class="muted">Укажите учётную запись администратора Pilot для работы с контурами.</p>
+        </header>
+        @if (Model.Error is not null)
+        {
+            <div class="alert alert-error" role="alert">@Model.Error</div>
+        }
+
+        @if (Model.Access is { Count: > 0 } access)
+        {
+            <ul class="access-list">
+                @foreach (var a in access)
+                {
+                    <li class="@(a.Ok ? "ok" : "fail")">
+                        <span class="access-mark" aria-hidden="true">@(a.Ok ? "" : "X")</span>
+                        <div>
+                            <div class="env-name"><span class="env-dot env-@a.Key"></span>@a.Title</div>
+                            <code class="small">@a.PilotUrl</code>
+                            <div class="small @(a.Ok ? "access-ok" : "access-fail")">@(a.Ok ? "Вход выполнен" : a.Error)</div>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+
+        <form method="post" class="form">
+            <input type="hidden" asp-for="ReturnUrl" />
+
+            @if (Model.UseServers)
+            {
+                @if (Model.Access is null)
+                {
+                    <div class="muted small">
+                        Вход будет проверен на серверах:
+                        @foreach (var env in Model.Servers)
+                        {
+                            <span class="login-env"><span class="env-dot env-@env.Key"></span>@env.Title</span>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <label class="field">
+                    <span>Адрес сервера Pilot</span>
+                    <input asp-for="ServerUrl" placeholder="http://localhost:5547/pilot-ice_ru" autocomplete="url" required />
+                    <small class="muted">Адрес Pilot-Server, можно сразу с базой: http://host:порт/база</small>
+                </label>
+                <label class="field">
+                    <span>Ключ установки</span>
+                    <input asp-for="SetupKey" type="password" autocomplete="off" required />
+                    <small class="muted">@(Model.SetupKeyConfigured
+                        ? "Серверы Pilot ещё не настроены: первая настройка доступна только с ключом установки (ADMIN_SETUP_KEY)."
+                        : "Первая настройка закрыта: задайте ADMIN_SETUP_KEY в .env и перезапустите админку.")</small>
+                </label>
+            }
+            <label class="field">
+                <span>Логин</span>
+                <input asp-for="Login" autocomplete="username" required autofocus />
+            </label>
+            <label class="field">
+                <span>Пароль</span>
+                <input asp-for="Password" type="password" autocomplete="current-password" required />
+            </label>
+
+            <button type="submit" class="btn btn-primary btn-block">Подключить Pilot</button>
+        </form>
+    </div>
+</div>

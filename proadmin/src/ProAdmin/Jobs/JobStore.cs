@@ -34,7 +34,8 @@ public sealed class JobStore
     /// <summary>Операцию видит администратор прода и тот, кто её запустил (по входу в Pilot или по пользователю GitLab).</summary>
     public static bool CanSee(PublishJob job, Sessions.UserSession session, bool isProdAdmin) =>
         isProdAdmin ||
-        string.Equals(job.PilotUser, session.PilotLogin, StringComparison.OrdinalIgnoreCase) ||
+        (session.LoginCredential is { } credential &&
+         string.Equals(job.PilotUser, credential.Login, StringComparison.OrdinalIgnoreCase)) ||
         (job.GitLabUser is { Length: > 0 } gl && string.Equals(gl, session.GitLabUser?.Username, StringComparison.OrdinalIgnoreCase));
 
     public IReadOnlyList<PublishJob> Recent(int count) =>

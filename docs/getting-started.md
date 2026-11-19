@@ -1,82 +1,44 @@
-# Быстрый старт
+# Быстрый старт на Windows
 
-PilotProAdmin подключается к действующему Pilot-Server. Админка и сервис миграции поставляются вместе. Сервис миграции можно запускать отдельно, если нужны импорт, экспорт или копирование баз.
+1. Установите и запустите [Docker Desktop для Windows](https://docs.docker.com/desktop/setup/install/windows-install/) на компьютере x64. Используйте режим Linux containers. В PowerShell команда `docker info` должна показывать сведения о сервере Docker.
+2. Скачайте и распакуйте `PilotProAdmin-vX.Y.Z-lite.zip` со [страницы релизов](https://github.com/PilotOpenTools/PilotProAdmin/releases). Внутри два файла: `README.md` и `install.ps1`. Сверьте SHA-256 архива с `SHA256SUMS.txt` через `Get-FileHash`.
+3. Откройте PowerShell в распакованной папке и выполните:
 
-## Windows x64
+   ```powershell
+   .\install.ps1
+   ```
 
-Скачайте архив на странице [релизов](https://github.com/PilotOpenTools/PilotProAdmin/releases/latest) и распакуйте.
+   Если Windows заблокировала загруженный скрипт, после проверки архива выполните `Unblock-File -LiteralPath .\install.ps1`.
+4. Ответьте на вопросы установщика. Если порт занят, нажмите Enter, чтобы принять предложенный свободный порт, или укажите свой. Установщик запускает PilotProAdmin и PilotMigration одной версии и выводит адреса сервисов.
+5. Откройте адрес админки из вывода скрипта. В мастере первого входа проверьте адрес GitLab и введите установочный ключ `ADMIN_SETUP_KEY` из `PilotProAdmin-install\.env`. Войдите с Personal Access Token GitLab с правом `api`. Затем проверьте адреса контуров Pilot, задайте служебные учётные записи для выкладки из GitLab CI, проверьте адрес Grafana и укажите группы и проекты GitLab.
 
-| Архив | Требования |
-| --- | --- |
-| `PilotProAdmin-vX.Y.Z-win-x64-lite.zip` | Установлен ASP.NET Core Runtime 10 x64 |
-| `PilotProAdmin-vX.Y.Z-win-x64-portable.zip` | Среда .NET включена в архив |
+## Откуда взять образы
 
-Сверьте SHA-256 ZIP с `SHA256SUMS.txt`. В PowerShell 7 откройте каталог архива. Для подключения первого Pilot задайте свой установочный ключ и запустите приложение.
+Lite скачивает PilotProAdmin и PilotMigration из GHCR. Если на целевой машине GHCR недоступен, скачайте также `PilotProAdmin-vX.Y.Z-linux-amd64-images.tar.gz` и проверьте его по `SHA256SUMS-CONTAINERS.txt`. Положите архив рядом с `install.ps1` или передайте полный путь:
 
 ```powershell
-$env:App__SetupKey = Read-Host 'Установочный ключ PilotProAdmin' -MaskInput
-Set-Location PilotProAdmin
-.\PilotProAdmin.exe --urls http://127.0.0.1:5300
+.\install.ps1 -ImageArchive 'D:\Downloads\PilotProAdmin-vX.Y.Z-linux-amd64-images.tar.gz'
 ```
 
-Откройте <http://127.0.0.1:5300> и войдите учётной записью администратора первой базы Pilot. Для миграции запустите `PilotMigration/PilotMigration.exe` с `--urls http://127.0.0.1:5320` и настройте общий ключ [по инструкции](configuration.md#миграция).
+Архив содержит оба приложения. Для локального GitLab, статистики и серверов Pilot нужны доступ к их реестрам и зависимости сборщиков либо заранее подготовленные образы. Для полностью офлайн установки полного стенда используйте [отдельный комплект стека](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html).
 
-## Docker Linux amd64
+## Чистая установка
 
-Скачайте публичный образ из GitHub Container Registry. Вход в GitHub не требуется.
+- Для GitLab выберите существующий экземпляр или установку на этой машине. Для нового GitLab начальный пароль `root` находится в `GITLAB_ROOT_PASSWORD` в `.env`. Создайте токен с правом `api` и группы для нужных типов проектов. Если вход выполняет пользователь без прав администратора GitLab, у него должен быть доступ хотя бы к одной из групп, указанных в мастере.
+- Для статистики можно подключить Grafana, развернуть локальную Grafana со сборщиками или настроить позже. Локальные сборщики в этой схеме используют PostgreSQL рабочего контура Pilot.
+- Для каждого контура Pilot (тест, стейдж, прод) можно подключить существующий сервер, развернуть локальный Pilot-Server с PostgreSQL и RustFS или отложить настройку. Для скачивания образа Pilot может потребоваться доступ к реестру поставщика. Свой образ можно указать через `-PilotImage`. Для нового сервера установите лицензию и подключите базу в Pilot-myAdmin. После этого добавьте имя базы к адресу контура в админке. [Установка Pilot-Server](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html).
+- Учётные записи для выкладки модулей из CI можно изменить или отключить в разделе «Настройки». Для работы CI также нужны ключи выкладки в переменных групп GitLab. При подключении внешнего Pilot доступ к PostgreSQL и архивам для PilotMigration настраивается отдельно. [Настройка стека и интеграций](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html).
 
-```bash
-docker pull ghcr.io/pilotopentools/pilotproadmin:1.0.2
+## Установка из резервной копии
+
+На исходной машине откройте «Миграция → Подготовить перенос данных» в админке. Скачайте комплект, распакуйте его рядом с доступным Docker Desktop и запустите `prepare-transfer.ps1` по инструкции из комплекта. Скрипт напечатает путь к папке с `manifest.json`.
+
+Выберите восстановление и укажите каталог полной резервной копии с `manifest.json`, либо передайте его при запуске:
+
+```powershell
+.\install.ps1 -Backup 'D:\Backup\2026-11-18_0300' -InstallDirectory 'D:\PilotProAdmin'
 ```
 
-Задайте установочный ключ и запустите админку.
+Для восстановления выберите новый каталог установки. Скрипт поднимает локальные GitLab, Grafana со сборщиками и три контура Pilot вместе с PostgreSQL и RustFS. Он берёт версию и редакцию GitLab из имени штатного архива резервной копии. [Требования GitLab к восстановлению](https://docs.gitlab.com/administration/backup_restore/restore_gitlab/).
 
-```bash
-read -rsp 'Установочный ключ PilotProAdmin: ' App__SetupKey
-printf '\n'
-export App__SetupKey
-docker run --detach --name pilotproadmin \
-  --publish 127.0.0.1:5300:8080 \
-  --volume pilotproadmin-data:/data \
-  --env App__SetupKey \
-  ghcr.io/pilotopentools/pilotproadmin:1.0.2
-unset App__SetupKey
-```
-
-Ввод ключа после `read` скрыт. Откройте <http://127.0.0.1:5300>. Укажите адрес Pilot, доступный из контейнера. Если Pilot запущен на той же машине, адрес зависит от настроек сети Docker.
-
-### Сервис миграции
-
-Если нужен импорт, экспорт или перенос базы, скачайте образ сервиса.
-
-```bash
-docker pull ghcr.io/pilotopentools/pilotproadmin-migration:1.0.2
-```
-
-Выделите сервису отдельный том, подключите его к сети админки и задайте общий ключ API. При обновлении используйте одинаковый тег для обоих образов. [Настройка миграции](configuration.md#миграция).
-
-### Офлайн-установка
-
-На машине с интернетом скачайте `PilotProAdmin-v1.0.2-linux-amd64-images.tar.gz` и `SHA256SUMS-CONTAINERS.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.2). Перенесите оба файла на сервер, проверьте контрольную сумму и загрузите образы.
-
-```bash
-sha256sum --check SHA256SUMS-CONTAINERS.txt
-docker load --input PilotProAdmin-v1.0.2-linux-amd64-images.tar.gz
-```
-
-Запустите админку той же командой `docker run`. Архив содержит оба образа с тегом `1.0.2`.
-
-## Кластер Pilot
-
-Скачайте `PilotProAdmin-v1.0.2-cluster.tar.gz` и `SHA256SUMS-CLUSTER.txt` со [страницы релиза](https://github.com/PilotOpenTools/PilotProAdmin/releases/tag/v1.0.2). Сверьте контрольную сумму и распакуйте архив на узлах Linux.
-
-```bash
-sha256sum --check SHA256SUMS-CLUSTER.txt
-tar -xzf PilotProAdmin-v1.0.2-cluster.tar.gz
-```
-
-Комплект содержит скрипты и Compose для узлов и балансировщика. Подготовьте образ Pilot-Server из своего дистрибутива, PostgreSQL, Redis и общий файловый архив. [Установка кластера](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/cluster-installation.html)
-
-## Полный стенд
-
-Шаблоны Compose для контуров Pilot, GitLab и мониторинга, варианты ролей и сборка офлайн-комплекта описаны в [инструкции по установке](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html). Для сборки комплекта нужны исходные образы и файлы вашего дистрибутива Pilot. [Варианты развёртывания](https://pilotopentools.github.io/PilotProAdmin/deployment.html).
+После установки сохраните каталог `PilotProAdmin-install` или выбранный через `-InstallDirectory`. В нём остаются Compose, `.env` с реквизитами и папки данных. Часть данных хранится в томах Docker. При обновлении распакуйте новый lite и запустите установщик с тем же `-InstallDirectory`. Для переноса кластера используйте [инструкцию по кластерной установке](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/cluster-installation.html).

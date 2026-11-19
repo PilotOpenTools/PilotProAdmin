@@ -31,10 +31,28 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
     {
         var response = await _factory.CreateClient().GetAsync("/Login");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        // Поле адреса скрывается, если серверы уже заданы в настройках, - проверяем форму входа в целом.
         var html = await response.Content.ReadAsStringAsync();
         Assert.Contains("PilotProAdmin", html);
         Assert.DoesNotContain("id=\"main-navigation\"", html);
+    }
+
+    [Fact]
+    public async Task TransferDownloadContainsTheWindowsScriptsAndInstructions()
+    {
+        using var client = ClientFor(_factory.NewSession(withGitLab: true));
+        var page = await client.GetStringAsync("/Migration/Transfer");
+        Assert.Contains("?handler=Download", page);
+
+        using var response = await client.GetAsync("/Migration/Transfer?handler=Download");
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("application/zip", response.Content.Headers.ContentType?.MediaType);
+        using var zip = new System.IO.Compression.ZipArchive(await response.Content.ReadAsStreamAsync());
+        Assert.Equal(new[] { "README.txt", "backup.ps1", "monitoring.ps1", "prepare-transfer.ps1" },
+            zip.Entries.Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal));
+        using var script = zip.GetEntry("prepare-transfer.ps1")!.Open();
+        var bom = new byte[3];
+        script.ReadExactly(bom);
+        Assert.Equal(new byte[] { 0xef, 0xbb, 0xbf }, bom);
     }
 
     [Theory]
@@ -71,7 +89,6 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
         var client = ClientFor(_factory.NewSession(withGitLab: false));
         var response = await client.GetAsync("/Automations/test");
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        // Шлюз в Program.cs отправляет на единую форму входа (Pilot + GitLab).
         Assert.StartsWith("/Login", response.Headers.Location!.OriginalString);
 
         var gitlab = await client.GetStringAsync("/GitLab");

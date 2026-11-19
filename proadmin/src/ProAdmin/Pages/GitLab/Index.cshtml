@@ -29,10 +29,10 @@
                 <div class="h3">@user.Name</div>
                 <div class="muted">@@@user.Username · @(Model.CurrentSession.GitLabToken!.IsOAuth ? "вход через OAuth" : "Personal Access Token")</div>
             </div>
-            <form method="post" asp-page-handler="Disconnect">
-                <button class="btn btn-ghost" type="submit">Отключить</button>
+            <form method="post" asp-page="/Logout">
+                <button class="btn btn-ghost" type="submit">Выйти</button>
             </form>
-            <a class="btn btn-primary" href="@(string.IsNullOrEmpty(Model.ReturnUrl) ? "/" : Model.ReturnUrl)">Продолжить</a>
+            <a class="btn btn-primary" href="@Model.ContinueUrl">Продолжить</a>
         </div>
     </section>
 }
@@ -44,7 +44,7 @@ else if (Model.Location is not null)
             @if (Model.OAuthEnabled)
             {
                 <p class="muted">Откроется страница GitLab, где нужно разрешить доступ приложению.</p>
-                <form method="post" asp-page-handler="OAuth">
+                <form method="post" asp-page="/Login" asp-page-handler="GitLab">
                     <input type="hidden" asp-for="ReturnUrl" />
                     <button class="btn btn-primary" type="submit">Войти в @Model.Location.BaseUrl</button>
                 </form>
@@ -62,11 +62,11 @@ else if (Model.Location is not null)
         <section class="card">
             <h2>Personal Access Token</h2>
             <p class="muted">GitLab / User Settings / Access Tokens, scope <code>api</code>. Токен хранится только в памяти сервиса до выхода.</p>
-            <form method="post" asp-page-handler="Token" class="form">
+            <form method="post" asp-page="/Login" asp-page-handler="Token" class="form">
                 <input type="hidden" asp-for="ReturnUrl" />
                 <label class="field">
                     <span>Токен</span>
-                    <input asp-for="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" />
+                    <input name="AccessToken" type="password" placeholder="glpat-…" autocomplete="off" required />
                 </label>
                 <button class="btn" type="submit">Подключить</button>
             </form>

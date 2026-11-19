@@ -2,9 +2,10 @@
 @model ProAdmin.Pages.GitLab.CallbackModel
 @{
     ViewData["Title"] = "GitLab";
+    ViewData["Bare"] = true;
 }
 <div class="card narrow">
     <h1>Не удалось войти в GitLab</h1>
     <div class="alert alert-error">@Model.Error</div>
-    <a class="btn" href="/GitLab">Попробовать снова</a>
+    <a class="btn" asp-page="/Login">Попробовать снова</a>
 </div>

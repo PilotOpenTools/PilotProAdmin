@@ -50,6 +50,7 @@ public sealed class SettingsStore
             settings.TypesGitLabProjectUrl = _defaults.TypesGitLabProjectUrl.Trim();
         if (!string.IsNullOrWhiteSpace(_defaults.StagePilotUrl))
             settings.StagePilotUrl = _defaults.StagePilotUrl.Trim();
+        settings.GrafanaUrl = _defaults.GrafanaUrl?.Trim() ?? "";
         settings.UpdatedBy = "начальные настройки (.env)";
         settings.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -67,6 +68,40 @@ public sealed class SettingsStore
     public AdminSettings Current
     {
         get { lock (_lock) return _current.Clone(); }
+    }
+
+    public bool CompleteFirstRun(AdminSettings settings)
+    {
+        lock (_lock)
+        {
+            if (_current.FirstRunCompleted)
+                return false;
+            settings.FirstRunCompleted = true;
+            Save(settings);
+            return true;
+        }
+    }
+
+    public void UpdateDeployLogins(AdminSettings original, AdminSettings updated)
+    {
+        lock (_lock)
+        {
+            var settings = _current.Clone();
+            foreach (var (contour, login) in updated.DeployLogins)
+                if (!original.DeployLogins.TryGetValue(contour, out var old) || old != login)
+                    settings.DeployLogins[contour] = login;
+            Save(settings);
+        }
+    }
+
+    public void SaveGeneral(AdminSettings settings)
+    {
+        lock (_lock)
+        {
+            settings.FirstRunCompleted = _current.FirstRunCompleted;
+            settings.DeployLogins = _current.Clone().DeployLogins;
+            Save(settings);
+        }
     }
 
     public void Save(AdminSettings settings)

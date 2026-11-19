@@ -9,6 +9,11 @@ public sealed class AdminSettings
     public const string Prod = "prod";
 
     public List<EnvironmentSettings> Environments { get; set; } = new();
+    [Microsoft.AspNetCore.Mvc.ModelBinding.BindNever]
+    public bool FirstRunCompleted { get; set; }
+    [Microsoft.AspNetCore.Mvc.ModelBinding.BindNever]
+    public Dictionary<string, StoredDeployLogin> DeployLogins { get; set; } = new();
+    public string GrafanaUrl { get; set; } = "";
 
     /// <summary>
     /// Группа GitLab с автоматизациями, например http://localhost:8080/automation.
@@ -146,6 +151,8 @@ public sealed class AdminSettings
     /// <summary>Гарантирует наличие двух контуров (тест / dev, прод / main) в фиксированном порядке; прочие (бывший стейдж) отбрасываются.</summary>
     public void Normalize()
     {
+        DeployLogins ??= new();
+        GrafanaUrl = (GrafanaUrl ?? "").Trim();
         var defaults = new[]
         {
             new EnvironmentSettings { Key = Test, Title = "Тест", Branch = "dev" },

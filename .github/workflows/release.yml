@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  pull_request:
+    branches: [main]
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -40,7 +42,7 @@ jobs:
       - shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
-        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION
+        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION -Repository "ghcr.io/$($env:GITHUB_REPOSITORY.ToLowerInvariant())"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-release
@@ -61,20 +63,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Check and package cluster installer
+      - name: Check cluster installer
         shell: bash
         run: |
           bash stack/build/selftest/cluster-selftest.sh
           mkdir images
-          filename="PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
-          git archive --format=tar.gz --output="images/$filename" --prefix="PilotProAdmin-v$RELEASE_VERSION/" HEAD \
-            stack/Install/cluster \
-            stack/Install/wait-for-postgres.sh \
-            stack/Install/docs/cluster-installation.md \
-            stack/Install/docs/Pilot-Server_cluster.md \
-            proadmin/migration/README.md
-          cd images
-          sha256sum "$filename" > SHA256SUMS-CLUSTER.txt
       - name: Build and check images
         shell: bash
         run: |
@@ -99,7 +92,7 @@ jobs:
             trap - EXIT
           done
       - name: Push images
-        if: github.event_name == 'push' && github.ref_type == 'tag'
+        if: github.ref_type == 'tag'
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
@@ -107,6 +100,13 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$repository:$RELEASE_VERSION"
           docker push "$repository-migration:$RELEASE_VERSION"
+          anonymous_config=$(mktemp -d)
+          for image in "$repository:$RELEASE_VERSION" "$repository-migration:$RELEASE_VERSION"; do
+            if ! docker --config "$anonymous_config" manifest inspect "$image" >/dev/null; then
+              echo "::error::GHCR image $image is not readable without login. Set both packages to Public in GitHub Packages and rerun this tag."
+              exit 1
+            fi
+          done
       - name: Package images for offline loading
         shell: bash
         run: |
@@ -123,7 +123,7 @@ jobs:
           compression-level: 0
 
   publish:
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: github.ref_type == 'tag'
     needs: [windows, containers]
     runs-on: ubuntu-latest
     permissions:
@@ -140,12 +140,12 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.windows.outputs.version }}
         run: |
           cd artifacts
           sha256sum --check SHA256SUMS.txt
           sha256sum --check SHA256SUMS-CONTAINERS.txt
-          sha256sum --check SHA256SUMS-CLUSTER.txt
-          assets=(./*.zip ./*.tar.gz SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt SHA256SUMS-CLUSTER.txt)
+          assets=("PilotProAdmin-v$RELEASE_VERSION-lite.zip" "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz" SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
           else

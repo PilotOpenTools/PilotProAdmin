@@ -50,10 +50,13 @@ public enum PilotErrorKind
     Other,
 }
 
-public sealed class PilotGatewayException : Exception
+public class PilotGatewayException : Exception
 {
     public PilotGatewayException(PilotErrorKind kind, string message, Exception? inner = null)
         : base(message, inner) => Kind = kind;
 
     public PilotErrorKind Kind { get; }
 }
+
+public sealed class PilotCredentialsRequiredException()
+    : PilotGatewayException(PilotErrorKind.Authentication, "Подключите учётную запись Pilot для этого контура.");
