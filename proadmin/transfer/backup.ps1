@@ -59,6 +59,7 @@ if ($InstallDirectory) {
 }
 $composeProject = Get-ComposeProject $Project $envFiles
 $volumes = [ordered]@{}   # тома мониторинга, попавшие в копию
+$postgresDatabases = [ordered]@{}
 
 $stamp = Get-Date -Format 'yyyy-MM-dd_HHmm'
 if ($ForTransfer) { $stamp += '_' + [guid]::NewGuid().ToString('N').Substring(0, 8) }
@@ -166,12 +167,13 @@ Part 'postgres' {
         try {
             Exec docker @('exec', $c, 'pg_dumpall', '-U', 'postgres', '--globals-only', '-f', "$staging/globals.sql")
             Exec docker @('cp', "${c}:$staging/globals.sql", (Join-Path $dir 'globals.sql'))
-            $dbs = ExecOut docker @('exec', $c, 'psql', '-U', 'postgres', '-Atc', "select datname from pg_database where not datistemplate and datname <> 'postgres'")
-            foreach ($db in @($dbs | Where-Object { $_ })) {
+            $dbs = @(ExecOut docker @('exec', $c, 'psql', '-U', 'postgres', '-Atc', "select datname from pg_database where not datistemplate and datname <> 'postgres'") | Where-Object { $_ })
+            foreach ($db in $dbs) {
                 Exec docker @('exec', $c, 'pg_dump', '-U', 'postgres', '-Fc', '-f', "$staging/$db.dump", $db)
                 Exec docker @('cp', "${c}:$staging/$db.dump", (Join-Path $dir "$db.dump"))
                 Log ("  {0}/{1}: {2:n1} МБ" -f $e, $db, ((Get-Item (Join-Path $dir "$db.dump")).Length / 1MB))
             }
+            $postgresDatabases[$e] = $dbs
         } finally {
             Exec docker @('exec', $c, 'rm', '-rf', '--', $staging)
         }
@@ -311,6 +313,7 @@ $manifest = [ordered]@{
     cicdCommit = "$commit"
     parts    = $results
     volumes  = $volumes
+    postgresDatabases = $postgresDatabases
     ok       = ($failed.Count -eq 0)
 }
 $json = $manifest | ConvertTo-Json -Depth 4

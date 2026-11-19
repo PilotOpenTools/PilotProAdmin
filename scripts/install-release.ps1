@@ -37,8 +37,40 @@ function Read-ServiceUrl([string]$Prompt, [switch]$ServerOnly) {
     }
 }
 
+function Get-ExpectedPostgresDatabases([string]$SettingsPath, [string[]]$RecordedDatabases) {
+    try {
+        $xml = [xml][IO.File]::ReadAllText($SettingsPath)
+    } catch {
+        throw "Не удалось прочитать настройки PostgreSQL из $SettingsPath."
+    }
+    $databases = @($RecordedDatabases | Where-Object { $_ })
+    foreach ($node in $xml.SelectNodes("//*[local-name()='PgConnectionString']")) {
+        try {
+            $connection = [System.Data.Common.DbConnectionStringBuilder]::new()
+            # PowerShell adapts the builder as a dictionary. Assign the actual property.
+            $connection.PSBase.ConnectionString = $node.GetAttribute('ConnectionString')
+            $database = if ($connection.ContainsKey('Database')) { $connection.get_Item('Database') }
+                        elseif ($connection.ContainsKey('Initial Catalog')) { $connection.get_Item('Initial Catalog') }
+        } catch {
+            throw "Не удалось разобрать строку подключения PostgreSQL в $SettingsPath."
+        }
+        if (-not $database) { throw "В $SettingsPath не указано имя базы PostgreSQL." }
+        $databases += $database
+    }
+    # Fall back to the standard Pilot database when the backup identifies only metrics.
+    if (-not ($databases | Where-Object { $_ -cne 'pilot_metrics' })) {
+        $databases += 'pilot-ice_ru'
+    }
+    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($database in $databases) {
+        if ($database -match '[\\/:*?"<>|\x00-\x1f]') { throw "Некорректное имя файла дампа в конфигурации $SettingsPath." }
+        if ($unique.Add($database)) { $database }
+    }
+}
+
 function Assert-CompleteBackup([string]$Directory, $Manifest) {
     if ($Manifest.ok -ne $true) { throw 'Копия снята с ошибками. Проверьте backup.log.' }
+    if ($Manifest.parts.postgres -and $Manifest.parts.postgres -ne 'ok') { throw 'В копии не завершено резервное копирование PostgreSQL.' }
     $required = @('gitlab/config/gitlab-secrets.json')
     $contours = 'test', 'stage', 'prod'
     $rustfsVolumes = $Manifest.volumes.rustfs
@@ -61,6 +93,21 @@ function Assert-CompleteBackup([string]$Directory, $Manifest) {
         $artifact = Get-Item -LiteralPath (Join-Path $Directory $file) -ErrorAction SilentlyContinue
         if (-not $artifact -or $artifact.PSIsContainer -or $artifact.Length -eq 0) {
             throw "Копия неполная: отсутствует или пуст $file."
+        }
+    }
+    foreach ($contour in $contours) {
+        $settingsPath = Join-Path $Directory "pilot/$contour/pilot-server/settings/settings.xml"
+        $databases = Get-ExpectedPostgresDatabases $settingsPath $Manifest.postgresDatabases.$contour
+        $dumps = [Collections.Generic.Dictionary[string,IO.FileInfo]]::new([StringComparer]::Ordinal)
+        foreach ($dump in Get-ChildItem -LiteralPath (Join-Path $Directory "postgres/$contour") -Filter '*.dump' -File) {
+            $dumps[$dump.Name] = $dump
+        }
+        foreach ($database in $databases) {
+            $file = "postgres/$contour/$database.dump"
+            $dump = $null
+            if (-not $dumps.TryGetValue("$database.dump", [ref]$dump) -or $dump.Length -eq 0) {
+                throw "Копия неполная: отсутствует или пуст $file."
+            }
         }
     }
 }

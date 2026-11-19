@@ -670,7 +670,7 @@ if ($restore) {
         # Роли: «already exists» ожидаемо (pilotuser заводит init-скрипт), ALTER ROLE вернёт исходные пароли.
         Run docker exec $pg sh -c "psql -U postgres -q -f /tmp/restore/globals.sql 2>&1 | grep -v 'already exists' || true"
         foreach ($dump in Get-ChildItem "$snap\postgres\$c" -Filter '*.dump') {
-            Run docker exec $pg sh -c "pg_restore -U postgres --clean --if-exists --create --exit-on-error -d postgres '/tmp/restore/$($dump.Name)' 2>&1"
+            Run docker exec $pg pg_restore -U postgres --clean --if-exists --create --exit-on-error -d postgres "/tmp/restore/$($dump.Name)"
             Write-Host "  $($c): $($dump.BaseName)"
         }
         docker exec $pg rm -rf /tmp/restore | Out-Null

@@ -23,10 +23,12 @@ if ($settings.environments[0].pilotUrl -ne 'http://localhost:5547/prod%20db' -or
 
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $repo 'scripts/install-release.ps1'), [ref]$null, [ref]$null)
-$function = $ast.Find({ param($node)
-    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-CompleteBackup'
-}, $true)
-Invoke-Expression $function.Extent.Text
+foreach ($name in 'Get-ExpectedPostgresDatabases', 'Assert-CompleteBackup') {
+    $function = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    Invoke-Expression $function.Extent.Text
+}
 
 function Assert-Rejects([string]$File) {
     try { Assert-CompleteBackup $backup.FullName $manifest } catch {
@@ -38,15 +40,20 @@ function Assert-Rejects([string]$File) {
 
 $backup = [IO.Directory]::CreateTempSubdirectory('PilotProAdmin-restore-test-')
 try {
-    $manifest = '{"ok":true,"parts":{"grafana":"ok"},"volumes":{"rustfs":{"test":"cicd_rustfs_test"}}}' | ConvertFrom-Json
+    $manifest = '{"ok":true,"parts":{"grafana":"ok","postgres":"ok"},"volumes":{"rustfs":{"test":"cicd_rustfs_test"}}}' | ConvertFrom-Json
     $required = @('gitlab/config/gitlab-secrets.json', 'grafana/grafana_grafana_data.tgz')
     foreach ($contour in 'test', 'stage', 'prod') {
-        $required += "postgres/$contour/globals.sql", "pilot/$contour/pilot-server/settings/settings.xml"
+        $required += "postgres/$contour/globals.sql", "postgres/$contour/pilot-ice_ru.dump"
     }
     foreach ($file in $required) {
         $artifact = Join-Path $backup.FullName $file
         [void][IO.Directory]::CreateDirectory((Split-Path $artifact -Parent))
         [IO.File]::WriteAllText($artifact, 'fixture')
+    }
+    foreach ($contour in 'test', 'stage', 'prod') {
+        $xml = Join-Path $backup.FullName "pilot/$contour/pilot-server/settings/settings.xml"
+        [void][IO.Directory]::CreateDirectory((Split-Path $xml -Parent))
+        [IO.File]::WriteAllText($xml, '<Configuration/>')
     }
     Assert-Rejects 'rustfs/rustfs_test.tgz'
     $rustfs = Join-Path $backup.FullName 'rustfs/rustfs_test.tgz'
@@ -55,6 +62,30 @@ try {
     Assert-Rejects 'rustfs/rustfs_test.tgz'
     [IO.File]::WriteAllText($rustfs, 'fixture')
     Assert-CompleteBackup $backup.FullName $manifest
+    $testDump = Join-Path $backup.FullName 'postgres/test/pilot-ice_ru.dump'
+    [IO.File]::Delete($testDump)
+    Assert-Rejects 'postgres/test/pilot-ice_ru.dump'
+    [IO.File]::WriteAllText($testDump, '')
+    Assert-Rejects 'postgres/test/pilot-ice_ru.dump'
+    [IO.File]::WriteAllText($testDump, 'fixture')
+
+    $prodDump = Join-Path $backup.FullName 'postgres/prod/pilot-ice_ru.dump'
+    [IO.File]::WriteAllText((Join-Path $backup.FullName 'postgres/prod/pilot_metrics.dump'), 'fixture')
+    [IO.File]::Delete($prodDump)
+    Assert-Rejects 'postgres/prod/pilot-ice_ru.dump'
+    [IO.File]::WriteAllText($prodDump, 'fixture')
+
+    $testXml = Join-Path $backup.FullName 'pilot/test/pilot-server/settings/settings.xml'
+    [IO.File]::WriteAllText($testXml, '<Configuration><DatabaseParameters Name="Test Pilot"><PgConnectionString ConnectionString="Host=pg;Database=&quot;test;custom&quot;"/></DatabaseParameters></Configuration>')
+    Assert-Rejects 'postgres/test/test;custom.dump'
+    [IO.File]::WriteAllText((Join-Path $backup.FullName 'postgres/test/test;custom.dump'), 'fixture')
+    Assert-CompleteBackup $backup.FullName $manifest
+
+    $manifest | Add-Member -NotePropertyName postgresDatabases -NotePropertyValue (@'
+{"test":["test;custom","project-archive"],"stage":["pilot-ice_ru"],"prod":["pilot-ice_ru","pilot_metrics"]}
+'@ | ConvertFrom-Json)
+    Assert-Rejects 'postgres/test/project-archive.dump'
+    [IO.File]::WriteAllText((Join-Path $backup.FullName 'postgres/test/project-archive.dump'), 'fixture')
     [IO.File]::Delete((Join-Path $backup.FullName 'grafana/grafana_grafana_data.tgz'))
     Assert-Rejects 'grafana/grafana_grafana_data.tgz'
 } finally {

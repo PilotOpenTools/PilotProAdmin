@@ -33,8 +33,12 @@ function Test-PortableApp([string]$Directory, [string]$Name) {
         }
         throw "$Name не прошёл проверку /health: $(Get-Content -LiteralPath $log, $errors -Raw)"
     } finally {
-        if (-not $process.HasExited) { Stop-Process -Id $process.Id }
-        $process.Dispose()
+        try {
+            if (-not $process.HasExited) { Stop-Process -InputObject $process }
+            $process.WaitForExit()
+        } finally {
+            $process.Dispose()
+        }
     }
 }
 
