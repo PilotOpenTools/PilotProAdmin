@@ -510,15 +510,6 @@ if ($restore) {
     }
     if ($ReleaseInstall) {
         $settingsPath = "$root/services/proadmin/settings.json"
-        foreach ($c in $myContours) {
-            $newPort = $ports["$($c.ToUpperInvariant())_PILOT_PORT"]
-            if ($oldPorts[$c] -ne $newPort) {
-                foreach ($address in 'localhost', '127.0.0.1', 'host.docker.internal') {
-                    Replace-InFile $settingsPath "${address}:$($oldPorts[$c])/" "${address}:$newPort/"
-                    Replace-InFile $settingsPath ('{0}:{1}"' -f $address, $oldPorts[$c]) ('{0}:{1}"' -f $address, $newPort)
-                }
-            }
-        }
         if ($gitLabBase -and $WithGitLab) {
             foreach ($address in @($oldHost, $publicHost, 'localhost', '127.0.0.1', 'host.docker.internal') | Where-Object { $_ } | Select-Object -Unique) {
                 Replace-InFile $settingsPath "http://${address}:$oldGitLabPort/" "$gitLabBase/"
@@ -533,6 +524,7 @@ if ($restore) {
         }
         if (Test-Path -LiteralPath $settingsPath) {
             $settings = [IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json
+            Update-RestoredPilotPorts $settings $oldPorts $ports $myContours
             $settings | Add-Member -NotePropertyName firstRunCompleted -NotePropertyValue $false -Force
             if ($isMetrics) { $settings | Add-Member -NotePropertyName grafanaUrl -NotePropertyValue $cfg.GRAFANA_URL -Force }
             [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 50))

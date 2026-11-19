@@ -6,7 +6,8 @@ param(
     [string]$Version,
     [ValidatePattern('^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+$')]
     [string]$Repository = 'ghcr.io/pilotopentools/pilotproadmin',
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [switch]$WithPortable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,6 +77,15 @@ try {
         Add-Text $zip 'README.md' ($readme.Replace('vX.Y.Z', "v$Version"))
     } finally { $zip.Dispose() }
 } finally { $stream.Dispose() }
-$hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $name" | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii
-Write-Host $path
+$assets = @($name)
+if ($WithPortable) {
+    & (Join-Path $PSScriptRoot 'package-windows-portable.ps1') -Version $Version -OutputDirectory $output
+    $assets += "PilotProAdmin-v$Version-win-x64-portable.zip"
+}
+$checksums = foreach ($asset in $assets) {
+    $file = Join-Path $output $asset
+    $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host $file
+    "$hash  $asset"
+}
+$checksums | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii

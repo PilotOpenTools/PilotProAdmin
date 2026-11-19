@@ -31,4 +31,6 @@ dotnet docfx docfx.json --warningsAsErrors
 ./scripts/package-release.ps1 -Version 1.0.3
 ```
 
-Workflow Release проверяет оба контейнера и сборку архивов в PR в `main`. Его также можно запустить вручную. После слияния тег `v1.0.3` публикует два архива в GitHub Releases и оба образа с тегом `1.0.3` в GHCR. Для онлайн установки пакеты `pilotproadmin` и `pilotproadmin-migration` должны быть публичными. Workflow проверяет доступ к обоим без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.
+На Windows добавьте `-WithPortable`, чтобы собрать и проверить запуск приложений из архива Portable.
+
+Workflow Release проверяет контейнеры и сборку архивов в PR в `main`. Его также можно запустить вручную. После слияния тег `v1.0.3` публикует Docker Lite, архив Docker-образов, Windows Portable и комплект кластера с контрольными суммами. Оба образа получают тег `1.0.3` в GHCR. Workflow проверяет доступ к ним без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.

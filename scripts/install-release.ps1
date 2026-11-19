@@ -37,6 +37,34 @@ function Read-ServiceUrl([string]$Prompt, [switch]$ServerOnly) {
     }
 }
 
+function Assert-CompleteBackup([string]$Directory, $Manifest) {
+    if ($Manifest.ok -ne $true) { throw 'Копия снята с ошибками. Проверьте backup.log.' }
+    $required = @('gitlab/config/gitlab-secrets.json')
+    $contours = 'test', 'stage', 'prod'
+    $rustfsVolumes = $Manifest.volumes.rustfs
+    $rustfsContours = @($contours | Where-Object { $rustfsVolumes -and $rustfsVolumes.PSObject.Properties[$_] })
+    foreach ($contour in $contours) {
+        $required += "postgres/$contour/globals.sql", "pilot/$contour/pilot-server/settings/settings.xml"
+    }
+    # Older manifests may not map RustFS volumes. A successful RustFS part without a map
+    # cannot establish which contours were backed up, so require all three for a full restore.
+    if ($Manifest.parts.rustfs -eq 'ok' -and $rustfsContours.Count -eq 0) {
+        $rustfsContours = $contours
+    }
+    $required += @($rustfsContours | ForEach-Object { "rustfs/rustfs_$_.tgz" })
+    foreach ($part in 'grafana', 'loki', 'prometheus') {
+        if (($Manifest.volumes -and $Manifest.volumes.PSObject.Properties[$part]) -or $Manifest.parts.$part -eq 'ok') {
+            $required += "$part/grafana_${part}_data.tgz"
+        }
+    }
+    foreach ($file in $required) {
+        $artifact = Get-Item -LiteralPath (Join-Path $Directory $file) -ErrorAction SilentlyContinue
+        if (-not $artifact -or $artifact.PSIsContainer -or $artifact.Length -eq 0) {
+            throw "Копия неполная: отсутствует или пуст $file."
+        }
+    }
+}
+
 $endpoint = Invoke-Docker context inspect --format '{{.Endpoints.docker.Host}}'
 if (($env:DOCKER_HOST -and $env:DOCKER_HOST -notlike 'npipe:*') -or $endpoint -notlike 'npipe:*') {
     throw 'Выберите локальный контекст Docker Desktop для Windows.'
@@ -95,9 +123,11 @@ if ($Backup) {
     if ($Backup -match '[$#]') { throw 'Путь к резервной копии должен быть без символов $ и #.' }
     if (-not (Test-Path -LiteralPath (Join-Path $Backup 'manifest.json') -PathType Leaf)) { throw 'В резервной копии нет manifest.json.' }
     $manifest = [IO.File]::ReadAllText((Join-Path $Backup 'manifest.json')) | ConvertFrom-Json
-    if (-not $manifest.ok) { throw 'Копия снята с ошибками. Проверьте backup.log.' }
+    Assert-CompleteBackup $Backup $manifest
     $gitLabBackups = @(Get-ChildItem -LiteralPath (Join-Path $Backup 'gitlab') -Filter '*_gitlab_backup.tar' -File -ErrorAction SilentlyContinue)
-    if ($gitLabBackups.Count -ne 1) { throw 'В каталоге gitlab должен быть один архив *_gitlab_backup.tar.' }
+    if ($gitLabBackups.Count -ne 1 -or $gitLabBackups[0].Length -eq 0) {
+        throw 'В каталоге gitlab должен быть один непустой архив *_gitlab_backup.tar.'
+    }
     if ($gitLabBackups[0].Name -notmatch '_(\d+\.\d+\.\d+)(?:-(ce|ee))?_gitlab_backup\.tar$') {
         $metadata = & tar.exe -xOf $gitLabBackups[0].FullName 'backup_information.yml'
         if ($LASTEXITCODE -or ($metadata -join "`n") -notmatch '(?m)^:gitlab_version:\s*[''"]?(\d+\.\d+\.\d+)(?:-(ce|ee))?[''"]?\s*$') {
@@ -107,14 +137,6 @@ if ($Backup) {
     $gitLabVersion = $Matches[1]
     $gitLabEdition = if ($Matches[2]) { $Matches[2] } else { 'ce' }
     $backupGitLabImage = "gitlab/gitlab-${gitLabEdition}:${gitLabVersion}-${gitLabEdition}.0"
-    if (-not (Test-Path -LiteralPath (Join-Path $Backup 'gitlab/config/gitlab-secrets.json'))) { throw 'В копии нет gitlab/config/gitlab-secrets.json.' }
-    foreach ($contour in 'test', 'stage', 'prod') {
-        foreach ($required in "postgres/$contour/globals.sql", "pilot/$contour/pilot-server/settings/settings.xml") {
-            if (-not (Test-Path -LiteralPath (Join-Path $Backup $required) -PathType Leaf)) {
-                throw "Копия неполная: отсутствует $required."
-            }
-        }
-    }
     $roles += 'gitlab', 'metrics', 'test', 'stage', 'prod'
 } elseif ($saved.ROLES) {
     $roles = $saved.ROLES -split ','

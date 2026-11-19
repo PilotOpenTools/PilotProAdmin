@@ -1,5 +1,7 @@
 # Быстрый старт на Windows
 
+Для запуска без Docker используйте [Windows Portable](https://pilotopentools.github.io/PilotProAdmin/windows-portable.html).
+
 1. Установите и запустите [Docker Desktop для Windows](https://docs.docker.com/desktop/setup/install/windows-install/) на компьютере x64. Используйте режим Linux containers. В PowerShell команда `docker info` должна показывать сведения о сервере Docker.
 2. Скачайте и распакуйте `PilotProAdmin-vX.Y.Z-lite.zip` со [страницы релизов](https://github.com/PilotOpenTools/PilotProAdmin/releases). Внутри два файла: `README.md` и `install.ps1`. Сверьте SHA-256 архива с `SHA256SUMS.txt` через `Get-FileHash`.
 3. Откройте PowerShell в распакованной папке и выполните:

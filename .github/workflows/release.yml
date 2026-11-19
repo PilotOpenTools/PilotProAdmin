@@ -39,10 +39,13 @@ jobs:
           "value=$version" >> $env:GITHUB_OUTPUT
       - run: dotnet test proadmin/PilotProAdmin.sln -c Release --nologo
       - run: dotnet test proadmin/migration/PilotMigration.sln -c Release --nologo
+      - name: Check release restore
+        shell: pwsh
+        run: ./stack/build/selftest/release-restore-selftest.ps1
       - shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
-        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION -Repository "ghcr.io/$($env:GITHUB_REPOSITORY.ToLowerInvariant())"
+        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION -Repository "ghcr.io/$($env:GITHUB_REPOSITORY.ToLowerInvariant())" -WithPortable
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-release
@@ -63,11 +66,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Check cluster installer
+      - name: Check and package cluster installer
         shell: bash
         run: |
           bash stack/build/selftest/cluster-selftest.sh
           mkdir images
+          filename="PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
+          git archive --format=tar.gz --output="images/$filename" --prefix="PilotProAdmin-v$RELEASE_VERSION/" HEAD \
+            stack/Install/cluster \
+            stack/Install/wait-for-postgres.sh \
+            stack/Install/docs/cluster-installation.md \
+            stack/Install/docs/Pilot-Server_cluster.md \
+            proadmin/migration/README.md
+          cd images
+          sha256sum "$filename" > SHA256SUMS-CLUSTER.txt
       - name: Build and check images
         shell: bash
         run: |
@@ -91,6 +103,24 @@ jobs:
             docker rm --force --volumes "$service"
             trap - EXIT
           done
+          service=pilotproadmin-cluster-readiness
+          docker run --detach --name "$service" --publish 127.0.0.1::8080 \
+            --add-host pilot:127.0.0.1 \
+            --env ClusterReadiness__Databases=smoke \
+            --env ClusterReadiness__Login=smoke --env ClusterReadiness__Password=smoke \
+            "$repository-migration:$RELEASE_VERSION" --cluster-readiness
+          trap 'docker logs "$service"; docker rm --force --volumes "$service"' EXIT
+          port=$(docker port "$service" 8080/tcp)
+          result=$(curl --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 1 --max-time 3 "http://$port/health")
+          test "$result" = ok
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 5 "http://$port/ready")" = 503
+          for attempt in {1..25}; do
+            if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$service")" == healthy ]]; then break; fi
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$service")" = healthy
+          docker rm --force --volumes "$service"
+          trap - EXIT
       - name: Push images
         if: github.ref_type == 'tag'
         env:
@@ -145,7 +175,12 @@ jobs:
           cd artifacts
           sha256sum --check SHA256SUMS.txt
           sha256sum --check SHA256SUMS-CONTAINERS.txt
-          assets=("PilotProAdmin-v$RELEASE_VERSION-lite.zip" "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz" SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt)
+          sha256sum --check SHA256SUMS-CLUSTER.txt
+          assets=("PilotProAdmin-v$RELEASE_VERSION-lite.zip"
+                  "PilotProAdmin-v$RELEASE_VERSION-win-x64-portable.zip"
+                  "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
+                  "PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
+                  SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt SHA256SUMS-CLUSTER.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
           else

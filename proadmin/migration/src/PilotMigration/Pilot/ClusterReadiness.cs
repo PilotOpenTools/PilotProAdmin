@@ -28,6 +28,7 @@ internal static class ClusterReadiness
         };
         builder.Services.AddSingleton<PilotAdmin>();
         var app = builder.Build();
+        app.MapGet("/health", () => Results.Text("ok"));
         app.MapGet("/ready", async (PilotAdmin pilot, CancellationToken ct) =>
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);

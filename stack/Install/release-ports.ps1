@@ -1,4 +1,28 @@
 # Loaded by install.ps1 after the effective Compose profiles and backup settings are known.
+function Update-RestoredPilotPorts($Settings, [hashtable]$OldPorts, [hashtable]$PublishedPorts, [string[]]$Contours) {
+    function Update-Url([string]$Url, [string]$Contour) {
+        $uri = $null
+        $newPort = $PublishedPorts["$($Contour.ToUpperInvariant())_PILOT_PORT"]
+        if ($newPort -and [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri) -and
+            ($uri.IsLoopback -or $uri.Host -eq 'host.docker.internal') -and
+            $uri.Port -eq $OldPorts[$Contour] -and $uri.Port -ne $newPort) {
+            $builder = [UriBuilder]::new($uri)
+            $builder.Port = $newPort
+            return $builder.Uri.AbsoluteUri
+        }
+        return $Url
+    }
+
+    foreach ($environment in $Settings.environments) {
+        if ($environment.key -in $Contours -and $environment.PSObject.Properties['pilotUrl']) {
+            $environment.pilotUrl = Update-Url $environment.pilotUrl $environment.key
+        }
+    }
+    if ('stage' -in $Contours -and $Settings.PSObject.Properties['stagePilotUrl']) {
+        $Settings.stagePilotUrl = Update-Url $Settings.stagePilotUrl 'stage'
+    }
+}
+
 function Test-ReleasePort([int]$Port) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::IPv6Any, $Port)
     try {
