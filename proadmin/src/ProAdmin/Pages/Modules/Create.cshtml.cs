@@ -37,6 +37,9 @@ public class CreateModel : AppPageModel
     [BindProperty] public string? Folder { get; set; }
     [BindProperty] public bool DeployToTest { get; set; } = true;
 
+    /// <summary>Шаблон этого вида модулей из настроек.</summary>
+    public ProAdmin.Settings.ModuleKindTemplate Template => IsServer ? AppSettings.ModuleTemplates.Server : AppSettings.ModuleTemplates.Client;
+
     public List<(string Folder, long GroupId)> Folders { get; private set; } = new();
     public ModuleCreationHints? Hints { get; private set; }
     public List<string> Errors { get; } = new();
@@ -50,7 +53,8 @@ public class CreateModel : AppPageModel
             return deny;
         await LoadAsync(ct);
         Number ??= Hints?.SuggestedNumber;
-        UseClientSdk = Hints?.PackageSource is not null;
+        UseClientSdk = AppSettings.ModuleTemplates.UseClientSdkByDefault;
+        DebugClient = AppSettings.ModuleTemplates.DebugClient;
         return Page();
     }
 
@@ -114,8 +118,9 @@ public class CreateModel : AppPageModel
         Number = Number?.Trim() ?? "",
         Section = Section?.Trim() ?? "",
         UseClientSdk = !IsServer && UseClientSdk,
-        ClientSdkVersion = Hints?.ClientSdkVersion ?? ModuleScaffold.DefaultClientSdkVersion,
-        PackageSource = Hints?.PackageSource,
+        ClientSdkVersion = AppSettings.ModuleTemplates.ClientSdkVersion,
+        Sources = Template.Sources,
+        PilotSdkVersion = Template.PilotSdkVersion,
         DebugClient = DebugClient == ModuleScaffold.PilotIce ? ModuleScaffold.PilotIce : ModuleScaffold.PilotBim,
         Author = CurrentSession.GitLabUser?.Username ?? CurrentSession.PilotLogin,
     };
@@ -171,6 +176,6 @@ public class CreateModel : AppPageModel
         {
             Warnings.Add($"Список модулей не прочитан ({ex.Message}) - проверьте, что номер свободен.");
         }
-        Hints = await ModuleCreation.HintsAsync(git, AppSettings, ModuleKind, assemblies, ct);
+        Hints = await ModuleCreation.HintsAsync(ModuleKind, assemblies);
     }
 }

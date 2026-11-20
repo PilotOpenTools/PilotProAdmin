@@ -15,6 +15,7 @@
     <a class="action-link" href="#automation-ci">CI/CD</a>
     <a class="action-link" href="#reports">Отчёты</a>
     <a class="action-link" href="#checks">Проверки</a>
+    <a class="action-link" href="#module-templates">Шаблон модуля</a>
     <a class="action-link" href="#libraries">Библиотеки</a>
 </nav>
 <partial name="_ProdAdminBanner" model="Model" />
@@ -206,6 +207,56 @@
                 <span>Не отправлять при предупреждениях проверки сценария (неизвестные атрибуты, состояния, параметры). Ошибки блокируют всегда.</span>
             </label>
         </div>
+    </section>
+
+    <section class="card" id="module-templates">
+        <h2>Шаблон нового модуля</h2>
+        <p class="muted small">
+            Из этих настроек кнопка «Новый модуль» собирает каркас репозитория: <code>nuget.config</code>, версии SDK, клиент для отладки.
+            Уже созданные модули не меняются. Пакет <code>Pilot.ClientSdk</code> публикуется в nuget.org
+            (<a href="https://github.com/PilotOpenTools/PilotClientSdk" target="_blank" rel="noopener">PilotClientSdk</a>); в закрытом контуре
+            добавьте реестр пакетов своего GitLab с шаблоном <code>Pilot.*</code>. Логин и токен в адрес не пишите - вход настраивает разработчик у себя.
+        </p>
+        @foreach (var (kindTitle, prefix, tpl) in new[] { ("Клиентские модули", "Client", Model.Form.ModuleTemplates.Client), ("Серверные модули", "Server", Model.Form.ModuleTemplates.Server) })
+        {
+            <h3>@kindTitle</h3>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead><tr><th>Имя источника</th><th>Адрес (index.json)</th><th title="Через запятую, например Pilot.*. Пусто - все остальные пакеты">Пакеты</th></tr></thead>
+                    <tbody>
+                    @{ var rows = tpl.Sources.Concat(Enumerable.Range(0, 2).Select(_ => new ProAdmin.Settings.NuGetSourceSetting())).ToList(); }
+                    @for (var i = 0; i < rows.Count; i++)
+                    {
+                        <tr>
+                            <td><input name="Form.ModuleTemplates.@(prefix).Sources[@i].Key" value="@rows[i].Key" placeholder="@(i == 0 ? "nuget.org" : "cicd")" aria-label="Имя источника" /></td>
+                            <td><input name="Form.ModuleTemplates.@(prefix).Sources[@i].Url" value="@rows[i].Url" type="url" placeholder="@(i == 0 ? ProAdmin.Settings.ModuleTemplateSettings.NuGetOrg : "http://gitlab.local/api/v4/projects/ID/packages/nuget/index.json")" aria-label="Адрес источника" /></td>
+                            <td><input name="Form.ModuleTemplates.@(prefix).Sources[@i].Patterns" value="@rows[i].Patterns" placeholder="@(i == 0 ? "*" : "Pilot.*")" aria-label="Шаблоны пакетов" /></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <small class="muted">Пустая строка - удалить источник. Без источников - только nuget.org.</small>
+            <label class="field">
+                <span>Версия @(prefix == "Client" ? "Ascon.Pilot.SDK" : "Ascon.Pilot.ServerExtensions.SDK")</span>
+                <input name="Form.ModuleTemplates.@(prefix).PilotSdkVersion" value="@tpl.PilotSdkVersion" pattern="\d+\.\d+\.\d+" />
+            </label>
+        }
+        <label class="field">
+            <span>Версия Pilot.ClientSdk</span>
+            <input asp-for="Form.ModuleTemplates.ClientSdkVersion" pattern="\d+\.\d+\.\d+" />
+        </label>
+        <label class="check">
+            <input type="checkbox" asp-for="Form.ModuleTemplates.UseClientSdkByDefault" />
+            <span>Новый клиентский модуль по умолчанию на Pilot.ClientSdk (статистика в Grafana, окно загрузки модулей)</span>
+        </label>
+        <label class="field">
+            <span>Клиент для отладки (F5)</span>
+            <select asp-for="Form.ModuleTemplates.DebugClient">
+                <option value="Pilot-BIM">Pilot-BIM</option>
+                <option value="Pilot-ICE Enterprise">Pilot-ICE Enterprise</option>
+            </select>
+        </label>
     </section>
 
     <section class="card">

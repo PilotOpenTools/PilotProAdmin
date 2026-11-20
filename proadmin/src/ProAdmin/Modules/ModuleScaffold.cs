@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using ProAdmin.Settings;
 
 namespace ProAdmin.Modules;
 
@@ -26,8 +27,11 @@ public sealed record ModuleScaffoldRequest
 
     public string ClientSdkVersion { get; init; } = ModuleScaffold.DefaultClientSdkVersion;
 
-    /// <summary>Адрес реестра пакетов GitLab с Pilot.ClientSdk (…/api/v4/projects/ID/packages/nuget/index.json); null - образец в nuget.config.</summary>
-    public string? PackageSource { get; init; }
+    /// <summary>Источники пакетов nuget.config - из настройки «Шаблон нового модуля».</summary>
+    public IReadOnlyList<NuGetSourceSetting> Sources { get; init; } = ModuleTemplateSettings.DefaultSources();
+
+    /// <summary>Версия Ascon.Pilot.SDK / Ascon.Pilot.ServerExtensions.SDK.</summary>
+    public string PilotSdkVersion { get; init; } = ModuleTemplateSettings.DefaultPilotSdkVersion;
 
     /// <summary>Клиент Pilot для отладки F5 (Pilot-BIM или Pilot-ICE Enterprise).</summary>
     public string DebugClient { get; init; } = ModuleScaffold.PilotBim;
@@ -41,8 +45,7 @@ public sealed record ModuleScaffoldRequest
 /// </summary>
 public static partial class ModuleScaffold
 {
-    public const string PilotSdkVersion = "26.13.0";
-    public const string DefaultClientSdkVersion = "2.1.1";
+    public const string DefaultClientSdkVersion = ModuleTemplateSettings.DefaultClientSdkVersion;
     public const string PilotBim = "Pilot-BIM";
     public const string PilotIce = "Pilot-ICE Enterprise";
     public const string InitialVersion = "1.0.0";
@@ -75,8 +78,10 @@ public static partial class ModuleScaffold
             if (r.UseClientSdk && !VersionRegex().IsMatch(r.ClientSdkVersion ?? ""))
                 errors.Add("Версия Pilot.ClientSdk - X.Y.Z.");
         }
-        if (r.PackageSource is { Length: > 0 } source && (!Uri.TryCreate(source, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")))
-            errors.Add("Адрес реестра пакетов - http(s)://…");
+        if (r.Sources.Count == 0)
+            errors.Add("В шаблоне модулей нет источников пакетов (Настройки / «Шаблон нового модуля»).");
+        if (!VersionRegex().IsMatch(r.PilotSdkVersion ?? ""))
+            errors.Add("Версия Pilot SDK в шаблоне - X.Y.Z.");
         return errors;
     }
 
@@ -84,6 +89,7 @@ public static partial class ModuleScaffold
     public static List<(string Path, string Content)> Files(ModuleScaffoldRequest r)
     {
         var files = r.Kind == ModuleKind.Server ? ServerFiles(r) : ClientFiles(r);
+        files.Add(("nuget.config", NuGetConfig(r.Sources)));
         files.Add((".gitignore", GitIgnore));
         files.Add(("CHANGELOG.md", ChangelogText(r)));
         files.Add(("README.md", Readme(r)));
@@ -103,8 +109,6 @@ public static partial class ModuleScaffold
             ("Pilot/StartPoint.cs", r.UseClientSdk ? ClientStartWithSdk(r) : ClientStartPlain(r)),
             ("Pilot/ObjectMenu.cs", r.UseClientSdk ? ClientMenuWithSdk(r) : ClientMenuPlain(r)),
         };
-        if (r.UseClientSdk)
-            files.Add(("nuget.config", NuGetConfig(r.PackageSource)));
         return files;
     }
 
@@ -148,9 +152,9 @@ public static partial class ModuleScaffold
 
         	<!-- Pilot SDK уже загружен в клиенте: нужен только для компиляции, в zip не попадает -->
         	<ItemGroup>
-        		<PackageReference Include="Ascon.Pilot.SDK" Version="{{PilotSdkVersion}}" ExcludeAssets="runtime" />
+        		<PackageReference Include="Ascon.Pilot.SDK" Version="{{r.PilotSdkVersion}}" ExcludeAssets="runtime" />
         {{(r.UseClientSdk ? $"""
-        		<!-- Pilot.ClientSdk (реестр пакетов GitLab, nuget.config): только для компиляции, в клиенте его загружает модуль 113Pilot.ClientSdk.ext2 -->
+        		<!-- Pilot.ClientSdk (nuget.org или источник из nuget.config): только для компиляции, в клиенте его загружает модуль 113Pilot.ClientSdk.ext2 -->
         		<PackageReference Include="Pilot.ClientSdk" Version="{r.ClientSdkVersion}" />
 
         """ : "")}}	</ItemGroup>
@@ -349,39 +353,48 @@ public static partial class ModuleScaffold
 
         """;
 
-    private static string NuGetConfig(string? source)
+    /// <summary>
+    /// nuget.config из источников шаблона: явный список (clear) - сборка не зависит от источников машины.
+    /// Если у источника заданы шаблоны пакетов, добавляется packageSourceMapping, источники без шаблонов получают «*».
+    /// </summary>
+    internal static string NuGetConfig(IReadOnlyList<NuGetSourceSetting> sources)
     {
-        var url = string.IsNullOrWhiteSpace(source) ? "http://gitlab.example.local/api/v4/projects/PROJECT_ID/packages/nuget/index.json" : source.Trim();
-        var insecure = url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? " allowInsecureConnections=\"true\"" : "";
-        var note = string.IsNullOrWhiteSpace(source)
-            ? "  Адрес ниже - ОБРАЗЕЦ: проект с пакетом Pilot.ClientSdk в GitLab не найден. Подставьте адрес GitLab и id проекта (Settings / General / Project ID).\n"
-            : "  Адрес подставила веб-админка при создании репозитория: реестр пакетов проекта Pilot.ClientSdk этого GitLab.\n";
-        return $"""
+        var list = sources.Where(s => !s.IsEmpty).ToList();
+        var sb = new System.Text.StringBuilder();
+        sb.Append("""
             <?xml version="1.0" encoding="utf-8"?>
             <!--
-              Источники пакетов модуля. cicd - реестр пакетов GitLab с Pilot.ClientSdk (и другими пакетами Pilot.*).
-            {note}  CI входит в источник токеном job сам. На своей машине один раз добавьте вход личным токеном GitLab (read_api):
-                dotnet nuget update source cicd -u <логин GitLab> -p <токен> -configfile %AppData%\NuGet\NuGet.Config
-              (если источника cicd там ещё нет - dotnet nuget add source <адрес ниже> -n cicd -u … -p …).
-              Пакет есть и в релизах https://github.com/PilotOpenTools/PilotClientSdk/releases.
+              Источники пакетов модуля - из настройки веб-админки «Шаблон нового модуля».
+              Pilot.ClientSdk публикуется в nuget.org (https://www.nuget.org/packages/Pilot.ClientSdk).
+              Источнику с входом (реестр GitLab) CI отдаёт токен job сам; на своей машине один раз добавьте вход личным токеном:
+                dotnet nuget update source <имя> -u <логин> -p <токен> -configfile %AppData%\NuGet\NuGet.Config
             -->
             <configuration>
               <packageSources>
                 <clear />
-                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-                <add key="cicd" value="{Xml(url)}"{insecure} />
-              </packageSources>
-              <packageSourceMapping>
-                <packageSource key="nuget.org">
-                  <package pattern="*" />
-                </packageSource>
-                <packageSource key="cicd">
-                  <package pattern="Pilot.*" />
-                </packageSource>
-              </packageSourceMapping>
-            </configuration>
 
-            """;
+            """);
+        foreach (var s in list)
+        {
+            var insecure = s.Url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? " allowInsecureConnections=\"true\"" : "";
+            sb.Append($"    <add key=\"{Xml(s.Key)}\" value=\"{Xml(s.Url)}\"{insecure} />\n");
+        }
+        sb.Append("  </packageSources>\n");
+        if (list.Any(s => s.Patterns.Length > 0))
+        {
+            sb.Append("  <packageSourceMapping>\n");
+            foreach (var s in list)
+            {
+                sb.Append($"    <packageSource key=\"{Xml(s.Key)}\">\n");
+                var patterns = s.Patterns.Length > 0 ? s.Patterns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : new[] { "*" };
+                foreach (var pattern in patterns)
+                    sb.Append($"      <package pattern=\"{Xml(pattern)}\" />\n");
+                sb.Append("    </packageSource>\n");
+            }
+            sb.Append("  </packageSourceMapping>\n");
+        }
+        sb.Append("</configuration>\n");
+        return sb.ToString();
     }
 
     // ------------------------------------------------------------------ серверный модуль
@@ -422,7 +435,7 @@ public static partial class ModuleScaffold
 
         	<!-- Ascon.Pilot.* и MEF уже есть в Pilot-Server: только для компиляции, в архив не кладём -->
         	<ItemGroup>
-        		<PackageReference Include="Ascon.Pilot.ServerExtensions.SDK" Version="{{PilotSdkVersion}}" ExcludeAssets="runtime" />
+        		<PackageReference Include="Ascon.Pilot.ServerExtensions.SDK" Version="{{r.PilotSdkVersion}}" ExcludeAssets="runtime" />
         		<PackageReference Include="System.ComponentModel.Composition" Version="4.7.0" ExcludeAssets="runtime" />
         	</ItemGroup>
 
@@ -532,7 +545,7 @@ public static partial class ModuleScaffold
             : $"""
               F5 в Visual Studio собирает Debug, копирует модуль в `%LocalAppData%\ASCON\{r.DebugClient}\Development\{asm}` и запускает клиент:
               он подхватит модуль без загрузки на сервер. `-p:CopyToPilot=false` - не копировать.
-              {(r.UseClientSdk ? "\nНа сервере пользователю должен быть назначен `113Pilot.ClientSdk.ext2` ([PilotClientSdk](https://github.com/PilotOpenTools/PilotClientSdk)): без него модуль не загрузится. Пакет `Pilot.ClientSdk` берётся из реестра GitLab (`nuget.config`); вход в источник на своей машине - [руководство PilotClientSdk, 4.2](https://github.com/PilotOpenTools/PilotClientSdk/blob/main/docs/guide.md#42-источник-gitlab-на-своей-машине).\n" : "")}
+              {(r.UseClientSdk ? "\nНа сервере пользователю должен быть назначен `113Pilot.ClientSdk.ext2` ([PilotClientSdk](https://github.com/PilotOpenTools/PilotClientSdk)): без него модуль не загрузится. Пакет `Pilot.ClientSdk` берётся из источников `nuget.config` (по умолчанию [nuget.org](https://www.nuget.org/packages/Pilot.ClientSdk)).\n" : "")}
               """;
         return $"""
             # {r.Title.Trim()}

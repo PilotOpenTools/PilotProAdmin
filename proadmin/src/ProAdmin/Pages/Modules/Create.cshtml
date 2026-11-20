@@ -90,15 +90,8 @@
                     На Pilot.ClientSdk: статистика действий в Grafana, окно «Загрузка модулей», общие методы SDK
                 </label>
                 <small class="muted">
-                    @if (hints?.PackageSource is { } source)
-                    {
-                        <text>Пакет <code>Pilot.ClientSdk @(hints.ClientSdkVersion ?? ModuleScaffold.DefaultClientSdkVersion)</code> - из реестра проекта <code>@hints.ClientSdkProject</code>; адрес <code>@source</code> попадёт в nuget.config.</text>
-                    }
-                    else
-                    {
-                        <text>Проект Pilot.ClientSdk в группе не найден: в nuget.config будет образец адреса, его нужно заменить, иначе CI не восстановит пакет.
-                            На серверах модуль <a href="/OpenTools">PilotClientSdk</a> должен быть назначен пользователям.</text>
-                    }
+                    Пакет <code>Pilot.ClientSdk @Model.AppSettings.ModuleTemplates.ClientSdkVersion</code>. На серверах модуль
+                    <a href="/OpenTools">PilotClientSdk</a> должен быть назначен пользователям.
                 </small>
 
                 <label class="field">
@@ -119,6 +112,17 @@
                     }
                 </select>
             </label>
+
+            <div class="field">
+                <span>Источники пакетов (nuget.config)</span>
+                <ul class="muted small">
+                    @foreach (var s in Model.Template.Sources)
+                    {
+                        <li><code>@s.Key</code> - @s.Url@(s.Patterns.Length > 0 ? $" ({s.Patterns})" : "")</li>
+                    }
+                </ul>
+                <small class="muted">Pilot SDK @Model.Template.PilotSdkVersion. Меняется в <a href="/Settings#module-templates">Настройках / «Шаблон нового модуля»</a>.</small>
+            </div>
 
             <label class="check">
                 <input type="checkbox" asp-for="DeployToTest" />
@@ -146,8 +150,9 @@
                 <li><code>Код.csproj</code> - net48 + WPF, Pilot SDK только для компиляции, Release собирает <code>bin/NNNКод.ext2-1.0.0.zip</code>, Debug копирует модуль в папку разработки клиента.</li>
                 <li><code>Pilot/StartPoint.cs</code> - точка входа (<code>IDataPlugin</code>, с ClientSdk - ещё <code>IModule</code>).</li>
                 <li><code>Pilot/ObjectMenu.cs</code> - пункт контекстного меню объектов: пример действия со статистикой.</li>
-                <li><code>nuget.config</code> - реестр пакетов GitLab с Pilot.ClientSdk (если модуль на нём).</li>
+
             }
+            <li><code>nuget.config</code> - источники пакетов из настройки «Шаблон нового модуля».</li>
             <li><code>AssemblyInfo.cs</code> - «Наименование» (AssemblyProduct), по нему админка связывает модуль на сервере с репозиторием.</li>
             <li><code>CHANGELOG.md</code> (1.0.0), <code>README.md</code> со схемой веток и отладкой, <code>.gitignore</code>, решение <code>.sln</code>.</li>
             <li>В <code>dev</code> - <code>.gitlab-ci.yml</code> из шаблона админки; в <code>main</code> он придёт с первым релизом.</li>

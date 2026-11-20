@@ -5,9 +5,8 @@ using ProAdmin.Settings;
 
 namespace ProAdmin.Modules;
 
-/// <summary>Что админка знает о стенде для формы нового модуля: свободный номер, реестр пакетов с Pilot.ClientSdk.</summary>
-public sealed record ModuleCreationHints(string? SuggestedNumber, IReadOnlySet<string> UsedNumbers, string? PackageSource, string? ClientSdkProject,
-    string? ClientSdkVersion);
+/// <summary>Занятые номера клиентских модулей стенда и следующий свободный.</summary>
+public sealed record ModuleCreationHints(string? SuggestedNumber, IReadOnlySet<string> UsedNumbers);
 
 /// <summary>
 /// Новый модуль в группе модулей GitLab: проект, каркас в main, ветка dev с шаблоном CI, защита веток.
@@ -18,8 +17,7 @@ public static partial class ModuleCreation
     /// <summary>Защита как у подключённых модулей: dev и main только через Merge Request, release/* - коммиты админки.</summary>
     private const int DevPushLevel = 0, DevMergeLevel = 30, ReleasePushLevel = 40, ReleaseMergeLevel = 40;
 
-    public static async Task<ModuleCreationHints> HintsAsync(GitLabClient git, AdminSettings settings, ModuleKind kind,
-        IEnumerable<string> knownAssemblies, CancellationToken ct)
+    public static Task<ModuleCreationHints> HintsAsync(ModuleKind kind, IEnumerable<string> knownAssemblies)
     {
         var used = knownAssemblies.Select(a => LeadingNumber().Match(Path.GetFileName(a ?? ""))).Where(m => m.Success)
             .Select(m => m.Value).ToHashSet();
@@ -30,29 +28,7 @@ public static partial class ModuleCreation
             suggested = next.ToString("000");
         }
 
-        // Реестр пакетов с Pilot.ClientSdk - проект общего модуля в группе клиентских модулей.
-        string? source = null, sdkProject = null, sdkVersion = null;
-        if (settings.ModulesGroupPath is { } group && GitLabLocation.TryParse(settings.ModulesGitLabGroupUrl, out var location, out _))
-        {
-            try
-            {
-                var project = (await git.ListGroupProjectsAsync(group, "clientsdk", ct) ?? new())
-                    .FirstOrDefault(p => p.Name.Contains("ClientSdk", StringComparison.OrdinalIgnoreCase) || p.Path.Contains("clientsdk", StringComparison.OrdinalIgnoreCase));
-                if (project is not null)
-                {
-                    sdkProject = project.PathWithNamespace;
-                    source = $"{location!.BaseUrl.TrimEnd('/')}/api/v4/projects/{project.Id}/packages/nuget/index.json";
-                    var csproj = await git.FindFileAsync(project.PathWithNamespace, "Pilot.ClientSdk.csproj", project.DefaultBranch ?? ModuleBranches.Main, ct);
-                    if (csproj is not null && VersionTag().Match(csproj.Text) is { Success: true } v)
-                        sdkVersion = v.Groups[1].Value;
-                }
-            }
-            catch (GitLabApiException)
-            {
-                // нет доступа к группе - форма предложит образец адреса
-            }
-        }
-        return new ModuleCreationHints(suggested, used, source, sdkProject, sdkVersion);
+        return Task.FromResult(new ModuleCreationHints(suggested, used));
     }
 
     /// <summary>Создать репозиторий модуля. Журнал - в <paramref name="log"/> (уровень, текст, ссылка).</summary>
@@ -107,6 +83,4 @@ public static partial class ModuleCreation
     [GeneratedRegex(@"^\d{3}(?=\D)")]
     private static partial Regex LeadingNumber();
 
-    [GeneratedRegex(@"<Version>\s*(\d+\.\d+\.\d+)\s*</Version>")]
-    private static partial Regex VersionTag();
 }
