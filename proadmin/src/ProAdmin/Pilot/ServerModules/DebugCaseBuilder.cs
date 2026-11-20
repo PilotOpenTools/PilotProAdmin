@@ -7,7 +7,7 @@ namespace ProAdmin.Pilot.ServerModules;
 /// <summary>
 /// Кейс локальной отладки (debug.json для debug): сервер контура, логин разработчика и - из автоматизаций
 /// контура - событие, sourceTypes и params, с которыми сервер вызывает активность. Пароль в файл не пишется.
-/// Формат - server-extensions/Debug/DebugCase.cs.
+/// Формат - DebugCase.cs в https://github.com/PilotOpenTools/PilotServerDebug.
 /// </summary>
 public static class DebugCaseBuilder
 {
