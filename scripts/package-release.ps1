@@ -7,7 +7,10 @@ param(
     [ValidatePattern('^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+$')]
     [string]$Repository = 'ghcr.io/pilotopentools/pilotproadmin',
     [string]$OutputDirectory,
-    [switch]$WithPortable
+    [switch]$WithPortable,
+    # Offline: образы PilotProAdmin и PilotMigration собираются из этого дерева и кладутся рядом с install.ps1
+    # (PilotProAdmin-vX.Y.Z-offline.zip): установка не ходит за ними в GHCR. Остальные образы docker скачивает как обычно.
+    [switch]$Offline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,8 +44,9 @@ try {
             'monitoring/grafana/dashboards/pilot-automation.json' = "$metrics/automation-collector/grafana_dashboard_pilot_automation.json"
             'monitoring/grafana/dashboards/pilot-reports.json' = "$metrics/report-collector/grafana/dashboard-pilot-reports.json"
         }
-        foreach ($file in (git -C $root ls-files -- "$install/init" "$metrics/config" "$metrics/report-collector" "$metrics/automation-collector")) {
-            $entry = $file.Replace("$install/init/", 'init/').Replace("$metrics/config/", 'monitoring/')
+        # ci-checks/ - проект общих проверок CI (pilot-ci/checks): установщик создаёт его в своём GitLab.
+        foreach ($file in (git -C $root ls-files -- "$install/init" "$metrics/config" "$metrics/report-collector" "$metrics/automation-collector" 'gitlab/ci-checks')) {
+            $entry = $file.Replace("$install/init/", 'init/').Replace("$metrics/config/", 'monitoring/').Replace('gitlab/ci-checks/', 'ci-checks/')
             $entry = $entry.Replace("$metrics/report-collector/", 'collectors/report-collector/')
             $entry = $entry.Replace("$metrics/automation-collector/", 'collectors/automation-collector/')
             $files[$entry] = $file
@@ -78,6 +82,39 @@ try {
     } finally { $zip.Dispose() }
 } finally { $stream.Dispose() }
 $assets = @($name)
+if ($Offline) {
+    $images = @("${Repository}:$Version", "$Repository-migration:$Version")
+    foreach ($pair in @(@($images[0], 'proadmin'), @($images[1], 'proadmin/migration'))) {
+        docker build --platform linux/amd64 --tag $pair[0] --label "org.opencontainers.image.version=$Version" (Join-Path $root $pair[1])
+        if ($LASTEXITCODE) { throw "Не собран образ $($pair[0])." }
+    }
+    # Имя то же, что у отдельного архива образов в релизе: install.ps1 ищет его рядом с собой.
+    $imagesName = "PilotProAdmin-v$Version-linux-amd64-images.tar.gz"
+    $tar = Join-Path $output "PilotProAdmin-v$Version-images.tar"
+    docker save --output $tar @images
+    if ($LASTEXITCODE) { throw 'docker save завершился с ошибкой.' }
+    $imagesPath = Join-Path $output $imagesName
+    $in = [IO.File]::OpenRead($tar)
+    try {
+        $out = [IO.File]::Create($imagesPath)
+        try {
+            $gz = [IO.Compression.GZipStream]::new($out, [IO.Compression.CompressionLevel]::Optimal)
+            try { $in.CopyTo($gz) } finally { $gz.Dispose() }
+        } finally { $out.Dispose() }
+    } finally { $in.Dispose() }
+    Remove-Item -LiteralPath $tar
+    # Тот же lite-архив плюс образы; .tar.gz уже сжат - кладём без повторного сжатия.
+    $offlineName = "PilotProAdmin-v$Version-offline.zip"
+    $offlinePath = Join-Path $output $offlineName
+    Copy-Item -LiteralPath $path -Destination $offlinePath -Force
+    $stream = [IO.File]::Open($offlinePath, [IO.FileMode]::Open)
+    try {
+        $zip = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Update)
+        try { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $imagesPath, $imagesName, [IO.Compression.CompressionLevel]::NoCompression) }
+        finally { $zip.Dispose() }
+    } finally { $stream.Dispose() }
+    $assets += $imagesName, $offlineName
+}
 if ($WithPortable) {
     & (Join-Path $PSScriptRoot 'package-windows-portable.ps1') -Version $Version -OutputDirectory $output
     $assets += "PilotProAdmin-v$Version-win-x64-portable.zip"

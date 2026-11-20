@@ -75,7 +75,7 @@ public class IndexModel : AppPageModel
                 TempData["FlashError"] = $"Для полной копии введите имя базы приёмника «{plan.TargetDatabase}» точно.";
                 return Page();
             }
-            var run = await _client.StartAsync(request, CurrentSession.PilotLogin, ct);
+            var run = await _client.StartAsync(request, CurrentSession.Actor, ct);
             return RedirectToPage("/Migration/Run", new { id = run.Id });
         }
         catch (MigrationServiceException ex)
@@ -93,7 +93,7 @@ public class IndexModel : AppPageModel
             if (s is not null)
             {
                 s.Enabled = !s.Enabled;
-                await _client.SaveScheduleAsync(s, CurrentSession.PilotLogin, ct);
+                await _client.SaveScheduleAsync(s, CurrentSession.Actor, ct);
                 TempData["Flash"] = $"Расписание «{s.Name}» {(s.Enabled ? "включено" : "выключено")}.";
             }
         }

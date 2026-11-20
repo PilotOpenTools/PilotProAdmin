@@ -44,7 +44,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.SlidingExpiration = true;
         options.Events.OnValidatePrincipal = async context =>
         {
-            // Сессия живёт в памяти: после перезапуска или выхода cookie становится недействительной.
+            // Сессии GitLab переживают перезапуск (sessions.dat); после выхода или простоя cookie недействительна.
             var vault = context.HttpContext.RequestServices.GetRequiredService<SessionVault>();
             var sid = context.Principal?.FindFirst(SessionVault.SidClaim)?.Value;
             if (sid is null || !vault.Touch(sid))
@@ -68,11 +68,11 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.ConfigureFilter(new ProAdmin.Pages.PilotCredentialsFilter());
     options.Conventions.AllowAnonymousToPage("/Error");
     options.Conventions.AllowAnonymousToPage("/Process");
-    // Запись в общих настройках, миграции и настройках серверов - только вошедшим администратором Pilot прода.
+    // Запись в общих настройках, миграции и настройках серверов - только администратору админки.
     options.Conventions.AddFolderApplicationModelConvention("/Migration", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
     options.Conventions.AddPageApplicationModelConvention("/Servers/Index", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
     options.Conventions.AddPageApplicationModelConvention("/Settings", model => model.Filters.Add(
-        new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries") { AllowGitLabAdminWithoutProd = true }));
+        new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries")));
 });
 
 builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.FromSeconds(60))

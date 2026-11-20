@@ -89,15 +89,15 @@ public class IndexModel : AppPageModel
 
     /// <summary>
     /// Новая версия самого ServerHost: zip записывается в объект хоста в базе, как при ручной установке. Pilot-Server
-    /// читает его только при старте, поэтому версия вступает в силу после перезапуска. Только вошедшему администратором прода.
+    /// читает его только при старте, поэтому версия вступает в силу после перезапуска. Только администратору админки.
     /// </summary>
     public async Task<IActionResult> OnPostUpdateHostAsync(CancellationToken ct)
     {
         Prepare();
-        if (Current is not null && !IsProdAdmin)
+        if (Current is not null && !IsAdmin)
         {
-            _logger.LogWarning("Отказ (403): обновление ServerHost - вход {Login} без администратора Pilot контура «Прод», адрес {Address}",
-                CurrentSession.PilotLogin, HttpContext.Connection.RemoteIpAddress);
+            _logger.LogWarning("Отказ (403): обновление ServerHost - {Login} не администратор админки, адрес {Address}",
+                CurrentSession.Actor, HttpContext.Connection.RemoteIpAddress);
             return StatusCode(StatusCodes.Status403Forbidden);
         }
         if (await GuardAsync(ct) is { } deny)
@@ -139,7 +139,7 @@ public class IndexModel : AppPageModel
             return Back();
         }
 
-        var actor = CurrentSession.GitLabUser?.Username ?? CurrentSession.PilotLogin;
+        var actor = CurrentSession.Actor;
         var job = new PublishJob
         {
             Operation = "обновление ServerHost",
@@ -240,6 +240,8 @@ public class IndexModel : AppPageModel
         Prepare();
         if (Current is null)
             return Back();
+        if (UsesServiceAccounts)
+            return NotFound(); // при входе через GitLab учётки Pilot - только служебные из «Настроек»
         if (BlockedCredentialAttempt() is { } blocked)
             return blocked;
         var login = new PilotLogin(EnvLogin?.Trim() ?? "", EnvPassword ?? "");
@@ -348,7 +350,7 @@ public class IndexModel : AppPageModel
 
     private async Task<IActionResult> ModuleOpAsync(HostRequest request, string done, CancellationToken ct)
     {
-        request.Actor = CurrentSession.GitLabUser?.Username ?? CurrentSession.PilotLogin;
+        request.Actor = CurrentSession.Actor;
         try
         {
             var response = await _gateway.InvokeAsync(Current!.PilotUrl, Login(), AppSettings.ReportsLicenseType, request, ct);

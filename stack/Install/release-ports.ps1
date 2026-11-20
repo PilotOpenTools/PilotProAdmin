@@ -61,9 +61,11 @@ function Select-ReleasePorts {
         $container = $service.Value.container_name
         $owned = $false
         if ($container -in $existingNames) {
-            $owner = Run docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' $container
-            $ownerProject = Run docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $container
-            $owned = $owner -and $owner -ne '<no value>' -and $ownerProject -eq $compose.name -and
+            # Метки целиком в JSON: Windows PowerShell 5.1 срезает кавычки внутри аргумента, и шаблон с "com.docker…" ломается.
+            $labels = (Run docker inspect --format '{{json .Config.Labels}}' $container | Out-String) | ConvertFrom-Json
+            $owner = if ($labels) { $labels.'com.docker.compose.project.working_dir' }
+            $ownerProject = if ($labels) { $labels.'com.docker.compose.project' }
+            $owned = $owner -and $ownerProject -eq $compose.name -and
                 [IO.Path]::GetFullPath($owner) -eq [IO.Path]::GetFullPath($PSScriptRoot)
             if (-not $owned) { throw "Контейнер $container уже принадлежит другой установке. Подключите существующий сервис либо выберите отдельную машину." }
         }

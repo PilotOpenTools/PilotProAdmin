@@ -31,9 +31,9 @@ public sealed class JobStore
 
     public PublishJob? Get(Guid id) => _jobs.TryGetValue(id, out var job) ? job : null;
 
-    /// <summary>Операцию видит администратор прода и тот, кто её запустил (по входу в Pilot или по пользователю GitLab).</summary>
-    public static bool CanSee(PublishJob job, Sessions.UserSession session, bool isProdAdmin) =>
-        isProdAdmin ||
+    /// <summary>Операцию видит администратор админки и тот, кто её запустил (по входу в Pilot или по пользователю GitLab).</summary>
+    public static bool CanSee(PublishJob job, Sessions.UserSession session, bool isAdmin) =>
+        isAdmin ||
         (session.LoginCredential is { } credential &&
          string.Equals(job.PilotUser, credential.Login, StringComparison.OrdinalIgnoreCase)) ||
         (job.GitLabUser is { Length: > 0 } gl && string.Equals(gl, session.GitLabUser?.Username, StringComparison.OrdinalIgnoreCase));

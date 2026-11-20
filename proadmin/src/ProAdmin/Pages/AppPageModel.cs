@@ -103,7 +103,7 @@ public abstract class AppPageModel : PageModel
     {
         var address = HttpContext.Connection.RemoteIpAddress?.ToString();
         HttpContext.RequestServices.GetRequiredService<ILogger<AppPageModel>>().LogWarning(
-            "Учётка контура {Env} не принята: сессия {Login}, адрес {Address}", env, CurrentSession.PilotLogin, address);
+            "Учётка контура {Env} не принята: сессия {Login}, адрес {Address}", env, CurrentSession.Actor, address);
         Limiter.Fail(ProAdmin.Infrastructure.AuthFailureLimiter.LoginScope, address);
     }
 
@@ -149,10 +149,13 @@ public abstract class AppPageModel : PageModel
     }
 
     /// <summary>
-    /// Вход администратором Pilot контура «Прод» (при настроенном проде): только такая сессия меняет общие настройки,
-    /// всё в разделе «Миграция» и настройки серверов. Остальные видят эти страницы только для чтения.
+    /// Администратор админки (<see cref="Sessions.UserSession.IsAdmin"/>): только он меняет общие настройки, всё в разделе
+    /// «Миграция» и настройки серверов. Остальные видят эти страницы только для чтения.
     /// </summary>
-    public bool IsProdAdmin => CurrentSession.IsProdAdmin(AppSettings);
+    public bool IsAdmin => CurrentSession.IsAdmin(AppSettings);
+
+    /// <summary>С Pilot работаем служебными учётками из настроек (вход через GitLab), а не своим входом в Pilot.</summary>
+    public bool UsesServiceAccounts => CurrentSession.UsesServiceAccounts;
 
     protected Pilot.PilotLogin ReportLogin(string env) => Vault.GetReportLogin(CurrentSession, env);
 

@@ -509,11 +509,71 @@ exit /b 0
     $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod', '-SkipLoad')
     $log = Get-Content $env:STUB_LOG -Raw
     Check ($r.Code -eq 0 -and $log -notmatch 'tar xzf|ls -A /v') 'бэкап без части rustfs: без ошибок, том не трогается (прежнее поведение)'
+
+    # Бэкап времён MinIO: папка minio\<контур>\pilot-ice-ru, в settings.xml адрес minio-<контур>, учётка Pilot только в .env.
+    Snap
+    New-Item -ItemType Directory "$snapRoot\minio\prod\pilot-ice-ru\10\199\obj" -Force | Out-Null
+    [IO.File]::WriteAllText("$snapRoot\minio\prod\pilot-ice-ru\10\199\obj\xl.meta", 'm')
+    [IO.File]::WriteAllText("$snapRoot\pilot\prod\pilot-server\settings\settings.xml", '<Configuration><FileArchiveParametersS3 AccessKeyId="pilot" Url="http://minio-prod:9000" Bucket="pilot-ice-ru" /></Configuration>')
+    [IO.File]::AppendAllText("$snapRoot\admin\env\prod\.env", "MINIO_PILOT_USER=pilot`nMINIO_PILOT_SECRET=pilotS3secret98765`n")
+    $w = Fresh 'minio-legacy'
+    $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod', '-SkipLoad')
+    if ($r.Code) { Write-Host $r.Out }
+    $log = Get-Content $env:STUB_LOG -Raw
+    $xml = [IO.File]::ReadAllText("$($w.Data)/prod/pilot-server/settings/settings.xml")
+    Check ($r.Code -eq 0 -and $xml -match 'Url="http://rustfs-prod:9000"' -and $xml -notmatch 'minio-prod') 'бэкап MinIO: адрес S3-архива в settings.xml заменён на rustfs-prod'
+    Check ($log -match '-v cicd_rustfs_prod:/v -v \S+\.restore-minio:/b:ro rustfs/rustfs:1\.0\.5 -c "mkdir -p /v/pilot-ice-ru && cp -r /b/pilot-ice-ru/\. /v/pilot-ice-ru/ && chown 10001:10001 /v && chown -R 10001:10001 /v/pilot-ice-ru"') 'бэкап MinIO: папка бакета копируется в том cicd_rustfs_prod, владелец 10001 (и корень тома)'
+    $cp = $log.IndexOf('cp -r /b/pilot-ice-ru'); $cu = $log.IndexOf('--remove-orphans'); $ua = $log.IndexOf('rc admin user add')
+    Check ($cp -ge 0 -and $cp -lt $cu -and $cu -lt $ua) 'бэкап MinIO: копирование до compose up, учётка Pilot - после (шаг «Бакеты RustFS»)'
+    Check ($log -match '-e PILOT_U -e PILOT_S -e PILOT_POLICY' -and $log -notmatch 'pilotS3secret98765') 'учётка Pilot: секрет передаётся окружением, в аргументах docker его нет'
+    Check ($r.Out -match 'rustfs-prod: учётка pilot' -and -not (Test-Path "$($w.Data)/.restore-minio")) 'учётка pilot заведена; промежуточная копия удалена'
 }
 finally {
     $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne "$tmp\stub" }) -join ';'
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
+
+# --- база Pilot из файловой базы: разбор пути (папка, .zip, путь внутри .zip) и распаковка ---
+Write-Host "`nФайловая база Pilot: путь к источнику"
+foreach ($name in 'Resolve-PilotDbSource', 'Copy-PilotDbSource', 'Copy-Tree') {
+    $f = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)[0]
+    if (-not $f) { throw "В install.ps1 нет функции $name" }
+    Invoke-Expression $f.Extent.Text
+}
+$onLinux = $false
+$dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-selftest-" + [guid]::NewGuid().ToString('N'))
+try {
+    foreach ($b in 'one', 'two') {
+        New-Item -ItemType Directory -Force "$dbTmp\src\Databases\$b\FileArchive\10\199" | Out-Null
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\base.dbp", $b)
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\FileArchive\x.pilotfa", '')
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\FileArchive\10\199\body", 'b')
+    }
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $zipPath = "$dbTmp\Databases.zip"
+    # Записи с \ в именах - как в архивах, собранных в Windows.
+    $zs = [IO.File]::Create($zipPath); $za = New-Object IO.Compression.ZipArchive($zs, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem "$dbTmp\src" -Recurse -File) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $file.FullName, $file.FullName.Substring("$dbTmp\src\".Length))
+        }
+    } finally { $za.Dispose(); $zs.Dispose() }
+    $err = { param($p) try { Resolve-PilotDbSource $p | Out-Null; '' } catch { $_.Exception.Message } }
+    Check ((Resolve-PilotDbSource "$dbTmp\src\Databases\one").Dir -eq "$dbTmp\src\Databases\one") 'папка базы'
+    Check ((Resolve-PilotDbSource "`"$dbTmp\src\Databases\one\`"").Dir -eq "$dbTmp\src\Databases\one") 'папка в кавычках и с \ в конце'
+    Check ((Resolve-PilotDbSource "$dbTmp\src\Databases\one\base.dbp").Dir -eq "$dbTmp\src\Databases\one") 'путь к самому base.dbp'
+    Check ((Resolve-PilotDbSource "$zipPath\Databases\two\base.dbp").Inner -eq 'Databases/two') 'путь к base.dbp внутри .zip'
+    Check ((& $err "$dbTmp\src") -match 'несколько баз') 'папка с двумя базами - отказ'
+    Check ((& $err "$dbTmp\nope") -match 'Не найдено') 'нет пути - отказ'
+    $z = Resolve-PilotDbSource "$zipPath\Databases\two"
+    Check ($z.Zip -eq $zipPath -and $z.Inner -eq 'Databases/two') 'путь внутри .zip (записи с \)'
+    Check ((& $err $zipPath) -match 'несколько баз') '.zip с двумя базами без пути - отказ'
+    Check ((& $err "$zipPath\Databases\three") -match 'нет base.dbp') 'нет базы внутри .zip - отказ'
+    Copy-PilotDbSource $z "$dbTmp\out"
+    Check ((Test-Path "$dbTmp\out\base.dbp") -and [IO.File]::ReadAllText("$dbTmp\out\base.dbp") -eq 'two' -and (Test-Path "$dbTmp\out\FileArchive\10\199\body") -and (Test-Path "$dbTmp\out\FileArchive\x.pilotfa")) 'распаковка базы и архива из .zip'
+    Check (-not (Test-Path "$dbTmp\out\Databases")) 'из .zip берётся только выбранная база'
+} finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
+
 Write-Host ''
 if ($failed) { Write-Host "НЕ ПРОЙДЕНО: $failed" -ForegroundColor Red; exit 1 }
 Write-Host 'ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' -ForegroundColor Green

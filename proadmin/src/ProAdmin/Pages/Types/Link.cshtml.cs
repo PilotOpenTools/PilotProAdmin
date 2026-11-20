@@ -85,7 +85,7 @@ public class LinkModel : AppPageModel
             TargetSha = target.Sha,
             TargetBranch = target.Branch,
             TargetTitle = target.Title,
-            CreatedBy = CurrentSession.PilotLogin,
+            CreatedBy = CurrentSession.Actor,
         });
         TempData["Flash"] = $"«{ChangeTitle}» поедет на стейдж и прод вместе с {kind.Title().ToLowerInvariant()} «{Selected.Name}» " +
                             $"({(target.Sha is not null ? ModuleDeploy.Short(target.Sha) : target.Branch)} {target.Title}).";

@@ -48,7 +48,11 @@ else if (catalog is not null)
     {
         var env = ReportCatalog.FindEnv(Model.AppSettings, envKey)!;
         <div class="alert alert-error">@env.Title: @error.Message</div>
-        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication && Model.UsesServiceAccounts)
+        {
+            <partial name="_ServiceAccountHint" model="env.Title" />
+        }
+        else if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
         {
             <section class="card narrow-card">
                 <h2>Вход в базу сервера «@env.Title» для отчётов</h2>

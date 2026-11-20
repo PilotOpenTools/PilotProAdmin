@@ -46,6 +46,14 @@ rc_bucket() {  # $1 - сеть, $2 - контейнер RustFS, $3 - логин,
     *) RC_HOST_m="http://$3:$4@$2:9000" docker run --rm --network "$1" -e RC_HOST_m --entrypoint rc "$RUSTFS_IMG" mb --ignore-existing m/pilot-ice-ru ;;
   esac
 }
+# Учётка Pilot с доступом только к бакету pilot-ice-ru (как в shared/rotate-contour-secrets.ps1). Значения - через окружение внутри sh -c.
+# Повтор для существующих учётки и политики проверен на RustFS 1.0.5; «политика уже привязана» у attach - не ошибка.
+rc_pilot_user() {  # $1 - сеть, $2 - контейнер RustFS, $3 - логин root, $4 - пароль root, $5 - учётка Pilot, $6 - её секрет
+  RCU="$3" RCP="$4" PILOT_U="$5" PILOT_S="$6" \
+  PILOT_POLICY='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListAllMyBuckets","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::*"]},{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::pilot-ice-ru","arn:aws:s3:::pilot-ice-ru/*"]}]}' \
+  docker run --rm --network "$1" -e RCU -e RCP -e PILOT_U -e PILOT_S -e PILOT_POLICY -e HOME=/tmp --entrypoint sh "$RUSTFS_IMG" -c \
+    "rc alias set m http://$2:9000 \"\$RCU\" \"\$RCP\" >/dev/null && printf %s \"\$PILOT_POLICY\" > /tmp/p.json && rc admin policy create m/ pilot-bucket /tmp/p.json >/dev/null && rc admin user add m/ \"\$PILOT_U\" \"\$PILOT_S\" >/dev/null && { rc admin policy attach m/ pilot-bucket --user \"\$PILOT_U\" >/dev/null 2>&1; true; }"
+}
 # Контейнер RustFS отвечает (curl есть в образе); до этого rc mb получил бы отказ в соединении.
 wait_rustfs() {  # $1 - контур
   n=0
@@ -208,6 +216,22 @@ if has_role admin; then
     env_set MODULES_DEPLOY_KEY_TEST "$(cfg MODULES_DEPLOY_KEY)"; env_set MODULES_DEPLOY_KEY ""
   fi
   for s in TEST STAGE PROD; do fill_secret "MODULES_DEPLOY_KEY_$s" || true; done
+  # Новый GitLab на этой же машине: OAuth-приложение для входа в админку через браузер создаёт шаг GitLab ниже
+  # с этими ID и секретом. Админка стартует уже с ними, кнопка «Войти через GitLab» есть сразу.
+  if [ "$RESTORE" = 0 ] && has_role gitlab && [ -z "$(cfg GITLAB_OAUTH_CLIENT_ID)" ]; then
+    env_set GITLAB_OAUTH_CLIENT_ID "$(gen_key 32)"; env_set GITLAB_OAUTH_CLIENT_SECRET "$(gen_key 32)"
+    GENERATED="$GENERATED GITLAB_OAUTH_CLIENT_ID GITLAB_OAUTH_CLIENT_SECRET"
+  fi
+  # Служебная учётка Pilot контура на этой же машине: администратор, которого заводит установка (при восстановлении - из бэкапа).
+  # С ней админка работает с Pilot сразу после запуска, без входа в Pilot; учётка из «Настроек» админки важнее.
+  for c in $MY_CONTOURS; do
+    s="$(printf '%s' "$c" | tr 'a-z' 'A-Z')"
+    [ -z "$(cfg "MODULES_DEPLOY_${s}_LOGIN")" ] || continue
+    if [ -n "$(cfg "${s}_PILOT_ADMIN")" ]; then dl="$(cfg "${s}_PILOT_ADMIN")"; dp="$(cfg "${s}_PILOT_PASSWORD")"
+    else dl="$(cfg PILOT_ADMIN_LOGIN)"; dl="${dl:-admin}"; dp="$(cfg PILOT_ADMIN_PASSWORD)"; fi
+    if [ -z "$dp" ] || [ "$dp" = "$(cfg_from PILOT_ADMIN_PASSWORD .env.example)" ]; then continue; fi
+    env_set "MODULES_DEPLOY_${s}_LOGIN" "$dl"; env_set "MODULES_DEPLOY_${s}_PASSWORD" "$dp"
+  done
 fi
 # compose проверяет обязательные переменные во всём файле, в том числе у сервисов ролей, которых на этой машине нет.
 # Значение для роли этой машины придумывать нельзя (оно должно совпасть с рабочим), для остальных нужно любое.
@@ -339,6 +363,8 @@ if [ "$RESTORE" = 1 ]; then
     for sub in pilot-server server-settings license databases; do copy_tree "$SNAP/pilot/$c/$sub" "$ROOT/$c/$sub"; done
     # Администратор Pilot уже есть в восстановленной базе.
     mkdir -p "$ROOT/$c/pilot-server/settings"; touch "$ROOT/$c/pilot-server/settings/.admin-created"
+    # Бэкап времён MinIO: S3-архив в settings.xml указывает на minio-<контур>, такого контейнера больше нет -> база Broken.
+    case " $LOCAL_S3 " in *" $c "*) replace_in "$ROOT/$c/pilot-server/settings/settings.xml" "http://minio-$c:9000" "http://rustfs-$c:9000" ;; esac
   done
   if has_role admin; then
     copy_tree "$SNAP/admin/proadmin-data" "$ROOT/services/proadmin"
@@ -367,6 +393,11 @@ step "Папки данных в $ROOT"
 for c in $MY_CONTOURS; do
   mkdir -p "$ROOT/$c/pilot-server/settings" "$ROOT/$c/license" "$ROOT/$c/databases"
   [ -f "$ROOT/$c/pilot-server/settings/settings.xml" ] || echo '<Configuration></Configuration>' > "$ROOT/$c/pilot-server/settings/settings.xml"
+  # Временные папки S3-архивов (TempFolderPath): Pilot-Server их не создаёт, без них загрузка файлов падает
+  # с «Could not find a part of the path .../s3temp/<guid>». Пустые папки в бэкап не попадают.
+  { grep -o 'TempFolderPath="/usr/share/ascon/databases/[^"]*"' "$ROOT/$c/pilot-server/settings/settings.xml" 2>/dev/null || true; } \
+    | sed 's|^TempFolderPath="/usr/share/ascon/databases/||; s|"$||' | { grep -v '\.\.' || true; } \
+    | while IFS= read -r rel; do mkdir -p "$ROOT/$c/databases/$rel"; done
   # Настройки сервера из админки («Серверы»); по умолчанию логирование автоматизаций - везде, кроме прода.
   mkdir -p "$ROOT/$c/server-settings"
   if [ ! -f "$ROOT/$c/server-settings/server-settings.conf" ]; then
@@ -456,9 +487,26 @@ if [ "$RESTORE" = 1 ]; then
   fi
 
   # Файлы S3: архив тома rustfs/rustfs_<контур>.tgz (тот же формат у бэкапа и у data/ комплекта). До старта pilot-server и до создания бакета.
+  # Бэкап старого формата (до перехода на RustFS) хранит вместо него папку minio/<контур>/pilot-ice-ru - данные MinIO (xl.meta).
+  # RustFS читает этот формат как есть (проверено на 1.0.5: содержимое и ETag совпали, в том числе у объектов с part.1),
+  # поэтому папка бакета копируется в том целиком. Служебные данные MinIO (.minio.sys) не переносятся - учётку Pilot заводит шаг «Бакеты RustFS».
   for c in $MY_CONTOURS; do
     rfile="rustfs_$c.tgz"
-    [ -f "$SNAP/rustfs/$rfile" ] || continue
+    if [ ! -f "$SNAP/rustfs/$rfile" ]; then
+      [ -d "$SNAP/minio/$c/pilot-ice-ru" ] || continue
+      step "Файлы MinIO ($c) из бэкапа старого формата -> RustFS"
+      RVOL="${PROJECT}_rustfs_$c"
+      rnames="$(docker run --rm --user 0 --entrypoint sh -v "$RVOL:/v:ro" "$RUSTFS_IMG" -c 'ls -A /v')" || fail "Не удалось прочитать том $RVOL"
+      if [ -n "$(printf '%s
+' "$rnames" | grep -v -x -e '' -e '.rustfs' -e '.rustfs.sys')" ]; then
+        fail "В томе $RVOL уже есть данные RustFS, восстановление поверх них установщик не выполняет. Если они не нужны, удалите том (docker compose down; docker volume rm $RVOL) и запустите установку снова."
+      fi
+      if [ -n "$(docker ps -q --filter "name=^rustfs-$c\$")" ]; then docker stop "rustfs-$c" >/dev/null; fi   # compose up запустит снова
+      # Владелец - пользователь RustFS (10001), включая корень тома: иначе RustFS не стартует («File access denied»).
+      docker run --rm --user 0 --entrypoint sh -v "$RVOL:/v" -v "$SNAP/minio/$c:/b:ro" "$RUSTFS_IMG" -c \
+        "mkdir -p /v/pilot-ice-ru && cp -r /b/pilot-ice-ru/. /v/pilot-ice-ru/ && chown 10001:10001 /v && chown -R 10001:10001 /v/pilot-ice-ru" || fail "Не удалось перенести файлы MinIO в том $RVOL."
+      continue
+    fi
     step "Файлы RustFS ($c) из бэкапа"
     RVOL="${PROJECT}_rustfs_$c"
     # Образ RustFS уже скачан предыдущим шагом; в нём есть tar (busybox). Пустым считается том только со служебными .rustfs и .rustfs.sys (как в restore.ps1).
@@ -533,6 +581,12 @@ admin_callback() {
   if [ -z "$r" ]; then p="$(cfg ADMIN_PUBLIC_URL)"; if [ -n "$p" ]; then r="${p%/}/GitLab/Callback"; fi; fi
   printf '%s' "$r"
 }
+# Для шага GitLab: без заданного адреса админка на этой же машине открывается по localhost или 127.0.0.1.
+post_callback() {
+  r="$(admin_callback)"; ap="$(cfg ADMIN_PORT)"
+  if [ -z "$r" ] && has_role admin && [ -n "$ap" ]; then r="$SCHEME://localhost:$ap/GitLab/Callback $SCHEME://127.0.0.1:$ap/GitLab/Callback"; fi
+  printf '%s' "$r"
+}
 # Шаг после восстановления или чистой установки GitLab: gitlab-post-restore.rb (регистрация, переменные групп, защита веток, nuget.config).
 gitlab_post_restore() {  # $1 - группы модулей, $2 - группа отчётов, $3 - старый адрес GitLab, $4 - новый (http://хост:порт), $5 - 1: групп ещё может не быть
   docker cp ./gitlab-post-restore.rb gitlab:/tmp/post.rb || return 1
@@ -540,13 +594,48 @@ gitlab_post_restore() {  # $1 - группы модулей, $2 - группа �
   docker exec gitlab chmod 644 /tmp/post.rb || return 1
   prc=0
   # Значения ключей идут только через окружение: в аргументы docker (и в список процессов) они не попадают.
+  # Секрет OAuth нужен только чтобы создать приложение при чистой установке.
+  osec=""; if [ "$RESTORE" = 0 ]; then osec="$(cfg GITLAB_OAUTH_CLIENT_SECRET)"; fi
+  # Общие проверки CI (проект pilot-ci/checks): файлы из комплекта (ci-checks/) или из репозитория (gitlab/ci-checks).
+  checks_in=""; checks_dir=""
+  for d in ./ci-checks ../../gitlab/ci-checks; do if [ -f "$d/automation.yml" ]; then checks_dir="$d"; break; fi; done
+  if [ -n "$checks_dir" ]; then
+    docker exec gitlab rm -rf /tmp/ci-checks >/dev/null 2>&1 || true
+    docker cp "$checks_dir/." gitlab:/tmp/ci-checks && docker exec gitlab chmod -R a+rX /tmp/ci-checks && checks_in=/tmp/ci-checks
+  else
+    echo "  ! Нет папки ci-checks в комплекте: проект общих проверок CI в GitLab не создаётся."
+  fi
+  # Runner без config.toml (чистая установка) - шаг создаёт runner в GitLab, токен забираем из файла и регистрируем.
+  runner_token=""; [ -f "$ROOT/gitlab/runner-config/config.toml" ] || runner_token=/tmp/runner.token
   DEPLOY_KEY_TEST="$(cfg MODULES_DEPLOY_KEY_TEST)" DEPLOY_KEY_STAGE="$(cfg MODULES_DEPLOY_KEY_STAGE)" DEPLOY_KEY_PROD="$(cfg MODULES_DEPLOY_KEY_PROD)" \
-    docker exec -e DEPLOY_KEY_TEST -e DEPLOY_KEY_STAGE -e DEPLOY_KEY_PROD \
+  OAUTH_CLIENT_SECRET="$osec" \
+    docker exec -e DEPLOY_KEY_TEST -e DEPLOY_KEY_STAGE -e DEPLOY_KEY_PROD -e OAUTH_CLIENT_SECRET \
       -e "GROUP_URLS=$1" -e "REPORTS_GROUP_URL=$2" -e "OLD_HOST=$3" -e "NEW_URL=$4" -e "ALLOW_MISSING_GROUPS=$5" \
-      -e "OAUTH_CLIENT_ID=$(cfg GITLAB_OAUTH_CLIENT_ID)" -e "ADMIN_CALLBACK=$(admin_callback)" \
+      -e "OAUTH_CLIENT_ID=$(cfg GITLAB_OAUTH_CLIENT_ID)" -e "ADMIN_CALLBACK=$(post_callback)" \
+      -e "CHECKS_DIR=$checks_in" -e "CHECKS_PROJECT=$(group_url AutomationsCiConfigPath AUTOMATIONS_CI_CONFIG_PATH)" -e "RUNNER_TOKEN_FILE=$runner_token" \
       gitlab gitlab-rails runner /tmp/post.rb || prc=$?
-  docker exec gitlab rm -f /tmp/post.rb >/dev/null 2>&1 || true
+  docker exec gitlab rm -rf /tmp/post.rb /tmp/ci-checks >/dev/null 2>&1 || true
+  if [ -n "$runner_token" ]; then
+    tok="$(docker exec gitlab sh -c "cat $runner_token 2>/dev/null; rm -f $runner_token" | tr -d '\r\n')"
+    if [ -n "$tok" ]; then register_runner "$tok" || prc=1
+    else echo "  ! GitLab не выдал токен runner'а: runner не зарегистрирован, pipeline будут ждать исполнителя."; prc=1; fi
+  fi
   return "$prc"
+}
+# Регистрация runner'а (docker executor в сети GitLab). Токен - через окружение, не в аргументах.
+# RUNNER_DNS в .env (через запятую) - DNS для заданий, если Docker на машине отдаёт контейнерам негодные адреса.
+register_runner() {
+  set -- "$1" $(cfg RUNNER_DNS | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) printf "--docker-dns %s ", $i}')
+  tok="$1"; shift
+  if CI_SERVER_TOKEN="$tok" docker exec -e CI_SERVER_TOKEN gitlab-runner gitlab-runner register --non-interactive \
+      --url http://gitlab --clone-url http://gitlab --executor docker --name local-docker-runner --docker-image alpine:3.20 \
+      --docker-network-mode gitlab_gitlab-net --docker-pull-policy if-not-present \
+      --docker-extra-hosts host.docker.internal:host-gateway --docker-volumes /cache "$@"; then
+    docker exec gitlab-runner sed -i 's/^concurrent = .*/concurrent = 3/' /etc/gitlab-runner/config.toml >/dev/null 2>&1 || true
+    echo "  runner local-docker-runner зарегистрирован"
+  else
+    echo "  ! Не удалось зарегистрировать runner (подробности выше): pipeline будут ждать исполнителя."; return 1
+  fi
 }
 # На медленной машине «gitlab-ctl stop» не дожидается остановки (timeout: run: puma … want down): повторяем, затем kill.
 gitlab_stop_service() {
@@ -617,7 +706,15 @@ for c in $LOCAL_S3; do
   user="$(cfg "${U}_MINIO_USER")";     user="${user:-$(cfg MINIO_USER)}"
   pass="$(cfg "${U}_MINIO_PASSWORD")"; pass="${pass:-$(cfg MINIO_PASSWORD)}"
   if ! { wait_rustfs "$c" && rc_bucket "pilot-$c" "rustfs-$c" "$user" "$pass" >/dev/null; }; then
-    echo "  ! не удалось создать бакет в rustfs-$c (смотрите docker logs rustfs-$c)"
+    echo "  ! не удалось создать бакет в rustfs-$c (смотрите docker logs rustfs-$c)"; continue
+  fi
+  # Служебная учётка Pilot (AccessKeyId в settings.xml из бэкапа). В бэкапе RustFS она уже есть (повтор безвреден),
+  # в бэкапе старого формата (MinIO) её нет: без неё Pilot получает отказ доступа к S3 и база уходит в Broken.
+  pu="$(cfg "${U}_MINIO_PILOT_USER")";   pu="${pu:-$(cfg MINIO_PILOT_USER)}"
+  ps_="$(cfg "${U}_MINIO_PILOT_SECRET")"; ps_="${ps_:-$(cfg MINIO_PILOT_SECRET)}"
+  if [ -n "$pu" ] && [ -n "$ps_" ] && [ "$pu" != "$user" ]; then
+    if rc_pilot_user "pilot-$c" "rustfs-$c" "$user" "$pass" "$pu" "$ps_" >/dev/null; then echo "  rustfs-$c: учётка $pu (доступ к pilot-ice-ru)"
+    else echo "  ! не удалось завести учётку $pu в rustfs-$c: файловый архив Pilot будет недоступен (смотрите docker logs rustfs-$c)"; fi
   fi
 done
 

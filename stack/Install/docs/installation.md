@@ -135,6 +135,7 @@
 - **Пустая папка данных.** DATA_ROOT должна быть пустой. После восстановления появляется метка .installed, поэтому повторно данные не загружаются. Перед восстановлением GitLab ставится метка .restore-started: если установка оборвалась после неё, повторный запуск откажется восстанавливать данные второй раз (изменённые данные были бы затёрты). Очистите DATA_ROOT и запустите установку снова. Если .installed есть, а .env рядом со скриптом нет, установка остановится, а не создаст .env из шаблона: верните .env прежней установки. Данные Grafana из копии не распаковываются поверх непустого тома (имя тома берётся из COMPOSE_PROJECT_NAME, по умолчанию cicd): установка остановится с подсказкой. Файлы RustFS установка разворачивает сама: архив rustfs\rustfs\_\<контур\>.tgz из копии она проверяет и распаковывает в том \<проект\>\_rustfs\_\<контур\> до запуска Pilot-Server и до создания бакета. Том должен быть пустым: если в нём уже есть данные, установка остановится и ничего не распакует. То же верно для папки data из комплекта.
 
 - **Свежий бэкап.** Чтобы взять данные не из data, укажите каталог ночного бэкапа: -FromBackup D:\Backup\2026-11-03_0300, на Linux --from-backup. Работает и на Linux без PowerShell. Файлы RustFS из такого бэкапа установка разворачивает сама, поэтому для новой машины это рекомендуемый путь. Ручной restore.ps1 -Parts rustfs после установки потребует ключ -ConfirmOverwrite rustfs: том уже не пуст.
+- **Бэкап времён MinIO.** В старом бэкапе вместо rustfs\rustfs_\<контур\>.tgz лежит папка minio\\\<контур\>\pilot-ice-ru. Установка переносит её в том RustFS как есть (RustFS читает формат MinIO), меняет в settings.xml адрес S3-архива http://minio-\<контур\>:9000 на http://rustfs-\<контур\>:9000 и заводит в RustFS учётку Pilot из MINIO_PILOT_USER и MINIO_PILOT_SECRET бэкапа. Без этого база Pilot после установки уходит в состояние Broken.
 
 - **Другая папка данных.** Скопируйте .env.example в .env и перед запуском поменяйте строку DATA_ROOT.
 
@@ -200,15 +201,33 @@
 
 1.  **Лицензии Pilot.** Скопируйте файл лицензии в папку контура и перезапустите контейнер docker restart pilot-server-prod. На Windows это C:\Ascon-Docker\prod\license\Pilot Server\License\\, на Linux /opt/ascon-docker/prod/license/Pilot Server/License/. Для test и stage действия те же.
 
-2.  **База Pilot.** Создайте или подключите pilot-ice_ru на каждом контуре. Порядок описан в docs/Pilot-Server_Docker_Windows.md или docs/Pilot-Server_Docker_Linux.md: разделы 5 и 7.3-7.7, затем настройка S3 (разделы 8.3, 9 или 10).
+2.  **База Pilot.** Если при установке указан ключ -PilotDatabases, база pilot-ice_ru уже подключена (см. «База из файловой базы Pilot» ниже). Иначе создайте или подключите pilot-ice_ru на каждом контуре. Порядок описан в docs/Pilot-Server_Docker_Windows.md или docs/Pilot-Server_Docker_Linux.md: разделы 5 и 7.3-7.7, затем настройка S3 (разделы 8.3, 9 или 10).
 
-3.  **GitLab.** Создайте группы автоматизаций, отчётов и модулей и пропишите их в .env. Зарегистрируйте runner командой ниже. Примените настройки повторным запуском установки: она выполнит docker compose up -d и шаг GitLab после установки. На машине с ролью gitlab этот шаг задаст в группах модулей переменные DEPLOY_KEY_TEST (Masked), DEPLOY_KEY_STAGE и DEPLOY_KEY_PROD (Masked и Protected) значениями MODULES_DEPLOY_KEY_TEST, \_STAGE, \_PROD из .env, защитит ветки main, master, release/\* и dev в проектах этих групп (см. «Защита веток» ниже) и закроет саморегистрацию; шаг идемпотентен. Ему нужны ключи MODULES_DEPLOY_KEY\_\* в .env машины с GitLab (при нескольких машинах скопируйте их с машины admin) и пути групп (MODULES_GITLAB_GROUP_URL, SERVER_MODULES_GITLAB_GROUP_URL). Если установка предупредила, что шаг пропущен или не удался, или GitLab стоит не на машине установки, задайте то же вручную: переменные групп модулей, защиту веток и закрытие регистрации (Admin / Settings / General / Sign-up restrictions).
+3.  **GitLab.** Создайте группы автоматизаций, отчётов и модулей и пропишите их в .env. Runner и публичный проект общих проверок CI pilot-ci/checks (из папки ci-checks комплекта; без него pipeline автоматизаций и отчётов падают с config_error) установка с ролью gitlab создаёт сама; существующий проект проверок она не трогает. Примените настройки повторным запуском установки: она выполнит docker compose up -d и шаг GitLab после установки. На машине с ролью gitlab этот шаг задаст в группах модулей переменные DEPLOY_KEY_TEST (Masked), DEPLOY_KEY_STAGE и DEPLOY_KEY_PROD (Masked и Protected) значениями MODULES_DEPLOY_KEY_TEST, \_STAGE, \_PROD из .env, защитит ветки main, master, release/\* и dev в проектах этих групп (см. «Защита веток» ниже) и закроет саморегистрацию; шаг идемпотентен. Ему нужны ключи MODULES_DEPLOY_KEY\_\* в .env машины с GitLab (при нескольких машинах скопируйте их с машины admin) и пути групп (MODULES_GITLAB_GROUP_URL, SERVER_MODULES_GITLAB_GROUP_URL). Если установка предупредила, что шаг пропущен или не удался, или GitLab стоит не на машине установки, задайте то же вручную: переменные групп модулей, защиту веток и закрытие регистрации (Admin / Settings / General / Sign-up restrictions).
 
-Токен для регистрации: Admin / CI/CD / Runners / New instance runner, Docker, токен glrt-…. Команда выполняется в установочной папке. Ключ --docker-extra-hosts host.docker.internal:host-gateway нужен, чтобы задания CI находили админку по адресу по умолчанию; образ задания по умолчанию лежит на runner (if-not-present):
+Runner регистрируется установкой, если в \<DATA_ROOT\>/gitlab/runner-config нет config.toml. Если Docker на машине отдаёт контейнерам негодные адреса DNS (например, из-за Proxifier), до установки задайте в .env RUNNER_DNS=8.8.8.8,1.1.1.1. Если GitLab стоит не на машине установки или шаг не удался, зарегистрируйте runner вручную. Токен для регистрации: Admin / CI/CD / Runners / New instance runner, Docker, токен glrt-…. Команда выполняется в установочной папке. Ключ --docker-extra-hosts host.docker.internal:host-gateway нужен, чтобы задания CI находили админку по адресу по умолчанию; образ задания по умолчанию лежит на runner (if-not-present):
 
 > docker compose exec gitlab-runner gitlab-runner register --non-interactive --url http://gitlab --clone-url http://gitlab --token \<токен\> --executor docker --docker-image alpine:3.20 --docker-network-mode gitlab_gitlab-net --docker-pull-policy if-not-present --docker-extra-hosts host.docker.internal:host-gateway --description local-docker-runner
 
 Затем заполните настройки админки и статистики, см. раздел 6, и установите модули, см. ниже.
+
+### База из файловой базы Pilot
+
+Пустую базу на PostgreSQL Pilot-Server создать не умеет. При чистой установке её можно сразу сделать из файловой базы Pilot (папка с base.dbp, base.messages.dbp, base.journal.dbp и FileArchive). Укажите для каждого контура папку базы (ту, где лежит base.dbp; путь к самому base.dbp тоже подойдёт), архив .zip с одной базой или путь к папке базы внутри архива. Один и тот же источник можно указать для нескольких контуров:
+
+> powershell -ExecutionPolicy Bypass -Command "& .\install.ps1 -NoData -PilotDatabases @{ prod = 'D:\Databases.zip\Databases\pilot-ice_ru'; test = 'D:\Databases.zip\Databases\pilot-ice_ru' }"
+
+Lite-установка задаёт тот же вопрос сама для каждого контура, который ставится на этой машине.
+
+Что делает установка, для каждого контура:
+
+1.  Проверяет путь ещё до скачивания образов: в нём должна быть ровно одна база.
+2.  Копирует базу в DATA_ROOT\\\<контур\>\\databases\\.import-pilot-ice_ru. Исходные файлы не меняются.
+3.  Утилитой PostgresMigration из образа Pilot-Server создаёт базу pilot-ice_ru в PostgreSQL контура. При запуске Pilot-Server обновит схему до своей версии.
+4.  Выдаёт базе новый идентификатор, поэтому кэши клиентов Pilot для разных контуров не смешиваются. Единственным архивом базы становится S3: бакет pilot-ice-ru в RustFS контура, учётка MINIO_PILOT_USER. Тела файлов копируются в бакет.
+5.  Останавливает Pilot-Server, записывает базу в settings.xml и запускает сервер снова. Прежний файл сохраняется как settings.xml.before-import.
+
+Ключ S3 в settings.xml шифрует образ миграции, поэтому он должен быть на машине (роль admin). Загрузка выполняется один раз: если база pilot-ice_ru уже подключена, повторный запуск её пропускает. Если база не запустилась, установка предупредит и оставит рабочую копию и прежний settings.xml для разбора. Файловая база должна быть не новее Pilot-Server: старые версии PostgresMigration обновляет сам. Для контуров с внешним PostgreSQL или S3 и при восстановлении из бэкапа ключ не работает. В install.sh его пока нет: на Linux запускайте install.ps1 под pwsh.
 
 ### Модули при чистой установке
 
@@ -548,6 +567,7 @@ Linux, машины 2 и 3:
 | -WithGitLab | --with-gitlab | Добавляет GitLab CE и runner |
 | -WithMyAdmin | --with-myadmin | Добавляет Pilot-myAdmin Web для test и stage |
 | -SkipLoad | --skip-load | Не загружает images, если образы уже загружены |
+| -PilotDatabases @{ \<контур\> = '\<путь\>' } | нет | При чистой установке делает pilot-ice_ru из файловой базы Pilot (папка, .zip или путь внутри него), см. «База из файловой базы Pilot» |
 
 ### Параметры .env
 

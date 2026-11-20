@@ -9,7 +9,9 @@
 
    .\prepare-transfer.ps1 -OutputDirectory 'D:\PilotTransfer'
 
-   Если папка установки не определилась автоматически, укажите её вручную:
+   Папку стенда скрипт находит сам по контейнеру postgres-prod. Если не нашёл, укажите папку установки вручную:
+   это папка, где лежат .env и docker-compose.yml (её создал install.ps1, обычно ...\PilotProAdmin-install).
+   Можно указать и папку распакованного релиза выше неё - скрипт возьмёт вложенную.
 
    .\prepare-transfer.ps1 -OutputDirectory 'D:\PilotTransfer' -InstallDirectory 'C:\PilotProAdmin-install'
 

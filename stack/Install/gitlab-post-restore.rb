@@ -15,11 +15,19 @@
 #      если настройка недоступна (например, запрещена на уровне экземпляра), это предупреждение, а не ошибка;
 #   7. предупреждает о модулях со старым шаблоном .gitlab-ci.yml (переменные ключа с префиксом перед DEPLOY_KEY или нет X-Job-Token):
 #      их выкладка не пройдёт до «Обновить CI»;
-#   8. добавляет адрес возврата админки в Redirect URI её OAuth-приложения (прежние адреса остаются).
+#   8. добавляет адрес возврата админки в Redirect URI её OAuth-приложения (прежние адреса остаются);
+#      при чистой установке (передан OAUTH_CLIENT_SECRET, приложения нет) создаёт это приложение;
+#   9. если проекта общих проверок (CHECKS_PROJECT, по умолчанию pilot-ci/checks) нет - создаёт его публичным
+#      (с группой) и кладёт в main файлы из CHECKS_DIR; существующий проект не трогает. Без него pipeline
+#      автоматизаций и отчётов (ci_config_path = automation.yml@pilot-ci/checks) падает с config_error;
+#  10. если передан RUNNER_TOKEN_FILE (у runner'а нет config.toml) - создаёт runner экземпляра и пишет его токен
+#      в этот файл внутри контейнера (права 600); регистрирует runner установщик.
 # Окружение: DEPLOY_KEY_TEST/_STAGE/_PROD (секреты), GROUP_URLS (адреса групп модулей через запятую),
 #   REPORTS_GROUP_URL, OLD_HOST (без него nuget.config не трогается), NEW_URL (http://хост:порт),
 #   ALLOW_MISSING_GROUPS=1 (чистая установка: нет группы - пропуск и код выхода 2 вместо ошибки),
-#   OAUTH_CLIENT_ID (Application ID приложения админки) и ADMIN_CALLBACK (http://адрес-админки/GitLab/Callback).
+#   OAUTH_CLIENT_ID (Application ID приложения админки) и ADMIN_CALLBACK (http://адрес-админки/GitLab/Callback),
+#   CHECKS_DIR (папка с файлами ci-checks внутри контейнера; пусто - шаг 9 пропускается), CHECKS_PROJECT,
+#   RUNNER_TOKEN_FILE (пусто - шаг 10 пропускается).
 # Вывод только латиницей: консоль Windows искажает UTF-8, который docker exec отдаёт установщику.
 # Самопроверка чистых функций без GitLab:
 #   docker run --rm -e SELFTEST=1 -v "<stack>/Install:/s:ro" ruby:3.3-alpine ruby /s/gitlab-post-restore.rb
@@ -79,6 +87,23 @@ end
 
 def levels(rule, key)
   rule[key].map { |l| l['access_level'] }.sort
+end
+
+# Путь проекта проверок из CHECKS_PROJECT или из ci_config_path вида «automation.yml@pilot-ci/checks».
+def checks_project_path(value)
+  path = value.to_s.strip.split('@', 2).last.to_s.sub(/\.git\z/, '').gsub(%r{\A/+|/+\z}, '')
+  path.include?('/') ? path : nil
+end
+
+# Файлы проверок для коммита: только обычные файлы верхнего уровня, тесты и кэш Python не нужны; переводы строк - LF.
+def checks_files(dir)
+  Dir.children(dir).sort.filter_map do |name|
+    full = File.join(dir, name)
+    next unless File.file?(full)
+    next if name.start_with?('.') || name.start_with?('test_') || name.end_with?('.pyc')
+
+    [name, File.binread(full).gsub("\r\n", "\n")]
+  end
 end
 
 # Нужна ли проекту «Pipelines must succeed»: без CI merge request не получит pipeline и не вливался бы вовсе.
@@ -183,6 +208,8 @@ if ENV['SELFTEST'] == '1'
   check.call(merge_redirect('http://localhost:5300/GitLab/Callback', cb) == "http://localhost:5300/GitLab/Callback\n#{cb}" &&
              merge_redirect("a\r\n#{cb}", cb) == "a\n#{cb}" && merge_redirect(nil, cb) == cb, 'merge_redirect')
 
+  check.call(checks_project_path('automation.yml@pilot-ci/checks') == 'pilot-ci/checks' && checks_project_path('pilot-ci/checks') == 'pilot-ci/checks' &&
+             checks_project_path('/g/sub/checks.git') == 'g/sub/checks' && checks_project_path('checks').nil? && checks_project_path('').nil?, 'checks_project_path')
   check.call(merge_gate_needed?({ 'ci_config_path' => '' }, true) && merge_gate_needed?({ 'ci_config_path' => 'ci/x.yml@g/central' }, false), 'merge_gate_needed?: CI file or custom ci_config_path')
   check.call(!merge_gate_needed?({ 'ci_config_path' => nil }, false) && !merge_gate_needed?({ 'only_allow_merge_if_pipeline_succeeds' => true, 'ci_config_path' => 'x' }, true), 'merge_gate_needed?: no CI, or already set')
   good = { 'default_branch_protection_defaults' => { 'allowed_to_push' => [{ 'access_level' => 40 }], 'allowed_to_merge' => [{ 'access_level' => 40 }], 'allow_force_push' => false, 'developer_can_initial_push' => true } }
@@ -276,7 +303,7 @@ end
 # Временный токен root со сроком в сутки; отзывается в ensure основного блока.
 def create_pat(user)
   user.personal_access_tokens.where(name: PAT_NAME, revoked: false).each(&:revoke!) # остаток оборванного запуска
-  attrs = { name: PAT_NAME, scopes: [:api], expires_at: 1.day.from_now.to_date }
+  attrs = { name: PAT_NAME, scopes: %i[api create_runner], expires_at: 1.day.from_now.to_date }
   org = defined?(Organizations::Organization) ? Organizations::Organization.first : nil
   attrs[:organization] = org if org && PersonalAccessToken.reflect_on_association(:organization) # в новых версиях токену нужна организация
   token = "glpat-#{SecureRandom.alphanumeric(20)}"
@@ -287,20 +314,77 @@ def create_pat(user)
 end
 
 # Без адреса возврата админки в приложении GitLab отвечает на вход «The redirect URI included is not valid».
-def step_oauth(client_id, callback)
-  return say('oauth: no client id or admin address, skipped') if client_id.empty? || callback.empty?
+# Чистая установка: приложения ещё нет, установщик передал Application ID и секрет из .env - создаём его
+# (trusted: без экрана согласия, scope api - как App:GitLab:Scopes админки). ADMIN_CALLBACK - адреса через пробел.
+def step_oauth(client_id, callback, secret = '')
+  callbacks = callback.split(/\s+/).reject(&:empty?)
+  return say('oauth: no client id or admin address, skipped') if client_id.empty? || callbacks.empty?
 
   app = Doorkeeper::Application.find_by(uid: client_id)
-  return say("WARNING: oauth application #{client_id} not found, set its Redirect URI to #{callback} by hand") unless app
+  unless app
+    return say("WARNING: oauth application #{client_id} not found, set its Redirect URI to #{callbacks.join(' ')} by hand") if secret.empty?
 
-  uris = merge_redirect(app.redirect_uri, callback)
-  return say("oauth: redirect URI #{callback} already set") if uris == app.redirect_uri.to_s
+    attrs = { name: 'PilotProAdmin', uid: client_id, secret: secret, redirect_uri: callbacks.join("\n"),
+              scopes: 'api', confidential: true, trusted: true }
+    # GitLab 18+: приложение экземпляра принадлежит организации (check organization_id IS NOT NULL).
+    attrs[:organization_id] = Organizations::Organization.order(:id).pick(:id) if Doorkeeper::Application.column_names.include?('organization_id')
+    Doorkeeper::Application.create!(**attrs)
+    return say("oauth: application PilotProAdmin created, redirect URI #{callbacks.join(' ')}")
+  end
+
+  uris = callbacks.reduce(app.redirect_uri.to_s) { |cur, cb| merge_redirect(cur, cb) }
+  return say("oauth: redirect URI #{callbacks.join(' ')} already set") if uris == app.redirect_uri.to_s
 
   app.redirect_uri = uris
   app.save!
-  say("oauth: redirect URI #{callback} added to #{app.name}")
+  say("oauth: redirect URI #{callbacks.join(' ')} added to #{app.name}")
 rescue ActiveRecord::ActiveRecordError => e
   err("oauth: #{e.message}")
+end
+
+# Проект общих проверок: создаётся один раз; существующий (возможно, с правками заказчика) не трогается.
+def step_checks(api, project_path, dir)
+  return say('checks: no CHECKS_DIR, skipped') if dir.empty?
+  return err("checks: folder #{dir} not found in the container") unless File.directory?(dir)
+  return err('checks: cannot read the project path from CHECKS_PROJECT') unless project_path
+
+  pid = esc(project_path)
+  return say("checks: #{project_path} already exists, not touched") if api.call(:get, "/projects/#{pid}", nil, ok: [200, 404]).code == '200'
+
+  files = checks_files(dir)
+  return err("checks: no files in #{dir}") if files.empty?
+
+  group_path, name = project_path.rpartition('/').values_at(0, 2)
+  group = ensure_group(api, group_path)
+  project = JSON.parse(api.call(:post, '/projects', { name: name, path: name, namespace_id: group['id'], visibility: 'public',
+                                                      default_branch: 'main', initialize_with_readme: false,
+                                                      description: 'Общие проверки CI автоматизаций и отчётов Pilot' }).body)
+  actions = files.map { |n, body| { action: 'create', file_path: n, content: Base64.strict_encode64(body), encoding: 'base64' } }
+  api.call(:post, "/projects/#{project['id']}/repository/commits", { branch: 'main', commit_message: 'Общие проверки из комплекта установки', actions: actions })
+  say("checks: #{project_path} created (public), #{files.size} file(s) in main")
+end
+
+# Группа (и родительские) для проекта проверок; новые - публичные, иначе публичный проект в них не создать.
+def ensure_group(api, path)
+  res = api.call(:get, "/groups/#{esc(path)}", nil, ok: [200, 404])
+  return JSON.parse(res.body) if res.code == '200'
+
+  parent_path, name = path.rpartition('/').values_at(0, 2)
+  body = { name: name, path: name, visibility: 'public' }
+  body[:parent_id] = ensure_group(api, parent_path)['id'] unless parent_path.empty?
+  group = JSON.parse(api.call(:post, '/groups', body).body)
+  say("checks: group #{path} created (public)")
+  group
+end
+
+# Runner экземпляра для установщика: токен - в файл внутри контейнера, не в вывод.
+def step_runner(api, token_file)
+  return if token_file.empty?
+
+  res = JSON.parse(api.call(:post, '/user/runners', { runner_type: 'instance_type', description: 'local-docker-runner', run_untagged: true }).body)
+  File.open(token_file, File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |f| f.write(res['token']) }
+  File.chmod(0o600, token_file)
+  say("runner: instance runner #{res['id']} created, token written for the installer")
 end
 
 def step_signup(api)
@@ -497,7 +581,9 @@ def main
   api = Api.new(token)
   begin
     guard('signup') { step_signup(api) }
-    step_oauth(env('OAUTH_CLIENT_ID'), env('ADMIN_CALLBACK'))
+    step_oauth(env('OAUTH_CLIENT_ID'), env('ADMIN_CALLBACK'), env('OAUTH_CLIENT_SECRET'))
+    guard('checks') { step_checks(api, checks_project_path(env('CHECKS_PROJECT').empty? ? 'pilot-ci/checks' : env('CHECKS_PROJECT')), env('CHECKS_DIR')) }
+    guard('runner') { step_runner(api, env('RUNNER_TOKEN_FILE')) }
     say('variables, protection and nuget.config: no module groups given, skipped') if modules.empty? && reports.empty?
     allow_missing = env('ALLOW_MISSING_GROUPS') == '1'
     modules = existing_groups(api, modules, allow_missing)

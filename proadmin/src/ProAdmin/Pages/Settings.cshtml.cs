@@ -33,6 +33,8 @@ public class SettingsModel : AppPageModel
 
     public AssemblySpec LibrariesSpec(ModuleKind kind) => _libraries.For(kind);
 
+    private string Who => CurrentSession.Actor;
+
     [BindProperty] public AdminSettings Form { get; set; } = new();
     [BindProperty] public List<DeployAccountInput> Deploy { get; set; } = [];
     public List<DeployAccountInput> DeployPrefill =>
@@ -42,12 +44,13 @@ public class SettingsModel : AppPageModel
     {
         var before = SettingsStore.Current;
         var updated = before.Clone();
-        if (await accounts.ApplyAsync(updated, Deploy, _pilot, ct) is { } error)
-            TempData["FlashError"] = error;
+        var notes = new List<string>();
+        if (await accounts.ApplyAsync(updated, Deploy, _pilot, ct, notes) is { } error)
+            TempData["FlashError"] = string.Join(" ", notes.Append(error));
         else
         {
             SettingsStore.UpdateDeployLogins(before, updated);
-            TempData["Flash"] = "Служебные учётные записи Pilot сохранены.";
+            TempData["Flash"] = string.Join(" ", notes.Prepend("Служебные учётные записи Pilot сохранены."));
         }
         return RedirectToPage(null, null, null, "deploy-accounts");
     }
@@ -97,7 +100,7 @@ public class SettingsModel : AppPageModel
     /// <summary>Сохранить режим библиотек: менять его может Developer и выше в группе модулей этого вида.</summary>
     public async Task<IActionResult> OnPostLibrariesAsync(CancellationToken ct)
     {
-        var who = CurrentSession.GitLabUser?.Username is { Length: > 0 } u ? u : CurrentSession.PilotLogin;
+        var who = Who;
         var saved = new List<string>();
         foreach (var (kind, form, title) in new[] { (ModuleKind.Client, ClientLibraries, "клиентские"), (ModuleKind.Server, ServerLibraries, "серверные") })
         {
@@ -189,11 +192,11 @@ public class SettingsModel : AppPageModel
 
         var before = AppSettings.Clone();
         Form.UpdatedAt = DateTimeOffset.UtcNow;
-        Form.UpdatedBy = CurrentSession.PilotLogin;
+        Form.UpdatedBy = Who;
         SettingsStore.SaveGeneral(Form);
         // Значения не пишем (там адреса и пути), только что изменилось и кем.
         HttpContext.RequestServices.GetRequiredService<ILogger<SettingsModel>>().LogInformation(
-            "Общие настройки изменены: {Login} с адреса {Address}; изменено: {Fields}", CurrentSession.PilotLogin,
+            "Общие настройки изменены: {Login} с адреса {Address}; изменено: {Fields}", Who,
             HttpContext.Connection.RemoteIpAddress, ChangedFields(before, Form));
         TempData["Flash"] = connected
             ? "Настройки сохранены."
@@ -222,6 +225,10 @@ public class SettingsModel : AppPageModel
             {
                 var list = await _pilot.GetAutomationsAsync(env.PilotUrl, Vault.GetPilotLogin(CurrentSession, env.Key), ct);
                 return (env.Title, "ok", $"Pilot {env.PilotUrl}: доступен, автоматизаций - {list.Count}.");
+            }
+            catch (PilotCredentialsRequiredException)
+            {
+                return (env.Title, "warn", $"Pilot {env.PilotUrl}: не задана служебная учётная запись контура - проверка пропущена.");
             }
             catch (PilotGatewayException ex)
             {

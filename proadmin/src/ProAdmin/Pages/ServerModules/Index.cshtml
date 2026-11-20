@@ -50,7 +50,11 @@
 @if (Model.Error is not null)
 {
     <div class="alert @(Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Configuration ? "alert-warn" : "alert-error")">@Model.Error.Message</div>
-    @if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+    @if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication && Model.UsesServiceAccounts)
+    {
+        <partial name="_ServiceAccountHint" model="Model.Current!.Title" />
+    }
+    else if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
     {
         <section class="card narrow-card">
             <h2>Вход в базу сервера «@Model.Current!.Title»</h2>
@@ -95,7 +99,7 @@
             Pilot-Server читает хост один раз при старте: новая версия начинает работать только после перезапуска сервера Pilot
             (всех узлов в кластере) - в отличие от модулей, которые обновляются на лету.
         </p>
-        @if (Model.IsProdAdmin && !readOnly)
+        @if (Model.IsAdmin && !readOnly)
         {
             <form method="post" asp-page-handler="UpdateHost" enctype="multipart/form-data" class="form"
                   data-confirm="@(Model.IsProd ? "Записать новую версию ServerHost в базу ПРОДА? Она вступит в силу после перезапуска сервера Pilot." : "Записать новую версию ServerHost в базу? Она вступит в силу после перезапуска сервера Pilot.")">
@@ -105,9 +109,9 @@
                 <button class="btn btn-primary" type="submit">Записать в базу</button>
             </form>
         }
-        else if (!Model.IsProdAdmin)
+        else if (!Model.IsAdmin)
         {
-            <p class="muted small">Обновлять сам хост может только администратор прода.</p>
+            <p class="muted small">Обновлять сам хост может только администратор админки.</p>
         }
     </section>
 }

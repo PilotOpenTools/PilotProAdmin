@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using Ascon.Pilot.Common;
+using Ascon.Pilot.Common.DataProtection;
+using Ascon.Pilot.Transport;
 using Ascon.Pilot.DataClasses;
 using Ascon.Pilot.Server.Api;
 using Ascon.Pilot.Server.Api.Contracts;
@@ -161,6 +163,119 @@ public sealed class PilotGateway
             gate.Release();
             InvalidateMetadata(url);
         }
+    }
+
+    /// <summary>Подразделение в корне оргструктуры, в котором админка заводит должности своих служебных пользователей.</summary>
+    public const string ServiceDepartment = "PilotProAdmin";
+
+    /// <summary>
+    /// Модули и отчёты админка выкладывает, входя в базу обычным пользователем, а не администратором сервера.
+    /// В новой или загруженной из файлов базе такого пользователя нет: метод заводит его с тем же логином и паролем,
+    /// что у администратора сервера (с правами администратора базы и должностью в подразделении «PilotProAdmin»),
+    /// и проверяет вход в базу. Возвращает, что сделано (null - пользователь уже был и вход работает).
+    /// </summary>
+    public async Task<string?> EnsureDatabaseUserAsync(string url, PilotLogin login, int licenseType, CancellationToken ct)
+    {
+        var (existed, note) = await RunAsync(url, login, requireDatabase: true, async (api, database) =>
+        {
+            var person = (await api.LoadPeopleAsync(database))
+                .FirstOrDefault(p => string.Equals(p.Login, login.Login, StringComparison.OrdinalIgnoreCase));
+            if (person is { IsDeleted: true })
+                throw new PilotGatewayException(PilotErrorKind.Configuration,
+                    $"в базе «{database}» пользователь «{login.Login}» удалён: восстановите его в Pilot-myAdmin или укажите другой логин.");
+            var existed = person is not null;
+            var done = new List<string>();
+            if (person is null)
+            {
+                person = await api.CreatePersonAsync(database, new DPerson
+                {
+                    Login = login.Login, DisplayName = "PilotProAdmin", IsAdmin = true,
+                    Comment = "Служебный пользователь PilotProAdmin: выкладка модулей и отчётов из GitLab CI.",
+                }, login.Password.EncryptAes());
+                done.Add($"создан пользователь «{login.Login}»");
+            }
+            // Без должности Pilot не пускает в базу («Person must hold the position»).
+            var units = await api.LoadOrganisationUnitsAsync(database);
+            if (!units.Any(u => u.Kind == OrgUnitKind.Position && u.Person == person.Id && !u.IsDeleted))
+            {
+                var root = units.FirstOrDefault(u => u.ParentId < 0 && !u.IsDeleted)?.Id ?? 0;
+                // Должность прямо в корне Pilot создать не даёт: своё подразделение, чтобы не трогать оргструктуру заказчика.
+                var department = units.FirstOrDefault(u => u.Kind == OrgUnitKind.Department && u.ParentId == root &&
+                                                           u.Title == ServiceDepartment && !u.IsDeleted);
+                if (department is null)
+                {
+                    var created = await api.ChangeOrganisationUnitsAsync(database, new DOrganisationUnitChangeset(
+                        [new DOrganisationUnitChangeData(null, new DOrganisationUnit { Id = -1, Title = ServiceDepartment, Kind = OrgUnitKind.Department, ParentId = root, Person = -1 })]));
+                    department = created.ChangedOrgUnits.First(u => u.Kind == OrgUnitKind.Department && u.Title == ServiceDepartment && u.ParentId == root);
+                }
+                await api.ChangeOrganisationUnitsAsync(database, new DOrganisationUnitChangeset(
+                    [new DOrganisationUnitChangeData(null, new DOrganisationUnit { Id = -1, Title = $"Служебная учётная запись ({login.Login})", Kind = OrgUnitKind.Position, ParentId = department.Id, Person = person.Id })]));
+                done.Add($"ему назначена должность в подразделении «{ServiceDepartment}»");
+            }
+            return (existed, done.Count > 0 ? string.Join(", ", done) : null);
+        }, ct);
+
+        try
+        {
+            await VerifyDatabaseLoginAsync(url, login, licenseType, ct);
+        }
+        catch (PilotGatewayException ex) when (existed && ex.Kind == PilotErrorKind.Authentication)
+        {
+            throw new PilotGatewayException(PilotErrorKind.Authentication,
+                $"в базе уже есть пользователь «{login.Login}», но его пароль не совпадает с паролем администратора сервера. " +
+                "Задайте ему этот пароль в Pilot-myAdmin или укажите другой логин.", ex);
+        }
+        return note;
+    }
+
+    /// <summary>Вход в базу обычным пользователем - так, как админка выкладывает модули и отчёты.</summary>
+    public async Task VerifyDatabaseLoginAsync(string url, PilotLogin login, int licenseType, CancellationToken ct)
+    {
+        if (!PilotAddress.TryParse(url, out var address, out var error))
+            throw new PilotGatewayException(PilotErrorKind.Configuration, error!);
+        var serverUrl = _network.ToInternal(address!.ServerUrl);
+        var database = address.Database;
+        HttpPilotClient? client = null;
+        try
+        {
+            var work = Task.Run(async () =>
+            {
+                var credentials = ConnectionCredentials.GetConnectionCredentials(
+                    serverUrl.TrimEnd('/') + "/" + Uri.EscapeDataString(database), login.Login, login.Password.ConvertToSecureString());
+                client = new HttpPilotClient(credentials.GetConnectionString(), credentials.GetConnectionProxy());
+                client.Connect(false);
+                var api = client.GetServerAsyncApi(new PilotReportGateway.ChangeCallback());
+                client.GetAuthenticationApi().Login(database, credentials.Username, credentials.ProtectedPassword, false, licenseType);
+                await api.OpenDatabaseAsync();
+            }, ct);
+            await work.WaitAsync(OperationTimeout, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var translated = Translate(ex, address.ServerUrl);
+            throw translated.Kind == PilotErrorKind.Authentication
+                ? new PilotGatewayException(PilotErrorKind.Authentication, $"вход в базу «{database}» пользователем «{login.Login}» не удался: неверный логин или пароль.", ex)
+                : new PilotGatewayException(translated.Kind, $"вход в базу «{database}» пользователем «{login.Login}» не удался: {Inner(ex).Message}", ex);
+        }
+        finally
+        {
+            if (client is not null)
+            {
+                try { client.Disconnect(); } catch { /* соединение уже закрыто */ }
+                try { client.Dispose(); } catch { /* соединение уже закрыто */ }
+            }
+        }
+    }
+
+    private static Exception Inner(Exception ex)
+    {
+        while (ex is AggregateException { InnerException: { } inner })
+            ex = inner;
+        return ex;
     }
 
     private async Task<T> RunAsync<T>(

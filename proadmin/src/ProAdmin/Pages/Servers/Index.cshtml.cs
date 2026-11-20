@@ -52,7 +52,9 @@ public class IndexModel : AppPageModel
         }
         catch (PilotGatewayException ex)
         {
-            TempData["FlashError"] = $"{target.Title}: изменять настройки может только администратор этого сервера Pilot. Проверка входа: {ex.Message}";
+            TempData["FlashError"] = UsesServiceAccounts
+                ? $"{target.Title}: служебная учётная запись контура не принята сервером Pilot ({ex.Message}). Проверьте её в «Настройках»."
+                : $"{target.Title}: изменять настройки может только администратор этого сервера Pilot. Проверка входа: {ex.Message}";
             return RedirectToPage();
         }
 
@@ -66,7 +68,7 @@ public class IndexModel : AppPageModel
 
         try
         {
-            _store.Write(env, desired, CurrentSession.PilotLogin);
+            _store.Write(env, desired, CurrentSession.Actor);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {

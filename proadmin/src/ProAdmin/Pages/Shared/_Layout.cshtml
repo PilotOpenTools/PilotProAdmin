@@ -108,11 +108,8 @@
                 {
                     <a class="chip chip-warn" href="/GitLab" aria-current="@(section == "gitlab" ? "page" : null)">GitLab не подключён</a>
                 }
-                @if (session!.LoginCredential is null)
-                {
-                    <a class="chip" asp-page="/PilotConnection">Подключить Pilot</a>
-                }
-                else
+                @* Вход в Pilot показываем только в режиме GitHub: с GitLab админка работает служебными учётками контуров из «Настроек». *@
+                @if (githubMode && session!.LoginCredential is not null)
                 {
                     <div class="session-pilot" title="@PilotChipTitle(session)">
                         <span class="chip"><span class="muted">Pilot</span> @session.PilotLogin</span>
@@ -126,14 +123,10 @@
                             }
                         </ul>
                     </div>
-                    @if (!githubMode)
-                    {
-                        <a class="chip" asp-page="/PilotConnection">Сменить учётную запись Pilot</a>
-                    }
                 }
                 <form method="post" action="/Logout" class="inline">
                     @Html.AntiForgeryToken()
-                    <button type="submit" class="btn btn-ghost btn-sm" title="Выйти из Pilot и GitLab: учётки и токен этой сессии удаляются">Выйти</button>
+                    <button type="submit" class="btn btn-ghost btn-sm" title="Выйти: токен GitLab этой сессии удаляется">Выйти</button>
                 </form>
             </div>
         </div>

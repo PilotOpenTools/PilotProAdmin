@@ -12,7 +12,6 @@ public sealed class DeployAccountInput
 {
     public string? Login { get; set; }
     public string? Password { get; set; }
-    public bool Disable { get; set; }
 }
 
 public sealed class DeployAccounts(IDataProtectionProvider protection, IOptions<AppOptions> options)
@@ -33,8 +32,10 @@ public sealed class DeployAccounts(IDataProtectionProvider protection, IOptions<
     public List<DeployAccountInput> Prefill(AdminSettings settings) => Contours.Select(contour =>
         new DeployAccountInput { Login = Get(settings, contour)?.Login }).ToList();
 
+    /// <param name="notes">Что сделано в базах (создан служебный пользователь) и предупреждения по учётным записям,
+    /// которые не менялись: их проблемы сохранение не останавливают.</param>
     public async Task<string?> ApplyAsync(AdminSettings settings, IReadOnlyList<DeployAccountInput> inputs,
-        PilotGateway pilot, CancellationToken ct)
+        PilotGateway pilot, CancellationToken ct, List<string>? notes = null)
     {
         if (inputs.Count != Contours.Count)
             return "Не удалось прочитать служебные учётные записи. Обновите страницу и повторите.";
@@ -42,22 +43,36 @@ public sealed class DeployAccounts(IDataProtectionProvider protection, IOptions<
         {
             var contour = Contours[i];
             var input = inputs[i];
-            if (input.Disable)
-            {
-                settings.DeployLogins[contour] = new("", "");
-                continue;
-            }
             var previous = Get(settings, contour);
             var login = input.Login?.Trim();
+            var url = contour == "stage" ? settings.StagePilotUrl : settings.Find(contour)?.PilotUrl;
             if (string.IsNullOrEmpty(input.Password) &&
                 (string.IsNullOrEmpty(login) || login == previous?.Login))
+            {
+                // Учётная запись не менялась (в том числе заданная установщиком в .env): пользователь базы
+                // заводится и здесь, но сбой (сервер недоступен) только предупреждение.
+                if (previous is not null && !string.IsNullOrWhiteSpace(url))
+                {
+                    try
+                    {
+                        if (await pilot.EnsureDatabaseUserAsync(url, previous, settings.ReportsLicenseType, ct) is { } done)
+                            notes?.Add($"Pilot {contour}: {done}.");
+                    }
+                    catch (PilotGatewayException ex) { notes?.Add($"Pilot {contour}: служебная учётная запись не проверена - {ex.Message}"); }
+                }
                 continue;
+            }
             if (string.IsNullOrEmpty(login) || string.IsNullOrEmpty(input.Password))
                 return $"Pilot {contour}: при изменении учётной записи укажите логин и пароль.";
-            var url = contour == "stage" ? settings.StagePilotUrl : settings.Find(contour)?.PilotUrl;
             if (string.IsNullOrWhiteSpace(url))
                 return $"Pilot {contour}: сначала укажите адрес сервера.";
-            try { await pilot.VerifyLoginAsync(url, new PilotLogin(login, input.Password), ct); }
+            var account = new PilotLogin(login, input.Password);
+            try
+            {
+                await pilot.VerifyLoginAsync(url, account, ct);
+                if (await pilot.EnsureDatabaseUserAsync(url, account, settings.ReportsLicenseType, ct) is { } done)
+                    notes?.Add($"Pilot {contour}: {done}.");
+            }
             catch (PilotGatewayException ex) { return $"Pilot {contour}: {ex.Message}"; }
             settings.DeployLogins[contour] = new(login, _protector.Protect(input.Password));
         }

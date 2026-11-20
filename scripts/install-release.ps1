@@ -4,10 +4,13 @@ param(
     [string]$ImageArchive,
     [string]$Backup,
     [string]$PilotImage,
-    [string]$InstallDirectory = (Join-Path $PSScriptRoot 'PilotProAdmin-install')
+    [string]$InstallDirectory
 )
 
 $ErrorActionPreference = 'Stop'
+# Не в значении по умолчанию: при «powershell -File install.ps1» Windows PowerShell 5.1 оставляет там $PSScriptRoot пустым.
+$scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $InstallDirectory) { $InstallDirectory = Join-Path $scriptDirectory 'PilotProAdmin-install' }
 $version = '__RELEASE_VERSION__'
 $repository = '__RELEASE_REPOSITORY__'
 $payload = '__RELEASE_PAYLOAD__'
@@ -112,19 +115,29 @@ function Assert-CompleteBackup([string]$Directory, $Manifest) {
     }
 }
 
+# Linux: PowerShell 7 (pwsh) и Docker Engine на этой же машине. В Windows PowerShell 5.1 переменной $IsLinux нет.
+$onLinux = [bool](Get-Variable IsLinux -ValueOnly -ErrorAction SilentlyContinue)
 $endpoint = Invoke-Docker context inspect --format '{{.Endpoints.docker.Host}}'
-if (($env:DOCKER_HOST -and $env:DOCKER_HOST -notlike 'npipe:*') -or $endpoint -notlike 'npipe:*') {
+if ($onLinux) {
+    # Владельцы папок данных (пользователи контейнеров) меняются только от root.
+    if ("$(& id -u)" -ne '0') { throw 'Запустите установку от root: sudo pwsh ./install.ps1' }
+    if (($env:DOCKER_HOST -and $env:DOCKER_HOST -notlike 'unix:*') -or $endpoint -notlike 'unix:*') {
+        throw 'Выберите локальный Docker этой машины (unix-сокет): папки данных монтируются с этого диска.'
+    }
+} elseif (($env:DOCKER_HOST -and $env:DOCKER_HOST -notlike 'npipe:*') -or $endpoint -notlike 'npipe:*') {
     throw 'Выберите локальный контекст Docker Desktop для Windows.'
 }
 $platform = Invoke-Docker version --format '{{.Server.Os}}/{{.Server.Arch}}'
-if ($platform -ne 'linux/amd64') { throw 'Запустите Docker Desktop с Linux-контейнерами на Windows x64.' }
+if ($platform -ne 'linux/amd64') {
+    throw $(if ($onLinux) { 'Нужен Docker на Linux x64 (amd64).' } else { 'Запустите Docker Desktop с Linux-контейнерами на Windows x64.' })
+}
 Invoke-Docker compose version | Out-Host
 
 $admin = "${repository}:$version"
 $migration = "${repository}-migration:$version"
 if (-not $ImageArchive) {
     foreach ($name in "PilotProAdmin-v$version-linux-amd64-images.tar.gz", "PilotProAdmin-v$version-linux-amd64-images.tar") {
-        $candidate = Join-Path $PSScriptRoot $name
+        $candidate = Join-Path $scriptDirectory $name
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { $ImageArchive = $candidate; break }
     }
 }
@@ -143,6 +156,23 @@ if ($ImageArchive) {
 
 $kit = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDirectory))
 if ($kit -match '[$#]') { throw 'Выберите папку установки без символов $ и #.' }
+# Папка установки хранит базы стенда: временные и «бытовые» папки (Загрузки, рабочий стол, Temp, OneDrive) часто чистят.
+$riskyRoots = @([IO.Path]::GetTempPath(), '/tmp') + @(
+    if (-not $onLinux) {
+        [Environment]::GetFolderPath('Desktop')
+        Join-Path $env:USERPROFILE 'Downloads'
+        $env:OneDrive
+    } else {
+        Join-Path $HOME 'Downloads'
+        Join-Path $HOME 'Загрузки'
+    }) | Where-Object { $_ }
+$riskyRoot = $riskyRoots | Where-Object {
+    $kit.StartsWith(([IO.Path]::GetFullPath($_)).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+} | Select-Object -First 1
+if ($riskyRoot) {
+    Write-Warning ("Папка установки $kit лежит в $riskyRoot. В ней будут храниться базы стенда, а такие папки часто чистят. " +
+        'Лучше распаковать lite в постоянное место (например D:\PilotProAdmin) или указать -InstallDirectory.')
+}
 $envFile = Join-Path $kit '.env'
 $reinstall = Test-Path -LiteralPath $envFile
 $saved = @{}
@@ -161,6 +191,7 @@ $gitLabUrl = ''
 $grafanaUrl = ''
 $gitLabHost = ''
 $pilotUrls = @{}
+$pilotDatabases = @{}
 if (-not $Backup -and -not $saved.ROLES -and (Select-Option 'Восстановить полный стенд из резервной копии? 1 — да, 2 — нет' @('1', '2')) -eq '1') {
     $Backup = (Read-Host 'Путь к каталогу резервной копии с manifest.json').Trim().Trim('"')
     if (-not $Backup) { throw 'Укажите каталог резервной копии.' }
@@ -176,7 +207,8 @@ if ($Backup) {
         throw 'В каталоге gitlab должен быть один непустой архив *_gitlab_backup.tar.'
     }
     if ($gitLabBackups[0].Name -notmatch '_(\d+\.\d+\.\d+)(?:-(ce|ee))?_gitlab_backup\.tar$') {
-        $metadata = & tar.exe -xOf $gitLabBackups[0].FullName 'backup_information.yml'
+        $tar = if ($onLinux) { 'tar' } else { 'tar.exe' }
+        $metadata = & $tar -xOf $gitLabBackups[0].FullName 'backup_information.yml'
         if ($LASTEXITCODE -or ($metadata -join "`n") -notmatch '(?m)^:gitlab_version:\s*[''"]?(\d+\.\d+\.\d+)(?:-(ce|ee))?[''"]?\s*$') {
             throw 'Не удалось определить версию GitLab по имени архива или backup_information.yml.'
         }
@@ -208,6 +240,23 @@ if ($Backup) {
             '2' { $roles = @($roles | Where-Object { $_ -ne 'metrics' }); $grafanaUrl = Read-ServiceUrl 'Адрес Grafana' }
             '3' { $roles = @($roles | Where-Object { $_ -ne 'metrics' }) }
         }
+    }
+    # Новый Pilot-Server ставится без баз: базу можно сразу загрузить из файловой базы Pilot (.dbp) - она станет pilot-ice_ru.
+    $lastDatabase = ''
+    foreach ($contour in @('prod', 'test', 'stage' | Where-Object { $_ -in $roles })) {
+        if ((Select-Option "База Pilot ${contour}. 1 — пустой сервер, 2 — загрузить из файловой базы (.dbp)" @('1', '2')) -eq '1') { continue }
+        if (-not $lastDatabase) {
+            Write-Host 'Укажите папку файловой базы Pilot - ту, где лежат base.dbp, base.messages.dbp и FileArchive. Например:'
+            Write-Host '  D:\Databases\pilot-ice_ru'
+            Write-Host '  D:\Databases.zip\Databases\pilot-ice_ru   (папка внутри .zip, распаковывать не обязательно)'
+            Write-Host 'Путь к самому base.dbp тоже подойдёт. База станет pilot-ice_ru на PostgreSQL, файлы - в RustFS; исходные файлы не меняются.'
+        }
+        $hint = if ($lastDatabase) { " [Enter — $lastDatabase]" } else { '' }
+        $path = (Read-Host "Путь к файловой базе Pilot$hint").Trim().Trim('"')
+        if (-not $path) { $path = $lastDatabase }
+        if (-not $path) { throw 'Укажите путь к файловой базе Pilot.' }
+        $pilotDatabases[$contour] = $path
+        $lastDatabase = $path
     }
 }
 if ('gitlab' -in $roles -and (-not $saved.ROLES -or $Backup)) {
@@ -244,6 +293,8 @@ if (-not $reinstall) {
     $project = 'pilotproadmin-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
     [IO.File]::WriteAllText($envFile, $template + "`nRELEASE_KIT=true`nADMIN_BIND=127.0.0.1`nCOMPOSE_PROJECT_NAME=$project`n")
 }
+# Пароли стека в .env: на Linux сразу закрываем от остальных пользователей (на Windows это делает установка стека).
+if ($onLinux) { & chmod 600 $envFile }
 if ($PilotImage) {
     $lines = [IO.File]::ReadAllLines($envFile) | Where-Object { $_ -notmatch '^PILOT_SERVER_IMAGE=' }
     [IO.File]::WriteAllLines($envFile, [string[]](@($lines) + "PILOT_SERVER_IMAGE=$PilotImage"))
@@ -273,5 +324,9 @@ $installArgs = @{
 }
 if ($gitLabHost) { $installArgs.GitLabHost = $gitLabHost }
 if ($Backup) { $installArgs.FromBackup = $Backup } else { $installArgs.NoData = $true }
+if ($pilotDatabases.Count) { $installArgs.PilotDatabases = $pilotDatabases }
 Push-Location $kit
 try { & (Join-Path $kit 'install-stack.ps1') @installArgs } finally { Pop-Location }
+Write-Host ''
+Write-Host "Папка установки: $kit" -ForegroundColor Yellow
+Write-Host 'В ней хранятся базы и пароли стенда. Не удаляйте, не переносите и не переименовывайте её; делайте резервные копии на другой диск.' -ForegroundColor Yellow
