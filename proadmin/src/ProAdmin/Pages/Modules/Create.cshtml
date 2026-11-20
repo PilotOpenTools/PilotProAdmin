@@ -1,0 +1,180 @@
+@page "/Modules/Create"
+@model ProAdmin.Pages.Modules.CreateModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = Model.IsServer ? "Новый серверный модуль" : "Новый клиентский модуль";
+    var listUrl = Model.IsServer ? "/Modules?kind=server" : "/Modules";
+    var hints = Model.Hints;
+}
+<div class="crumbs">
+    <a href="@listUrl">@(Model.IsServer ? "Серверные модули" : "Модули")</a> <span>/</span> <span>Новый модуль</span>
+</div>
+
+<div class="page-head">
+    <div>
+        <h1>@(Model.IsServer ? "Новый серверный модуль" : "Новый клиентский модуль")</h1>
+        <p class="muted">
+            Админка создаст репозиторий в группе <code>@Model.ModulesGroupPath</code> с готовым проектом:
+            @(Model.IsServer
+                ? "активность IServerActivity с примером, профиль отладки утилитой debug, сборка zip для ServerHost."
+                : "точка входа и пункт контекстного меню с примером, сборка zip для Pilot, запуск клиента по F5.")
+            Ветки <code>main</code> и <code>dev</code>, шаблон CI в <code>dev</code>, защита веток - как у подключённых модулей.
+        </p>
+    </div>
+</div>
+
+@foreach (var e in Model.Errors)
+{
+    <div class="alert alert-error">@e</div>
+}
+@foreach (var w in Model.Warnings)
+{
+    <div class="alert alert-warn">@w</div>
+}
+
+@if (Model.Folders.Count > 0)
+{
+    <form method="post" class="form" asp-route-kind="@Model.ModuleKind.Query()">
+        <section class="card narrow-form">
+            <label class="field">
+                <span>Название</span>
+                <input asp-for="Title" id="m-title" required maxlength="120" placeholder="@(Model.IsServer ? "Дата рассмотрения документа" : "Открыть Storadge")" />
+                <small class="muted">По-русски, как увидят пользователи. Без скобок и кавычек.</small>
+            </label>
+
+            <label class="field">
+                <span>Код</span>
+                <input asp-for="Code" id="m-code" required pattern="[A-Za-z][A-Za-z0-9_]{1,59}" maxlength="60" placeholder="@(Model.IsServer ? "SetReviewDate" : "OpenStoradge")" autocomplete="off" />
+                <small class="muted">
+                    Латиницей: имя проекта GitLab, пространство имён и сборки@(Model.IsServer ? ", имя активности в сценариях автоматизации" : "").
+                    После создания не меняется.
+                </small>
+            </label>
+
+            @if (!Model.IsServer)
+            {
+                <div class="field-row">
+                    <label class="field">
+                        <span>Раздел</span>
+                        <input asp-for="Section" id="m-section" maxlength="2" placeholder="0" inputmode="numeric" />
+                    </label>
+                    <label class="field">
+                        <span>Номер</span>
+                        <input asp-for="Number" id="m-number" required pattern="\d{3}" maxlength="3" inputmode="numeric" />
+                    </label>
+                </div>
+                <small class="muted">
+                    Номер - три цифры, префикс сборки и папки в кэше клиента.
+                    @if (hints?.SuggestedNumber is { } n)
+                    {
+                        <text>Свободный следующий - <b>@n</b>@(hints.UsedNumbers.Count > 0 ? $", заняты: {string.Join(", ", hints.UsedNumbers.OrderBy(x => x).TakeLast(8))}" : "").</text>
+                    }
+                </small>
+            }
+
+            <div class="field">
+                <span>Что получится</span>
+                <div class="muted small">Сборка <code id="m-asm"></code></div>
+                <div class="muted small">Наименование в Pilot <code id="m-product"></code></div>
+            </div>
+
+            <label class="field">
+                <span>Описание (необязательно)</span>
+                <textarea asp-for="Description" rows="2" maxlength="500" placeholder="Что делает модуль и для кого"></textarea>
+            </label>
+
+            @if (!Model.IsServer)
+            {
+                <label class="check">
+                    <input type="checkbox" asp-for="UseClientSdk" />
+                    На Pilot.ClientSdk: статистика действий в Grafana, окно «Загрузка модулей», общие методы SDK
+                </label>
+                <small class="muted">
+                    @if (hints?.PackageSource is { } source)
+                    {
+                        <text>Пакет <code>Pilot.ClientSdk @(hints.ClientSdkVersion ?? ModuleScaffold.DefaultClientSdkVersion)</code> - из реестра проекта <code>@hints.ClientSdkProject</code>; адрес <code>@source</code> попадёт в nuget.config.</text>
+                    }
+                    else
+                    {
+                        <text>Проект Pilot.ClientSdk в группе не найден: в nuget.config будет образец адреса, его нужно заменить, иначе CI не восстановит пакет.
+                            На серверах модуль <a href="/OpenTools">PilotClientSdk</a> должен быть назначен пользователям.</text>
+                    }
+                </small>
+
+                <label class="field">
+                    <span>Клиент для отладки (F5)</span>
+                    <select asp-for="DebugClient">
+                        <option value="@ModuleScaffold.PilotBim">Pilot-BIM</option>
+                        <option value="@ModuleScaffold.PilotIce">Pilot-ICE Enterprise</option>
+                    </select>
+                </label>
+            }
+
+            <label class="field">
+                <span>Папка в GitLab</span>
+                <select asp-for="Folder">
+                    @foreach (var f in Model.Folders)
+                    {
+                        <option value="@f.Folder" selected="@(f.Folder == (Model.Folder ?? ""))">@(f.Folder.Length == 0 ? $"{Model.ModulesGroupPath} (корень)" : $"{Model.ModulesGroupPath}/{f.Folder}")</option>
+                    }
+                </select>
+            </label>
+
+            <label class="check">
+                <input type="checkbox" asp-for="DeployToTest" />
+                Сразу собрать и выложить на тестовый сервер (pipeline ветки dev)
+            </label>
+
+            <div class="form-actions">
+                <button class="btn btn-primary" type="submit">Создать модуль</button>
+                <a class="btn btn-ghost" href="@listUrl">Отмена</a>
+            </div>
+        </section>
+    </form>
+
+    <details class="card narrow-form">
+        <summary>Что будет в репозитории</summary>
+        <ul class="muted small">
+            @if (Model.IsServer)
+            {
+                <li><code>Код.csproj</code> - netstandard2.0, Pilot ServerExtensions SDK только для компиляции, Release собирает <code>bin/Код.servext-1.0.0.zip</code>.</li>
+                <li><code>КодActivity.cs</code> - активность <code>IServerActivity</code> с именем = код; пример пишет дату в атрибут из <code>params</code> сценария.</li>
+                <li><code>Properties/launchSettings.json</code> - профиль «debug»: F5 запускает модуль на реальных данных утилитой <a href="https://github.com/PilotOpenTools/PilotServerDebug" target="_blank" rel="noopener">debug</a>.</li>
+            }
+            else
+            {
+                <li><code>Код.csproj</code> - net48 + WPF, Pilot SDK только для компиляции, Release собирает <code>bin/NNNКод.ext2-1.0.0.zip</code>, Debug копирует модуль в папку разработки клиента.</li>
+                <li><code>Pilot/StartPoint.cs</code> - точка входа (<code>IDataPlugin</code>, с ClientSdk - ещё <code>IModule</code>).</li>
+                <li><code>Pilot/ObjectMenu.cs</code> - пункт контекстного меню объектов: пример действия со статистикой.</li>
+                <li><code>nuget.config</code> - реестр пакетов GitLab с Pilot.ClientSdk (если модуль на нём).</li>
+            }
+            <li><code>AssemblyInfo.cs</code> - «Наименование» (AssemblyProduct), по нему админка связывает модуль на сервере с репозиторием.</li>
+            <li><code>CHANGELOG.md</code> (1.0.0), <code>README.md</code> со схемой веток и отладкой, <code>.gitignore</code>, решение <code>.sln</code>.</li>
+            <li>В <code>dev</code> - <code>.gitlab-ci.yml</code> из шаблона админки; в <code>main</code> он придёт с первым релизом.</li>
+        </ul>
+    </details>
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            const server = @(Model.IsServer ? "true" : "false");
+            const $ = id => document.getElementById(id);
+            const update = () => {
+                const code = ($('m-code')?.value || '').trim() || 'Код';
+                const title = ($('m-title')?.value || '').trim() || 'Название';
+                if (server) {
+                    $('m-asm').textContent = code + '.servext';
+                    $('m-product').textContent = title + ' - (' + code + ') - (CICD)';
+                } else {
+                    const number = ($('m-number')?.value || '').trim() || 'NNN';
+                    const section = ($('m-section')?.value || '').trim() || '0';
+                    $('m-asm').textContent = number + code + '.ext2';
+                    $('m-product').textContent = section + '.' + number + ' - ' + title + ' - (' + code + ') - (CICD)';
+                }
+            };
+            ['m-code', 'm-title', 'm-number', 'm-section'].forEach(id => $(id)?.addEventListener('input', update));
+            update();
+        })();
+    </script>
+}

@@ -165,6 +165,8 @@ a.chip[aria-current] { text-decoration: underline; }
 .narrow-card { max-width: 480px; }
 .narrow-field { max-width: 240px; }
 .narrow-form { max-width: 680px; display: flex; flex-direction: column; gap: 14px; }
+.field-row { display: flex; gap: 12px; }
+.field-row .field { flex: 1; }
 .folder-row td { background: var(--surface-2); font-weight: 650; font-size: 13px; }
 .folder-row .muted { font-weight: normal; }
 .repo-link { margin-left: 6px; font-size: 12px; }
