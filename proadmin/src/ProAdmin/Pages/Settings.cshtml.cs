@@ -294,6 +294,8 @@ public class SettingsModel : AppPageModel
 
     private void Validate()
     {
+        Form.ModuleTemplates ??= new();
+        Errors.AddRange(Form.ModuleTemplates.Validate());
         // Значения, которые попадают в CI-конфигурацию репозиториев, проверяются до Normalize (он не должен их «чинить» молча).
         if (!AdminSettings.IsValidJobName(Form.ModulesBuildJob?.Trim()) && !string.IsNullOrWhiteSpace(Form.ModulesBuildJob))
             Errors.Add("Имя job сборки модуля: латинские буквы, цифры, «_» и «-», начинается с буквы или «_» (до 64 символов).");
