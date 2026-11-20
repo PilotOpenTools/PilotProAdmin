@@ -92,7 +92,14 @@ else if (state is not null)
                     <td class="small">
                         @if (rel.Package is not null)
                         {
-                            <a class="mono" href="@rel.Url" target="_blank" rel="noopener">@rel.Version</a>
+                            @if (rel.Url is not null)
+                            {
+                                <a class="mono" href="@rel.Url" target="_blank" rel="noopener">@rel.Version</a>
+                            }
+                            else
+                            {
+                                <span class="mono" title="Файл из папки @OpenToolsReleases.LocalFolder каталога данных админки">@rel.Version</span>
+                            }
                             <div class="muted">@rel.Tag@(rel.Published is { } at ? $" · {at.ToLocalTime():dd.MM.yyyy}" : "")</div>
                         }
                         else
@@ -144,7 +151,8 @@ else if (state is not null)
             <li>Модуль на сервере находится по «Наименованию», коду в скобках, имени сборки или прежнему имени (Pilot.ClientSdk обновит объект старого 113Modules.ext2).</li>
             <li>Версия на сервере новее релиза («новее релиза») не понижается: такой модуль ведётся в GitLab стенда или выложен вручную.</li>
             <li>Библиотеки модулей PilotOpenTools правилами раздела «Библиотеки» не проверяются: это готовые релизы.</li>
-            <li>ServerHost берётся из релиза PilotProAdmin (файл <code>ServerHost-X.Y.Z.zip</code>) и только обновляется: первая установка хоста - по инструкции. Записывает его только администратор админки.</li>
+            <li>ServerHost берётся из релиза PilotProAdmin (файл <code>ServerHost-X.Y.Z.zip</code>). Ставит и обновляет его только администратор админки; новая версия работает после перезапуска сервера Pilot. Пока хоста нет в релизе, первую установку можно сделать архивом на странице <a href="/ServerModules">«ServerHost на серверах»</a>.</li>
+            <li>Если GitHub недоступен (закрытый контур) или в релизе нет нужного файла, используется файл с тем же именем, положенный в папку <code>@OpenToolsReleases.LocalFolder</code> каталога данных админки (например, <code>ServerHost-1.3.0.zip</code>).</li>
             <li>Каждая установка и обновление попадают в «Операции».</li>
         </ul>
     </details>

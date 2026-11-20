@@ -116,22 +116,20 @@ public class IndexModel : AppPageModel
         {
             ServerHostPackage.CheckSize(Archive.Length, fileName);
             host = ServerHostPackage.Find(await _extensions.ListServerExtensionsAsync(Current!.PilotUrl, Login(), AppSettings.ReportsLicenseType, ct));
-            if (host is null)
-            {
-                TempData["FlashError"] = $"{Current.Title}: объекта ServerHost в базе нет - сначала установите хост по инструкции.";
-                return Back();
-            }
 
             var zip = new byte[Archive.Length];
             await using (var stream = Archive.OpenReadStream())
                 await stream.ReadExactlyAsync(zip, ct);
-            (package, downgrade) = ServerHostPackage.Check(zip, fileName, host.Version);
+            (package, downgrade) = ServerHostPackage.Check(zip, fileName, host?.Version);
         }
         catch (Exception ex) when (ex is InvalidDataException or PilotGatewayException)
         {
             TempData["FlashError"] = $"{Current!.Title}: {ex.Message}";
             return Back();
         }
+
+        if (host is null)
+            return await InstallHostAsync(package, ct);
 
         if (downgrade && !AllowDowngrade)
         {
@@ -173,6 +171,42 @@ public class IndexModel : AppPageModel
         FinishJob(job, null);
         TempData["Flash"] = $"{Current.Title}: ServerHost {package.Version} записан в базу. " +
                             "Новая версия хоста вступит в силу после перезапуска сервера Pilot (всех узлов в кластере).";
+        return Back();
+    }
+
+    /// <summary>Первая установка хоста: объект $PilotServerExtension в папке расширений; работает после перезапуска сервера.</summary>
+    private async Task<IActionResult> InstallHostAsync(ModulePackageInfo package, CancellationToken ct)
+    {
+        var job = new PublishJob
+        {
+            Operation = "установка ServerHost",
+            Env = Current!.Key,
+            EnvTitle = Current.Title,
+            Branch = "расширение сервера",
+            AutomationName = ServerHostPackage.ExtensionName,
+            CommitMessage = package.Version,
+            PilotUser = CurrentSession.PilotLogin,
+            GitLabUser = CurrentSession.GitLabUser?.Username,
+        };
+        _jobs.Add(job);
+        try
+        {
+            await _extensions.CreateServerExtensionAsync(Current.PilotUrl, Login(), AppSettings.ReportsLicenseType, ServerHostPackage.ExtensionName,
+                ServerHostPackage.ExtensionName + ".zip", package.Zip, package.ExtensionAdditional,
+                $"{package.Version} · установлен из админки, {CurrentSession.Actor}", ct);
+        }
+        catch (Exception ex)
+        {
+            FinishJob(job, ex.Message);
+            if (ex is not PilotGatewayException)
+                throw;
+            TempData["FlashError"] = $"{Current.Title}: {ex.Message}";
+            return Back();
+        }
+        job.Add("ok", $"ServerHost {package.Version} установлен в базу {Current.Title}; заработает после перезапуска сервера Pilot.");
+        FinishJob(job, null);
+        TempData["Flash"] = $"{Current.Title}: ServerHost {package.Version} установлен в базу. Перезапустите сервер Pilot (все узлы в кластере) - " +
+                            "это последний перезапуск, дальше серверные модули обновляются отсюда.";
         return Back();
     }
 
