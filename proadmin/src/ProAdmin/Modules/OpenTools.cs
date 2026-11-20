@@ -91,21 +91,31 @@ public sealed class OpenToolsReleases
     public const long MaxAssetBytes = 64 * 1024 * 1024;
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
 
+    /// <summary>Подпапка каталога данных админки с файлами релизов на случай, когда GitHub недоступен или файла в релизе нет.</summary>
+    public const string LocalFolder = "opentools";
+
     private readonly IHttpClientFactory _http;
     private readonly ILogger<OpenToolsReleases> _logger;
+    private readonly string? _localDir;
     private readonly ConcurrentDictionary<string, (DateTimeOffset At, OpenToolRelease Release)> _cache = new();
 
-    public OpenToolsReleases(IHttpClientFactory http, ILogger<OpenToolsReleases> logger)
+    public OpenToolsReleases(IHttpClientFactory http, ILogger<OpenToolsReleases> logger, string? localDir = null)
     {
         _http = http;
         _logger = logger;
+        _localDir = localDir;
     }
+
+    /// <summary>Папка локальных файлов релизов (data/opentools); null - не задана.</summary>
+    public string? LocalDirectory => _localDir;
 
     public async Task<OpenToolRelease> GetAsync(OpenTool tool, bool refresh, CancellationToken ct)
     {
         if (!refresh && _cache.TryGetValue(tool.Key, out var hit) && DateTimeOffset.UtcNow - hit.At < Ttl)
             return hit.Release;
         var release = await LoadAsync(tool, ct);
+        if (release.Package is null && Local(tool) is { } local)
+            release = local with { Error = null, Tag = local.Tag + (release.Error is null ? "" : $" (GitHub: {release.Error})") };
         // Ошибку держим недолго: GitHub мог быть недоступен минуту.
         _cache[tool.Key] = (release.Error is null ? DateTimeOffset.UtcNow : DateTimeOffset.UtcNow - Ttl + TimeSpan.FromMinutes(1), release);
         return release;
@@ -171,6 +181,38 @@ public sealed class OpenToolsReleases
     }
 
     /// <summary>
+    /// Файл релиза, положенный администратором в data/opentools (закрытый контур или файла ещё нет в релизе GitHub):
+    /// подходящий по имени файл с самой большой версией.
+    /// </summary>
+    private OpenToolRelease? Local(OpenTool tool)
+    {
+        if (_localDir is null || !Directory.Exists(_localDir))
+            return null;
+        var kind = tool.Kind == OpenToolKind.ServerHost ? ModuleKind.Server : ModuleKind.Client;
+        OpenToolRelease? best = null;
+        foreach (var file in Directory.EnumerateFiles(_localDir).Where(f => tool.Asset.IsMatch(Path.GetFileName(f))))
+        {
+            try
+            {
+                var info = new FileInfo(file);
+                if (info.Length is <= 0 or > MaxAssetBytes)
+                    continue;
+                var zip = File.ReadAllBytes(file);
+                var name = Path.GetFileName(file);
+                var package = tool.Kind == OpenToolKind.ServerHost ? ServerHostPackage.Check(zip, name, null).Package : ModulePackage.Analyze(zip, name, kind);
+                var candidate = new OpenToolRelease($"локальный файл {name}", null, new DateTimeOffset(info.LastWriteTimeUtc), package, null);
+                if (best is null || OpenToolsService.Compare(best.Version, candidate.Version) == OpenToolSync.Outdated)
+                    best = candidate;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "PilotOpenTools: локальный файл {File} не прочитан", file);
+            }
+        }
+        return best;
+    }
+
+    /// <summary>
     /// Без API: github.com/…/releases/latest перенаправляет на страницу тега, список файлов - во фрагменте expanded_assets.
     /// Размер файла здесь неизвестен (0): его ограничивает MaxResponseContentBufferSize клиента.
     /// </summary>
@@ -232,8 +274,7 @@ public sealed class OpenToolRow
 
     public bool CanInstall(string env) =>
         Release.Package is not null && Envs.TryGetValue(env, out var c) &&
-        (c.Sync is OpenToolSync.Missing or OpenToolSync.Outdated) &&
-        !(Tool.Kind == OpenToolKind.ServerHost && c.Sync == OpenToolSync.Missing);
+        c.Sync is OpenToolSync.Missing or OpenToolSync.Outdated;
 
     public IEnumerable<string> Pending => Envs.Keys.Where(CanInstall);
 }
@@ -381,10 +422,18 @@ public sealed class OpenToolsService
             if (tool.Kind == OpenToolKind.ServerHost)
             {
                 if (existing is null)
-                    throw new WorkflowException($"{env.Title}: объекта ServerHost в базе нет - первую установку хоста делают по инструкции (README ServerHost).");
-                await _modules.UpdateServerExtensionAsync(env.PilotUrl, login, license, existing.Id,
-                    existing.FileName ?? ServerHostPackage.ExtensionName + ".zip", package.Zip, package.ExtensionAdditional, reason, ct);
-                message = $"{env.Title}: ServerHost {package.Version} записан в базу. Вступит в силу после перезапуска сервера Pilot (всех узлов в кластере).";
+                {
+                    await _modules.CreateServerExtensionAsync(env.PilotUrl, login, license, ServerHostPackage.ExtensionName,
+                        ServerHostPackage.ExtensionName + ".zip", package.Zip, package.ExtensionAdditional, reason, ct);
+                    message = $"{env.Title}: ServerHost {package.Version} установлен в базу. Перезапустите сервер Pilot (все узлы в кластере) - " +
+                              "это последний перезапуск, дальше серверные модули обновляются без него.";
+                }
+                else
+                {
+                    await _modules.UpdateServerExtensionAsync(env.PilotUrl, login, license, existing.Id,
+                        existing.FileName ?? ServerHostPackage.ExtensionName + ".zip", package.Zip, package.ExtensionAdditional, reason, ct);
+                    message = $"{env.Title}: ServerHost {package.Version} записан в базу. Вступит в силу после перезапуска сервера Pilot (всех узлов в кластере).";
+                }
             }
             else if (existing is not null)
             {
@@ -398,8 +447,7 @@ public sealed class OpenToolsService
                 var list = await _modules.ListAsync(env.PilotUrl, login, license, ct);
                 var folder = list.RootFolderId ?? throw new WorkflowException($"{env.Title}: в базе нет папки расширений.");
                 await _modules.CreateAsync(env.PilotUrl, login, license, folder, package, reason, ct);
-                message = $"{env.Title}: {tool.Title} {package.Version} установлен. " +
-                          (_modules.AfterCreateWarning(package.ExtensionName, env.Title) ?? "Назначьте модуль пользователям в Pilot-myAdmin.");
+                message = $"{env.Title}: {tool.Title} {package.Version} установлен, назначьте его пользователям в Pilot-myAdmin.";
             }
             job.Add("ok", message);
             Finish(job, null);

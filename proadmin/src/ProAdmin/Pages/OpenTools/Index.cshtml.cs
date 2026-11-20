@@ -139,7 +139,7 @@ public class IndexModel : AppPageModel
     public static string SyncHint(OpenToolCell cell, OpenToolRow row) => cell.Sync switch
     {
         OpenToolSync.Missing when row.Tool.Kind == OpenToolKind.ServerHost =>
-            "Объекта ServerHost в базе нет: первую установку хоста делают по инструкции, дальше его можно обновлять отсюда",
+            "Объекта ServerHost в базе нет: установка создаст его, заработает он после перезапуска сервера Pilot",
         OpenToolSync.Missing => "Модуля нет в папке расширений: установка создаст объект, назначить его пользователям нужно в Pilot-myAdmin",
         OpenToolSync.Outdated => $"На сервере {cell.Version}, в релизе GitHub {row.Release.Version}",
         OpenToolSync.Current => "Версия на сервере совпадает с последним релизом GitHub",

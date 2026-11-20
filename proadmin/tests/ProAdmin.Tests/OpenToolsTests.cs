@@ -73,13 +73,13 @@ public sealed class OpenToolsTests
     }
 
     [Fact]
-    public void ServerHostIsOnlyUpdatedNeverInstalled()
+    public void ServerHostCanBeInstalledAndUpdated()
     {
         var package = new ModulePackageInfo(new byte[] { 1 }, "ServerHost-1.3.0.zip", "ServerHost.servext", "1.3.0.0", null);
         var row = new OpenToolRow { Tool = Tool("serverhost"), Release = new OpenToolRelease("v1.0.4", null, null, package, null) };
         row.Envs["test"] = new OpenToolCell(null, OpenToolSync.Missing, null);
         row.Envs["prod"] = new OpenToolCell(null, OpenToolSync.Outdated, null);
-        Assert.Equal(new[] { "prod" }, row.Pending);
+        Assert.Equal(new[] { "test", "prod" }, row.Pending);
     }
 
     [Theory]

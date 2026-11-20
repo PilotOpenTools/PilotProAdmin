@@ -76,11 +76,22 @@
         <section class="card">
             <h2>Как установить ServerHost (один раз на сервер)</h2>
             <ol>
-                <li>Соберите <code>server-extensions/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>.</li>
-                <li>В клиенте Pilot: «Модули расширения» / добавить <code>ServerHost.zip</code> как расширение Pilot-Server.</li>
+                <li>Возьмите <code>ServerHost-X.Y.Z.zip</code> из <a href="https://github.com/PilotOpenTools/PilotProAdmin/releases/latest" target="_blank" rel="noopener">релиза PilotProAdmin</a>
+                    (или соберите <code>server-extensions/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>).</li>
+                <li>Загрузите архив формой ниже (только администратор админки) или в клиенте Pilot: «Модули расширения» / добавить как расширение Pilot-Server.
+                    Когда хост есть в релизе GitHub, его можно поставить и на странице <a href="/OpenTools">PilotOpenTools</a>.</li>
                 <li>Перезапустите сервер Pilot (контейнер) - это последний перезапуск: дальше модули обновляются отсюда.</li>
                 <li>Модули, которые сейчас установлены штатно (например, ApprovalDocumentVersionSaving), загрузите здесь и удалите из «Модулей расширения».</li>
             </ol>
+            @if (Model.IsAdmin && !readOnly)
+            {
+                <form method="post" asp-page-handler="UpdateHost" enctype="multipart/form-data" class="form" id="install-host"
+                      data-confirm="@(Model.IsProd ? "Установить ServerHost в базу ПРОДА? Он заработает после перезапуска сервера Pilot." : "Установить ServerHost в базу? Он заработает после перезапуска сервера Pilot.")">
+                    <input type="hidden" name="Env" value="@Model.Env" />
+                    <label class="field"><span>Архив ServerHost (в корне <code>ServerHost.servext.dll</code>)</span><input type="file" name="Archive" accept=".zip" required /></label>
+                    <button class="btn btn-primary" type="submit">Установить в базу</button>
+                </form>
+            }
         </section>
     }
 }

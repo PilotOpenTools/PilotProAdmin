@@ -131,7 +131,9 @@ builder.Services.AddSingleton<ProAdmin.Modules.ModuleCatalog>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblySpecStore>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblyScanService>();
 builder.Services.AddSingleton<ProAdmin.Modules.ModuleJobRunner>();
-builder.Services.AddSingleton<ProAdmin.Modules.OpenToolsReleases>();
+builder.Services.AddSingleton(sp => new ProAdmin.Modules.OpenToolsReleases(
+    sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<ILogger<ProAdmin.Modules.OpenToolsReleases>>(),
+    Path.Combine(dataDirectory, ProAdmin.Modules.OpenToolsReleases.LocalFolder)));
 builder.Services.AddSingleton<ProAdmin.Modules.OpenToolsService>();
 builder.Services.AddSingleton<ProAdmin.Compare.CompareService>();
 builder.Services.AddSingleton<ProAdmin.Types.TypesStore>();
