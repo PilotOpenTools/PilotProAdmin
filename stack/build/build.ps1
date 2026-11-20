@@ -7,10 +7,11 @@
   .\build\build.ps1 -DataFrom D:\Backups\2026-11-03_0300   # данные из готового бэкапа
   .\build\build.ps1 -NoData            # без данных: data\ удаляется, остаётся только чистая установка
   .\build\build.ps1 -Offline           # в images\ все образы, в том числе для CI: установка без интернета
+  .\build\build.ps1 -ModulesRoot D:\repos   # папка с клонами PilotClientSdk и PilotReports (по умолчанию рядом с PilotProAdmin, иначе клон с GitHub)
 
   images\, data\ и PASSWORDS.md в git не попадают: в них все пароли. PASSWORDS.md собирает build\make-passwords.ps1.
 #>
-param([switch]$NoBuild, [switch]$NoData, [string]$DataFrom, [switch]$Offline)
+param([switch]$NoBuild, [switch]$NoData, [string]$DataFrom, [switch]$Offline, [string]$ModulesRoot)
 $ErrorActionPreference = 'Stop'
 $src     = Split-Path $PSScriptRoot -Parent           # корень стека
 $install = "$src\Install"
@@ -116,9 +117,21 @@ Step "Модули для чистой установки"
 $mod = "$install\modules"
 if (Test-Path $mod) { Remove-Item -Recurse -Force $mod }
 New-Item -ItemType Directory -Force "$mod\sources", "$mod\packages" | Out-Null
+# Pilot.ClientSdk и Reports ведутся в отдельных репозиториях github.com/PilotOpenTools. Берётся клон из -ModulesRoot
+# (по умолчанию папка, где лежит этот репозиторий: ...\PilotClientSdk рядом с ...\PilotProAdmin), а если его нет - свежий клон с GitHub.
+if (-not $ModulesRoot) { $ModulesRoot = Split-Path $ws -Parent }
+function Get-ModuleRepo($repoName) {
+    $local = Join-Path $ModulesRoot $repoName
+    if (Test-Path (Join-Path $local '.git')) { return $local }
+    $clone = Join-Path ([IO.Path]::GetTempPath()) "pilot-modules\$repoName"
+    if (Test-Path $clone) { Remove-Item -Recurse -Force $clone }
+    Write-Host "  $repoName нет в $ModulesRoot, клонирую https://github.com/PilotOpenTools/$repoName"
+    Run git clone -q "https://github.com/PilotOpenTools/$repoName.git" $clone
+    return $clone
+}
 $repos = [ordered]@{
-    'Pilot.ClientSdk' = "$ws\client-modules\Pilot.ClientSdk"
-    'Reports'          = "$ws\Reports"
+    'Pilot.ClientSdk' = Get-ModuleRepo 'PilotClientSdk'
+    'Reports'          = Get-ModuleRepo 'PilotReports'
 }
 # Модуль - отдельный репозиторий (раскладка автора) или папка монорепозитория: во втором случае бандл собирается
 # из содержимого папки одним коммитом (история монорепозитория в GitLab-проект модуля не нужна).
@@ -183,11 +196,25 @@ foreach ($name in $repos.Keys) {
     $ver = [regex]::Match($r.Csproj, '<Version>([\d.]+)</Version>').Groups[1].Value
     '  {0,-28} {1}  {2}' -f "$name.bundle", $ver, $r.Ref | Write-Host
     # Пакеты Pilot.*, на которые ссылается модуль: в пустом реестре GitLab их нет, а CI модуля без них не соберётся.
-    foreach ($m in [regex]::Matches($r.Csproj, '<PackageReference\s+Include="(Pilot\\.[^"]+)"\s+Version="([^"]+)"')) {
+    foreach ($m in [regex]::Matches($r.Csproj, '<PackageReference\s+Include="(Pilot\.[^"]+)"\s+Version="([^"]+)"')) {
         $id = $m.Groups[1].Value; $v = $m.Groups[2].Value
         $nupkg = Join-Path $env:USERPROFILE ".nuget\packages\$($id.ToLower())\$v\$($id.ToLower()).$v.nupkg"
-        if (-not (Test-Path $nupkg)) { throw "Нет пакета $id $v в кэше NuGet ($nupkg): выполните dotnet restore для $name" }
-        Copy-Item $nupkg "$mod\packages\$id.$v.nupkg" -Force
+        if (Test-Path $nupkg) { Copy-Item $nupkg "$mod\packages\$id.$v.nupkg" -Force; continue }
+        if ($id -ne 'Pilot.ClientSdk') { throw "Нет пакета $id $v в кэше NuGet ($nupkg): выполните dotnet restore для $name" }
+        # Нет в кэше: пакет из релиза PilotClientSdk на GitHub. Нет релиза этой версии - последний: NuGet в CI модуля
+        # возьмёт ближайшую большую версию (предупреждение NU1603).
+        $api = 'https://api.github.com/repos/PilotOpenTools/PilotClientSdk/releases'
+        $ua = @{ 'User-Agent' = 'PilotProAdmin-build' }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        try { $rel = Invoke-RestMethod "$api/tags/v$v" -Headers $ua }
+        catch {
+            try { $rel = Invoke-RestMethod "$api/latest" -Headers $ua }
+            catch { throw "Нет пакета $id $v в кэше NuGet ($nupkg), GitHub недоступен: выполните dotnet restore для $name" }
+            Write-Warning "$id ${v}: нет ни в кэше NuGet, ни в релизах GitHub, беру $($rel.tag_name)"
+        }
+        $asset = $rel.assets | Where-Object { $_.name -like "$id.*.nupkg" } | Select-Object -First 1
+        if (-not $asset) { throw "В релизе PilotClientSdk $($rel.tag_name) нет пакета $id" }
+        Invoke-WebRequest $asset.browser_download_url -OutFile "$mod\packages\$($asset.name)" -UseBasicParsing -Headers $ua
     }
 }
 $hostProj = "$ws\server-extensions\ServerHost\ServerHost"

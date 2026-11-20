@@ -14,15 +14,10 @@
           "gitlab/README.md",
           "gitlab/ci-checks/README.md",
           "client-modules/README.md",
-          "client-modules/Pilot.ClientSdk/README.md",
           "client-modules/Test-module/README.md",
           "server-extensions/README.md",
           "server-extensions/ServerHost/README.md",
-          "server-extensions/Debug/README.md",
-          "server-extensions/TestServerAction/README.md",
-          "Reports/README.md",
-          "Reports/CHANGELOG.md",
-          "Reports/lib/README.md"
+          "server-extensions/TestServerAction/README.md"
         ]
       }
     ],

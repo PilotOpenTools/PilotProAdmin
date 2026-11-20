@@ -41,15 +41,19 @@
 
 	<!--
 		Pilot.ClientSdk: NuGet-пакет из реестра GitLab (nuget.config). Только для компиляции - в zip не попадает, в клиенте уже загружен.
-		В монорепозитории рядом лежит исходник Pilot.ClientSdk - тогда проект собирается по нему, без реестра пакетов.
+		Если рядом с клоном PilotProAdmin лежит клон github.com/PilotOpenTools/PilotClientSdk, проект собирается по его исходнику,
+		без реестра пакетов.
 	-->
-	<ItemGroup Condition="Exists('..\Pilot.ClientSdk\Pilot.ClientSdk.csproj')">
-		<ProjectReference Include="..\Pilot.ClientSdk\Pilot.ClientSdk.csproj" Private="false">
+	<PropertyGroup>
+		<ClientSdkProject>$(MSBuildThisFileDirectory)..\..\..\PilotClientSdk\Pilot.ClientSdk.csproj</ClientSdkProject>
+	</PropertyGroup>
+	<ItemGroup Condition="Exists('$(ClientSdkProject)')">
+		<ProjectReference Include="$(ClientSdkProject)" Private="false">
 			<SetConfiguration>Configuration=Debug</SetConfiguration>
 			<AdditionalProperties>CopyToPilot=false</AdditionalProperties>
 		</ProjectReference>
 	</ItemGroup>
-	<ItemGroup Condition="!Exists('..\Pilot.ClientSdk\Pilot.ClientSdk.csproj')">
+	<ItemGroup Condition="!Exists('$(ClientSdkProject)')">
 		<PackageReference Include="Pilot.ClientSdk" Version="2.0.0" />
 	</ItemGroup>
 	<ItemGroup>
