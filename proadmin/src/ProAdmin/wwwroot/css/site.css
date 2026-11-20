@@ -183,6 +183,8 @@ a.chip[aria-current] { text-decoration: underline; }
 .catalog-guide > p { max-width: 72ch; }
 .catalog-context { display: grid; gap: 6px; padding: 0; margin: 0; list-style: none; color: var(--muted); font-size: .8125rem; }
 .catalog-batch { margin-bottom: 12px; }
+.inline-form { display: inline-block; margin: 4px 0 0; }
+#opentools td { vertical-align: top; }
 .crumbs { color: var(--muted); margin-bottom: 10px; font-size: 13px; }
 .crumbs span { margin: 0 4px; }
 .meta-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: var(--muted); font-size: 13px; }

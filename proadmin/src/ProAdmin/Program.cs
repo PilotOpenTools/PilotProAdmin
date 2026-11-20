@@ -89,6 +89,16 @@ builder.Services.AddHttpClient<ProAdmin.Types.GitHubTypesClient>(client =>
     })
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
+// Релизы github.com/PilotOpenTools без токена; файлы релиза - только с хранилища GitHub по https.
+builder.Services.AddHttpClient(ProAdmin.Modules.OpenToolsReleases.ClientName, client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(60);
+        client.MaxResponseContentBufferSize = ProAdmin.Modules.OpenToolsReleases.MaxAssetBytes;
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PilotProAdmin");
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+    .AddHttpMessageHandler(() => new ProAdmin.Modules.GitHubRedirectHandler());
+
 builder.Services.AddHttpClient("migration", client => client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<ProAdmin.Migration.MigrationClient>();
 builder.Services.AddSingleton(new NetworkAddressMapper(appOptions.LocalhostAlias));
@@ -121,6 +131,8 @@ builder.Services.AddSingleton<ProAdmin.Modules.ModuleCatalog>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblySpecStore>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblyScanService>();
 builder.Services.AddSingleton<ProAdmin.Modules.ModuleJobRunner>();
+builder.Services.AddSingleton<ProAdmin.Modules.OpenToolsReleases>();
+builder.Services.AddSingleton<ProAdmin.Modules.OpenToolsService>();
 builder.Services.AddSingleton<ProAdmin.Compare.CompareService>();
 builder.Services.AddSingleton<ProAdmin.Types.TypesStore>();
 builder.Services.AddSingleton<ProAdmin.Types.TypesJobRunner>();

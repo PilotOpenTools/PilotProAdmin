@@ -119,6 +119,16 @@ if ($WithPortable) {
     & (Join-Path $PSScriptRoot 'package-windows-portable.ps1') -Version $Version -OutputDirectory $output
     $assets += "PilotProAdmin-v$Version-win-x64-portable.zip"
 }
+# ServerHost - центральный серверный модуль: страница «PilotOpenTools» админки сверяет с этим файлом версию в базах
+# и обновляет хост из релиза. Имя ServerHost-<версия хоста>.zip (у хоста своя версия, не версия PilotProAdmin).
+$hostDir = Join-Path $root 'server-extensions/ServerHost/ServerHost'
+$hostProject = [xml](Get-Content (Join-Path $hostDir 'ServerHost.csproj') -Raw)
+$hostVersion = @($hostProject.Project.PropertyGroup.Version | Where-Object { $_ })[0]
+if ($hostVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Неверная версия ServerHost: $hostVersion" }
+dotnet build (Join-Path $hostDir 'ServerHost.csproj') -c Release --nologo -v q
+$hostName = "ServerHost-$hostVersion.zip"
+Copy-Item -LiteralPath (Join-Path $hostDir 'dist/ServerHost.zip') -Destination (Join-Path $output $hostName) -Force
+$assets += $hostName
 $checksums = foreach ($asset in $assets) {
     $file = Join-Path $output $asset
     $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()

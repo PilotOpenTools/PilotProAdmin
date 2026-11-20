@@ -1,0 +1,151 @@
+@page "/OpenTools"
+@model ProAdmin.Pages.OpenTools.IndexModel
+@using ProAdmin.Modules
+@{
+    ViewData["Title"] = "PilotOpenTools";
+    var state = Model.State;
+    var readOnly = Model.ModulesReadOnly;
+}
+
+<div class="page-head">
+    <h1>Модули PilotOpenTools</h1>
+    <div class="head-actions">
+        <a class="action-link" href="@OpenToolsCatalog.Organization" target="_blank" rel="noopener">github.com/PilotOpenTools</a>
+        <a class="action-link" href="/OpenTools?refresh=true" title="Перечитать релизы GitHub, не дожидаясь 10 минут кэша">Проверить заново</a>
+        <a class="action-link" href="/Modules">Клиентские модули</a>
+    </div>
+</div>
+<p class="muted">
+    Открытые модули из <a href="@OpenToolsCatalog.Organization" target="_blank" rel="noopener">PilotOpenTools</a>: их исходники и релизы лежат на GitHub,
+    а не в группе GitLab стенда. Версия на тесте, стейдже и проде сверяется с последним релизом каждого репозитория;
+    недостающий или устаревший модуль ставится из файла релиза. Новые клиентские модули пользователям не назначаются - это делается в Pilot-myAdmin.
+</p>
+
+@if (Model.SetupProblem is not null)
+{
+    <div class="empty">
+        <p>@Model.SetupProblem</p>
+        <a class="btn" href="/Settings">Открыть настройки</a>
+    </div>
+}
+else if (state is not null)
+{
+    @await Html.PartialAsync("_GroupAccess", (Model.ModulesAccess, "модули"))
+    @foreach (var (envKey, error) in state.EnvErrors)
+    {
+        var env = state.Envs.First(e => e.Key == envKey);
+        <div class="alert alert-error">
+            @env.Title: @error.Message
+            @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+            {
+                @if (Model.UsesServiceAccounts)
+                {
+                    <partial name="_ServiceAccountHint" model="env.Title" />
+                }
+                else
+                {
+                    <span>Войдите в базу этого сервера на странице <a href="/Modules">«Модули»</a>.</span>
+                }
+            }
+        </div>
+    }
+
+    var pending = state.Rows.Sum(r => r.Pending.Count());
+    @if (!readOnly && pending > 0)
+    {
+        <form method="post" asp-page-handler="InstallAll" class="catalog-batch"
+              data-confirm="Установить и обновить модули PilotOpenTools на всех серверах (@pending записей, включая прод)? Клиенты получат новые версии при следующем запуске, ServerHost - после перезапуска сервера Pilot.">
+            <button class="btn btn-primary" type="submit">Установить и обновить всё (@pending)</button>
+        </form>
+    }
+    else if (pending == 0)
+    {
+        <div class="alert alert-ok">На всех доступных серверах модули PilotOpenTools не старше релизов GitHub.</div>
+    }
+
+    <div class="table-wrap" role="region" aria-label="Модули PilotOpenTools" tabindex="0">
+        <table class="table" id="opentools">
+            <thead>
+            <tr>
+                <th>Модуль</th>
+                <th>GitHub</th>
+                @foreach (var env in state.Envs)
+                {
+                    <th>@env.Title</th>
+                }
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in state.Rows)
+            {
+                var rel = row.Release;
+                <tr>
+                    <td>
+                        <a class="strong" href="@row.Tool.RepositoryUrl" target="_blank" rel="noopener">@row.Tool.Title</a>
+                        @if (row.Tool.Kind == OpenToolKind.ServerHost)
+                        {
+                            <span class="badge" title="Центральный серверный модуль Pilot-Server">сервер</span>
+                        }
+                        <div class="muted small">@row.Tool.Description</div>
+                    </td>
+                    <td class="small">
+                        @if (rel.Package is not null)
+                        {
+                            <a class="mono" href="@rel.Url" target="_blank" rel="noopener">@rel.Version</a>
+                            <div class="muted">@rel.Tag@(rel.Published is { } at ? $" · {at.ToLocalTime():dd.MM.yyyy}" : "")</div>
+                        }
+                        else
+                        {
+                            <span class="badge badge-differs" title="@rel.Error">нет релиза</span>
+                            <div class="muted">@rel.Error</div>
+                        }
+                    </td>
+                    @foreach (var env in state.Envs)
+                    {
+                        var cell = row.Envs[env.Key];
+                        var isProd = env.Key == ModuleEnv.Prod;
+                        <td class="small">
+                            <span class="mono">@(cell.Version ?? "-")</span>
+                            <span class="badge @ProAdmin.Pages.OpenTools.IndexModel.SyncCss(cell.Sync)" title="@ProAdmin.Pages.OpenTools.IndexModel.SyncHint(cell, row)">@ProAdmin.Pages.OpenTools.IndexModel.SyncLabel(cell, row)</span>
+                            @if (!readOnly && row.CanInstall(env.Key) && (row.Tool.Kind != OpenToolKind.ServerHost || Model.IsAdmin))
+                            {
+                                var verb = cell.Sync == OpenToolSync.Missing ? "Установить" : "Обновить";
+                                <form method="post" asp-page-handler="Install" class="inline-form"
+                                      data-confirm="@($"{verb} {row.Tool.Title} {rel.Version} на сервере {env.Title}?{(isProd ? " Это прод." : "")}{(row.Tool.Kind == OpenToolKind.ServerHost ? " Новая версия хоста вступит в силу после перезапуска сервера Pilot." : "")}")">
+                                    <input type="hidden" name="Tool" value="@row.Tool.Key" />
+                                    <input type="hidden" name="TargetEnv" value="@env.Key" />
+                                    <button class="btn btn-sm @(isProd ? "" : "btn-primary")" type="submit">@verb</button>
+                                </form>
+                            }
+                        </td>
+                    }
+                    <td>
+                        @{ var rowPending = row.Pending.Count(); }
+                        @if (!readOnly && rowPending > 1 && (row.Tool.Kind != OpenToolKind.ServerHost || Model.IsAdmin))
+                        {
+                            <form method="post" asp-page-handler="InstallRow" class="inline-form"
+                                  data-confirm="@($"Установить или обновить {row.Tool.Title} {rel.Version} на всех серверах, где он старше или отсутствует ({rowPending})?")">
+                                <input type="hidden" name="Tool" value="@row.Tool.Key" />
+                                <button class="btn btn-sm" type="submit">На всех серверах</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <details class="card">
+        <summary>Как это работает</summary>
+        <ul class="muted small">
+            <li>Релизы читаются из api.github.com без токена и держатся в памяти 10 минут; «Проверить заново» перечитывает их сразу. Без доступа к GitHub в строке будет «нет релиза».</li>
+            <li>Модуль на сервере находится по «Наименованию», коду в скобках, имени сборки или прежнему имени (Pilot.ClientSdk обновит объект старого 113Modules.ext2).</li>
+            <li>Версия на сервере новее релиза («новее релиза») не понижается: такой модуль ведётся в GitLab стенда или выложен вручную.</li>
+            <li>Библиотеки модулей PilotOpenTools правилами раздела «Библиотеки» не проверяются: это готовые релизы.</li>
+            <li>ServerHost берётся из релиза PilotProAdmin (файл <code>ServerHost-X.Y.Z.zip</code>) и только обновляется: первая установка хоста - по инструкции. Записывает его только администратор админки.</li>
+            <li>Каждая установка и обновление попадают в «Операции».</li>
+        </ul>
+    </details>
+}

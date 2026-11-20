@@ -192,6 +192,7 @@ jobs:
                   "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
                   "PilotProAdmin-v$RELEASE_VERSION-offline.zip"
                   "PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
+                  ServerHost-*.zip
                   SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt SHA256SUMS-CLUSTER.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
