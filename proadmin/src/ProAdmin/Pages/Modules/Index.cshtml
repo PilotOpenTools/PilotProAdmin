@@ -19,6 +19,10 @@
         {
             <a class="action-link" href="/Modules/Assemblies" title="Какие сторонние dll и каких версий можно класть в модули; состав модулей на серверах">Сборки</a>
         }
+        @if (!Model.ModulesReadOnly)
+        {
+            <a class="btn btn-sm btn-primary" href="/Modules/Create@(Model.IsServer ? "?kind=server" : "")" title="Репозиторий в группе GitLab с готовым каркасом, ветками и CI">Новый модуль</a>
+        }
         <a class="btn btn-sm" href="/OpenTools" title="PilotClientSdk, PilotReports, PilotLookUp и ServerHost: версии на серверах против релизов GitHub, установка и обновление">Проверить модули PilotOpenTools</a>
         <a class="action-link" href="#libraries" title="Режим библиотек и список разрешённых">Библиотеки</a>
         <a class="action-link" href="@(Model.IsServer ? "/Process#server-modules" : "/Process#modules")">Как это работает</a>
