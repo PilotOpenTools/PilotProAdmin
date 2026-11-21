@@ -93,6 +93,42 @@ public sealed class OpenToolsTests
         Assert.Equal(allowed, OpenToolsReleases.IsAllowedRedirect(new Uri(url)));
 }
 
+/// <summary>Повторы при обрыве соединения с GitHub.</summary>
+public sealed class GitHubRetryTests
+{
+    private sealed class Flaky(int failures) : HttpMessageHandler
+    {
+        public int Calls;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            if (Calls <= failures)
+                throw new HttpRequestException("The SSL connection could not be established", new IOException("Received an unexpected EOF"));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request });
+        }
+    }
+
+    [Fact]
+    public async Task BrokenConnectionIsRetried()
+    {
+        var inner = new Flaky(failures: 2);
+        using var client = new HttpClient(new GitHubRedirectHandler { InnerHandler = inner });
+        var response = await client.GetAsync("https://api.github.com/repos/PilotOpenTools/PilotLookUp/releases/latest");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, inner.Calls);
+    }
+
+    [Fact]
+    public async Task RetriesAreLimited()
+    {
+        var inner = new Flaky(failures: 10);
+        using var client = new HttpClient(new GitHubRedirectHandler { InnerHandler = inner });
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("https://api.github.com/"));
+        Assert.Equal(GitHubRedirectHandler.Attempts, inner.Calls);
+    }
+}
+
 /// <summary>Настоящие релизы github.com/PilotOpenTools: OPENTOOLS_IT=1.</summary>
 public sealed class OpenToolsGitHubTests
 {
