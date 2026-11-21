@@ -1129,6 +1129,10 @@ function Invoke-GitLabPost([string]$groups, [string]$reports, [string]$oldHost, 
     Run docker cp "$PSScriptRoot/gitlab-post-restore.rb" gitlab:/tmp/post.rb | Out-Null
     # docker cp хранит права файла с хоста, а читает его пользователь git.
     Run docker exec gitlab chmod 644 /tmp/post.rb | Out-Null
+    # Приложение модуля отчётов (вход через браузер из клиента Pilot): Application ID - в .env, шаг создаёт приложение в GitLab.
+    if (-not (Read-Env $envPath).REPORTS_GITLAB_OAUTH_CLIENT_ID) {
+        Set-EnvValue REPORTS_GITLAB_OAUTH_CLIENT_ID (New-Secret 32); $script:generated += 'REPORTS_GITLAB_OAUTH_CLIENT_ID'
+    }
     $k = Read-Env $envPath
     $clientId = "$($k.GITLAB_OAUTH_CLIENT_ID)"; $callback = Get-AdminCallback
     # Админка на этой же машине без ADMIN_PUBLIC_URL: её открывают по localhost или 127.0.0.1.
@@ -1151,7 +1155,7 @@ function Invoke-GitLabPost([string]$groups, [string]$reports, [string]$oldHost, 
     $runnerToken = if (-not (Test-Path "$root/gitlab/runner-config/config.toml")) { '/tmp/runner.token' } else { '' }
     $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
-        & docker exec -e DEPLOY_KEY_TEST -e DEPLOY_KEY_STAGE -e DEPLOY_KEY_PROD -e OAUTH_CLIENT_SECRET -e "GROUP_URLS=$groups" -e "REPORTS_GROUP_URL=$reports" -e "OLD_HOST=$oldHost" -e "NEW_URL=$newUrl" -e "ALLOW_MISSING_GROUPS=$allowMissing" -e "OAUTH_CLIENT_ID=$clientId" -e "ADMIN_CALLBACK=$callback" -e "CHECKS_DIR=$checksIn" -e "CHECKS_PROJECT=$checksProject" -e "RUNNER_TOKEN_FILE=$runnerToken" gitlab gitlab-rails runner /tmp/post.rb 2>&1 | ForEach-Object { "$_" } | Write-Host
+        & docker exec -e DEPLOY_KEY_TEST -e DEPLOY_KEY_STAGE -e DEPLOY_KEY_PROD -e OAUTH_CLIENT_SECRET -e "GROUP_URLS=$groups" -e "REPORTS_GROUP_URL=$reports" -e "OLD_HOST=$oldHost" -e "NEW_URL=$newUrl" -e "ALLOW_MISSING_GROUPS=$allowMissing" -e "OAUTH_CLIENT_ID=$clientId" -e "ADMIN_CALLBACK=$callback" -e "REPORTS_OAUTH_CLIENT_ID=$($k.REPORTS_GITLAB_OAUTH_CLIENT_ID)" -e "REPORTS_OAUTH_REDIRECT_URI=$($k.REPORTS_GITLAB_OAUTH_REDIRECT_URI)" -e "CHECKS_DIR=$checksIn" -e "CHECKS_PROJECT=$checksProject" -e "RUNNER_TOKEN_FILE=$runnerToken" gitlab gitlab-rails runner /tmp/post.rb 2>&1 | ForEach-Object { "$_" } | Write-Host
         $rc = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prev
@@ -1321,6 +1325,23 @@ if ($isAdmin)   { Write-Host "  Админка     ${scheme}://localhost:$($cfg.
 if ($isMetrics) { Write-Host "  Grafana     ${scheme}://localhost:$($cfg.GRAFANA_PORT)" -ForegroundColor Green }
 if ($WithGitLab) { Write-Host "  GitLab                      http://$($cfg.GITLAB_HOST_IP):$($cfg.GITLAB_HTTP_PORT)" -ForegroundColor Green }
 if ($generated) { Write-Host "Сгенерированы значения в ${envPath}: $($generated -join ', ')" -ForegroundColor Green }
+# Общие настройки Pilot хранятся в базе каждого сервера Pilot: установка их не задаёт, их вписывают вручную
+# (клиент Pilot под администратором: Сервис / Настройки / Общие настройки) на каждом сервере - prod, test, stage.
+if ($WithGitLab -or $myContours) {
+    $cfgNow = Read-Env $envPath
+    Write-Host "`nОбщие настройки Pilot - вручную на КАЖДОМ сервере Pilot (Сервис / Настройки / Общие настройки, под администратором):" -ForegroundColor Yellow
+    if ($WithGitLab) {
+        $glUrl = "http://$($cfgNow.GITLAB_HOST_IP):$($cfgNow.GITLAB_HTTP_PORT)"
+        $repGroup = Get-GroupUrl 'ReportsGitLabGroupUrl' 'REPORTS_GITLAB_GROUP_URL'
+        $repPath = if ($repGroup -match '^https?://[^/]+/(.+?)/*$') { $Matches[1] } else { '<группа отчётов>' }
+        Write-Host "  «PilotOpenTools отчёты (GitLab)»: сервер $glUrl, группа $repPath, Application ID $($cfgNow.REPORTS_GITLAB_OAUTH_CLIENT_ID)" -ForegroundColor Yellow
+        Write-Host "     (если GITLAB_HOST_IP = localhost, укажите адрес GitLab, который видят рабочие места)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  «PilotOpenTools отчёты (GitLab)»: сервер и группа GitLab с отчётами, Application ID - REPORTS_GITLAB_OAUTH_CLIENT_ID из .env машины с GitLab" -ForegroundColor Yellow
+    }
+    Write-Host "  «PilotOpenTools отправка статистики»: адрес сервиса статистики http://<машина metrics>:5310/api/module-events" -ForegroundColor Yellow
+    Write-Host "  Подробно - инструкция по установке, раздел «Общие настройки Pilot на каждом сервере»." -ForegroundColor Yellow
+}
 if ($restore) {
     Write-Host "Данные восстановлены из $snap. Все пароли - в $envPath." -ForegroundColor Green
     if ($oldHost -and -not $GitLabHost) { Write-Warning "GitLab настроен на адрес исходной машины ($oldHost). Если у этого сервера другой IP, см. инструкцию по установке, раздел об установке с данными." }

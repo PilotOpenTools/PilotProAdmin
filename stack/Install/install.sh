@@ -596,6 +596,10 @@ gitlab_post_restore() {  # $1 - группы модулей, $2 - группа �
   # Значения ключей идут только через окружение: в аргументы docker (и в список процессов) они не попадают.
   # Секрет OAuth нужен только чтобы создать приложение при чистой установке.
   osec=""; if [ "$RESTORE" = 0 ]; then osec="$(cfg GITLAB_OAUTH_CLIENT_SECRET)"; fi
+  # Приложение модуля отчётов (вход через браузер из клиента Pilot): Application ID - в .env, шаг создаёт приложение в GitLab.
+  if [ -z "$(cfg REPORTS_GITLAB_OAUTH_CLIENT_ID)" ]; then
+    env_set REPORTS_GITLAB_OAUTH_CLIENT_ID "$(gen_key 32)"; GENERATED="$GENERATED REPORTS_GITLAB_OAUTH_CLIENT_ID"
+  fi
   # Общие проверки CI (проект pilot-ci/checks): файлы из комплекта (ci-checks/) или из репозитория (gitlab/ci-checks).
   checks_in=""; checks_dir=""
   for d in ./ci-checks ../../gitlab/ci-checks; do if [ -f "$d/automation.yml" ]; then checks_dir="$d"; break; fi; done
@@ -612,6 +616,7 @@ gitlab_post_restore() {  # $1 - группы модулей, $2 - группа �
     docker exec -e DEPLOY_KEY_TEST -e DEPLOY_KEY_STAGE -e DEPLOY_KEY_PROD -e OAUTH_CLIENT_SECRET \
       -e "GROUP_URLS=$1" -e "REPORTS_GROUP_URL=$2" -e "OLD_HOST=$3" -e "NEW_URL=$4" -e "ALLOW_MISSING_GROUPS=$5" \
       -e "OAUTH_CLIENT_ID=$(cfg GITLAB_OAUTH_CLIENT_ID)" -e "ADMIN_CALLBACK=$(post_callback)" \
+      -e "REPORTS_OAUTH_CLIENT_ID=$(cfg REPORTS_GITLAB_OAUTH_CLIENT_ID)" -e "REPORTS_OAUTH_REDIRECT_URI=$(cfg REPORTS_GITLAB_OAUTH_REDIRECT_URI)" \
       -e "CHECKS_DIR=$checks_in" -e "CHECKS_PROJECT=$(group_url AutomationsCiConfigPath AUTOMATIONS_CI_CONFIG_PATH)" -e "RUNNER_TOKEN_FILE=$runner_token" \
       gitlab gitlab-rails runner /tmp/post.rb || prc=$?
   docker exec gitlab rm -rf /tmp/post.rb /tmp/ci-checks >/dev/null 2>&1 || true
@@ -762,6 +767,21 @@ if has_role admin; then echo "Админка: $SCHEME, порт ${ADMIN_PORT:-53
 if has_role metrics; then echo "Grafana: $SCHEME, порт ${GRAFANA_PORT:-3000}"; fi
 if [ "$GITLAB" = 1 ]; then echo "GitLab: http://$(cfg GITLAB_HOST_IP):$(cfg GITLAB_HTTP_PORT)"; fi
 if [ -n "$GENERATED" ]; then echo "Сгенерированы значения в $(pwd)/.env:$GENERATED"; fi
+# Общие настройки Pilot хранятся в базе каждого сервера Pilot: установка их не задаёт, их вписывают вручную
+# (клиент Pilot под администратором: Сервис / Настройки / Общие настройки) на каждом сервере - prod, test, stage.
+if [ "$GITLAB" = 1 ] || [ -n "$MY_CONTOURS" ]; then
+  echo
+  echo "Общие настройки Pilot - вручную на КАЖДОМ сервере Pilot (Сервис / Настройки / Общие настройки, под администратором):"
+  if [ "$GITLAB" = 1 ]; then
+    rep_path="$(group_url ReportsGitLabGroupUrl REPORTS_GITLAB_GROUP_URL | sed -E 's#^https?://[^/]+/##; s#/+$##')"
+    echo "  «PilotOpenTools отчёты (GitLab)»: сервер http://$(cfg GITLAB_HOST_IP):$(cfg GITLAB_HTTP_PORT), группа ${rep_path:-<группа отчётов>}, Application ID $(cfg REPORTS_GITLAB_OAUTH_CLIENT_ID)"
+    echo "     (если GITLAB_HOST_IP = localhost, укажите адрес GitLab, который видят рабочие места)"
+  else
+    echo "  «PilotOpenTools отчёты (GitLab)»: сервер и группа GitLab с отчётами, Application ID - REPORTS_GITLAB_OAUTH_CLIENT_ID из .env машины с GitLab"
+  fi
+  echo "  «PilotOpenTools отправка статистики»: адрес сервиса статистики http://<машина metrics>:5310/api/module-events"
+  echo "  Подробно - инструкция по установке, раздел «Общие настройки Pilot на каждом сервере»."
+fi
 if [ "$RESTORE" = 1 ]; then
   echo "Данные восстановлены из $SNAP. Все пароли - в $(pwd)/.env."
   if [ -n "$OLD_HOST" ] && [ -z "$GITLAB_NEW" ]; then echo "! GitLab настроен на адрес исходной машины ($OLD_HOST). Если у этого сервера другой IP, см. инструкцию по установке, раздел об установке с данными."; fi
