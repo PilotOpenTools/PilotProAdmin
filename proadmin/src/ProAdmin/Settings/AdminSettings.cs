@@ -15,9 +15,6 @@ public sealed class AdminSettings
     public Dictionary<string, StoredDeployLogin> DeployLogins { get; set; } = new();
     public string GrafanaUrl { get; set; } = "";
 
-    /// <summary>Шаблоны «Новый модуль»: источники NuGet, версии SDK, клиент для отладки.</summary>
-    public ModuleTemplateSettings ModuleTemplates { get; set; } = new();
-
     /// <summary>
     /// Группа GitLab с автоматизациями, например http://localhost:8080/automation.
     /// Каждая автоматизация - отдельный проект (репозиторий) в этой группе или её подгруппах-папках.
@@ -156,7 +153,6 @@ public sealed class AdminSettings
     {
         DeployLogins ??= new();
         GrafanaUrl = (GrafanaUrl ?? "").Trim();
-        (ModuleTemplates ??= new()).Normalize();
         var defaults = new[]
         {
             new EnvironmentSettings { Key = Test, Title = "Тест", Branch = "dev" },
