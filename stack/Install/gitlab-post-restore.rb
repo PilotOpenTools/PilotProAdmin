@@ -17,6 +17,8 @@
 #      их выкладка не пройдёт до «Обновить CI»;
 #   8. добавляет адрес возврата админки в Redirect URI её OAuth-приложения (прежние адреса остаются);
 #      при чистой установке (передан OAUTH_CLIENT_SECRET, приложения нет) создаёт это приложение;
+#   8a. создаёт публичное OAuth-приложение модуля отчётов (REPORTS_OAUTH_CLIENT_ID, вход через браузер из клиента Pilot),
+#      если его нет; есть - добавляет адрес возврата REPORTS_OAUTH_REDIRECT_URI (по умолчанию http://127.0.0.1:7890/callback);
 #   9. если проекта общих проверок (CHECKS_PROJECT, по умолчанию pilot-ci/checks) нет - создаёт его публичным
 #      (с группой) и кладёт в main файлы из CHECKS_DIR; существующий проект не трогает. Без него pipeline
 #      автоматизаций и отчётов (ci_config_path = automation.yml@pilot-ci/checks) падает с config_error;
@@ -26,6 +28,7 @@
 #   REPORTS_GROUP_URL, OLD_HOST (без него nuget.config не трогается), NEW_URL (http://хост:порт),
 #   ALLOW_MISSING_GROUPS=1 (чистая установка: нет группы - пропуск и код выхода 2 вместо ошибки),
 #   OAUTH_CLIENT_ID (Application ID приложения админки) и ADMIN_CALLBACK (http://адрес-админки/GitLab/Callback),
+#   REPORTS_OAUTH_CLIENT_ID и REPORTS_OAUTH_REDIRECT_URI (приложение модуля отчётов; пусто - шаг 8a пропускается),
 #   CHECKS_DIR (папка с файлами ci-checks внутри контейнера; пусто - шаг 9 пропускается), CHECKS_PROJECT,
 #   RUNNER_TOKEN_FILE (пусто - шаг 10 пропускается).
 # Вывод только латиницей: консоль Windows искажает UTF-8, который docker exec отдаёт установщику.
@@ -342,6 +345,37 @@ rescue ActiveRecord::ActiveRecordError => e
   err("oauth: #{e.message}")
 end
 
+REPORTS_APP_NAME = 'PilotReports (Pilot client)'
+REPORTS_DEFAULT_REDIRECT = 'http://127.0.0.1:7890/callback'
+
+# Вход в GitLab через браузер из клиентского модуля отчётов (112Reports.ext2): публичное приложение
+# (confidential: false, работает с PKCE - модуль на рабочем месте секрет хранить не может), scope api,
+# Redirect URI - локальный адрес, на который браузер возвращает код в клиент Pilot. Application ID задаёт
+# установщик (REPORTS_OAUTH_CLIENT_ID из .env); его вписывают в общие настройки Pilot «PilotOpenTools отчёты (GitLab)»
+# на каждом сервере Pilot. Есть приложение с этим ID - только добавляется адрес возврата.
+def step_reports_oauth(client_id, redirect)
+  return say('reports oauth: no client id, skipped') if client_id.empty?
+
+  redirect = REPORTS_DEFAULT_REDIRECT if redirect.empty?
+  app = Doorkeeper::Application.find_by(uid: client_id)
+  unless app
+    attrs = { name: REPORTS_APP_NAME, uid: client_id, redirect_uri: redirect,
+              scopes: 'api', confidential: false, trusted: false }
+    attrs[:organization_id] = Organizations::Organization.order(:id).pick(:id) if Doorkeeper::Application.column_names.include?('organization_id')
+    Doorkeeper::Application.create!(**attrs)
+    return say("reports oauth: application #{REPORTS_APP_NAME} created, redirect URI #{redirect}")
+  end
+
+  uris = merge_redirect(app.redirect_uri, redirect)
+  return say("reports oauth: application #{app.name} already set") if uris == app.redirect_uri.to_s
+
+  app.redirect_uri = uris
+  app.save!
+  say("reports oauth: redirect URI #{redirect} added to #{app.name}")
+rescue ActiveRecord::ActiveRecordError => e
+  err("reports oauth: #{e.message}")
+end
+
 # Проект общих проверок: создаётся один раз; существующий (возможно, с правками заказчика) не трогается.
 def step_checks(api, project_path, dir)
   return say('checks: no CHECKS_DIR, skipped') if dir.empty?
@@ -582,6 +616,7 @@ def main
   begin
     guard('signup') { step_signup(api) }
     step_oauth(env('OAUTH_CLIENT_ID'), env('ADMIN_CALLBACK'), env('OAUTH_CLIENT_SECRET'))
+    step_reports_oauth(env('REPORTS_OAUTH_CLIENT_ID'), env('REPORTS_OAUTH_REDIRECT_URI'))
     guard('checks') { step_checks(api, checks_project_path(env('CHECKS_PROJECT').empty? ? 'pilot-ci/checks' : env('CHECKS_PROJECT')), env('CHECKS_DIR')) }
     guard('runner') { step_runner(api, env('RUNNER_TOKEN_FILE')) }
     say('variables, protection and nuget.config: no module groups given, skipped') if modules.empty? && reports.empty?
