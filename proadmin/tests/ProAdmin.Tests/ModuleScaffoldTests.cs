@@ -3,7 +3,6 @@ using System.Net;
 using System.IO.Compression;
 using System.Xml.Linq;
 using ProAdmin.Modules;
-using ProAdmin.Settings;
 
 namespace ProAdmin.Tests;
 
@@ -14,11 +13,6 @@ public sealed class ModuleScaffoldTests
     {
         Kind = ModuleKind.Client, Code = "OpenStoradge", Title = "Открыть Storadge", Number = "087", Section = "01",
         UseClientSdk = sdk,
-        Sources = new List<NuGetSourceSetting>
-        {
-            new() { Key = "nuget.org", Url = ModuleTemplateSettings.NuGetOrg },
-            new() { Key = "cicd", Url = "http://localhost:8080/api/v4/projects/9/packages/nuget/index.json", Patterns = "Pilot.*" },
-        },
     };
 
     private static ModuleScaffoldRequest Server() => new()
@@ -48,27 +42,6 @@ public sealed class ModuleScaffoldTests
         Assert.NotEmpty(ModuleScaffold.Validate(Client() with { Code = code, Title = title, Number = number }));
 
     [Fact]
-    public void DefaultTemplateIsNuGetOrgWithoutMapping()
-    {
-        var config = XDocument.Parse(ModuleScaffold.NuGetConfig(new ModuleTemplateSettings().Client.Sources));
-        Assert.Equal(ModuleTemplateSettings.NuGetOrg, (string?)config.Descendants("add").Single().Attribute("value"));
-        Assert.Empty(config.Descendants("packageSourceMapping"));
-    }
-
-    [Fact]
-    public void TemplateSettingsAreValidatedAndNormalized()
-    {
-        var settings = new ModuleTemplateSettings();
-        settings.Client.Sources = new() { new() { Key = "cicd", Url = "http://user:pass@gitlab/x" }, new() { Key = "", Url = "" } };
-        settings.Server.Sources = new();
-        settings.ClientSdkVersion = "2.x";
-        Assert.Equal(2, settings.Validate().Count());
-        settings.Normalize();
-        Assert.Single(settings.Client.Sources);
-        Assert.Equal("nuget.org", settings.Server.Sources.Single().Key);
-    }
-
-    [Fact]
     public void ServerModuleNeedsNoNumber() => Assert.Empty(ModuleScaffold.Validate(Server()));
 
     [Fact]
@@ -83,11 +56,10 @@ public sealed class ModuleScaffoldTests
         Assert.Equal("087OpenStoradge.ext2", project.Descendants("AssemblyName").Single().Value);
         Assert.Equal("1.0.0", project.Descendants("Version").Single().Value);
         Assert.Contains(project.Descendants("PackageReference"), p => (string?)p.Attribute("Include") == "Pilot.ClientSdk");
+        // Только nuget.org: там Pilot SDK и Pilot.ClientSdk; clear - источники машины разработчика не участвуют.
         var config = XDocument.Parse(files["nuget.config"]);
-        Assert.Equal(new[] { "nuget.org", "cicd" }, config.Descendants("add").Select(a => (string)a.Attribute("key")!));
-        Assert.Equal("true", (string?)config.Descendants("add").Last().Attribute("allowInsecureConnections"));
-        // Шаблон пакетов у одного источника - mapping для всех: остальным «*».
-        Assert.Equal(new[] { "*", "Pilot.*" }, config.Descendants("package").Select(a => (string)a.Attribute("pattern")!));
+        Assert.Single(config.Descendants("clear"));
+        Assert.Equal("https://api.nuget.org/v3/index.json", (string?)config.Descendants("add").Single().Attribute("value"));
         Assert.Contains("[assembly: AssemblyProduct(\"01.087 - Открыть Storadge - (OpenStoradge) - (CICD)\")]", files["AssemblyInfo.cs"]);
         Assert.Contains("## [1.0.0]", files["CHANGELOG.md"]);
     }
@@ -141,12 +113,11 @@ public sealed class ModuleScaffoldTests
                     Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                     File.WriteAllText(file, content);
                 }
-                if (request.UseClientSdk)
-                    File.WriteAllText(Path.Combine(dir, "nuget.config"), ModuleScaffold.NuGetConfig(new[]
-                    {
-                        new NuGetSourceSetting { Key = "nuget.org", Url = ModuleTemplateSettings.NuGetOrg },
-                        new NuGetSourceSetting { Key = "local", Url = feed!, Patterns = "Pilot.*" },
-                    }));
+                // Pilot.ClientSdk ещё может не дойти до nuget.org: тогда пакет берётся из локальной папки SCAFFOLD_CLIENTSDK_FEED.
+                if (request.UseClientSdk && !string.IsNullOrEmpty(feed))
+                    File.WriteAllText(Path.Combine(dir, "nuget.config"), ModuleScaffold.NuGetConfig.Replace(
+                        "<add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />",
+                        $"<add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n    <add key=\"local\" value=\"{feed}\" />"));
 
                 var psi = new ProcessStartInfo("dotnet", "build -c Release --nologo -p:CopyToPilot=false") { WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true };
                 using var process = Process.Start(psi)!;
