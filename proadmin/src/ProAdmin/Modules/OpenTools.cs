@@ -176,6 +176,8 @@ public sealed class OpenToolsReleases
         {
             _logger.LogWarning(ex, "PilotOpenTools: релиз {Repository} не прочитан", tool.Repository);
             var reason = ex is TaskCanceledException ? "GitHub не ответил вовремя" : ex.Message;
+            if (ex is HttpRequestException { InnerException: IOException })
+                reason += $" (соединение с GitHub обрывается и после {GitHubRedirectHandler.Attempts} попыток: проверьте доступ к github.com из контейнера админки; прокси задаётся переменной HTTPS_PROXY)";
             return new OpenToolRelease(tag, url, published, null, $"релиз не прочитан: {reason}");
         }
     }
@@ -475,14 +477,19 @@ public sealed class OpenToolsService
 }
 
 /// <summary>
-/// Редиректы для клиента PilotOpenTools: файл релиза github.com отдаёт через редирект на хранилище GitHub.
+/// Редиректы и повторы для клиента PilotOpenTools: файл релиза github.com отдаёт через редирект на хранилище GitHub.
 /// Переходим не больше трёх раз и только на github.com и *.githubusercontent.com по https.
+/// Оборванное соединение (TLS-рукопожатие, сброс, зависание) повторяется до трёх раз: из сетей с нестабильным доступом
+/// к GitHub (Docker без прокси хоста, фильтрующие провайдеры) первая попытка нередко срывается. Прокси - переменные HTTPS_PROXY / NO_PROXY.
 /// </summary>
 public sealed class GitHubRedirectHandler : DelegatingHandler
 {
+    public const int Attempts = 3;
+    public static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(20);
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await base.SendAsync(request, ct);
+        var response = await SendWithRetryAsync(request, ct);
         for (var hop = 0; hop < 3 && (int)response.StatusCode is 301 or 302 or 303 or 307 or 308; hop++)
         {
             var location = response.Headers.Location;
@@ -496,8 +503,36 @@ public sealed class GitHubRedirectHandler : DelegatingHandler
             var next = new HttpRequestMessage(HttpMethod.Get, target);
             foreach (var accept in request.Headers.Accept)
                 next.Headers.Accept.Add(accept);
-            response = await base.SendAsync(next, ct);
+            response = await SendWithRetryAsync(next, ct);
         }
         return response;
+    }
+
+    /// <summary>GET без тела: на повтор уходит копия запроса (отправленный HttpRequestMessage второй раз не отправить).</summary>
+    private async Task<HttpResponseMessage> SendWithRetryAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var message = attempt == 1 ? request : Copy(request);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(AttemptTimeout);
+            try
+            {
+                return await base.SendAsync(message, timeout.Token);
+            }
+            catch (Exception ex) when (attempt < Attempts && request.Method == HttpMethod.Get && !ct.IsCancellationRequested
+                                       && ex is HttpRequestException or IOException or OperationCanceledException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500 * attempt), ct);
+            }
+        }
+    }
+
+    private static HttpRequestMessage Copy(HttpRequestMessage request)
+    {
+        var copy = new HttpRequestMessage(request.Method, request.RequestUri);
+        foreach (var header in request.Headers)
+            copy.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        return copy;
     }
 }

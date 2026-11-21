@@ -92,11 +92,13 @@ builder.Services.AddHttpClient<ProAdmin.Types.GitHubTypesClient>(client =>
 // Релизы github.com/PilotOpenTools без токена; файлы релиза - только с хранилища GitHub по https.
 builder.Services.AddHttpClient(ProAdmin.Modules.OpenToolsReleases.ClientName, client =>
     {
-        client.Timeout = TimeSpan.FromSeconds(60);
+        // Три попытки по 20 с (GitHubRedirectHandler) на запрос и на каждый редирект файла релиза.
+        client.Timeout = TimeSpan.FromSeconds(150);
         client.MaxResponseContentBufferSize = ProAdmin.Modules.OpenToolsReleases.MaxAssetBytes;
         client.DefaultRequestHeaders.UserAgent.ParseAdd("PilotProAdmin");
     })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+    // Прокси - из HTTPS_PROXY / NO_PROXY окружения (по умолчанию у SocketsHttpHandler).
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) })
     .AddHttpMessageHandler(() => new ProAdmin.Modules.GitHubRedirectHandler());
 
 builder.Services.AddHttpClient("migration", client => client.Timeout = TimeSpan.FromMinutes(5));
