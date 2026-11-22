@@ -45,6 +45,22 @@ public sealed class ModuleScaffoldTests
     public void ServerModuleNeedsNoNumber() => Assert.Empty(ModuleScaffold.Validate(Server()));
 
     [Fact]
+    public void NuGetConfigAddsGitLabFeedWhenPresent()
+    {
+        var plain = XDocument.Parse(ModuleScaffold.NuGetConfig(null));
+        Assert.Equal(new[] { "nuget.org" }, plain.Descendants("add").Select(a => (string?)a.Attribute("key")));
+
+        var project = new ProAdmin.GitLab.GitLabProject { Id = 7, PathWithNamespace = "pilot-ci/nuget", WebUrl = "http://localhost:8080/pilot-ci/nuget" };
+        var url = ModuleCreation.PackageFeedUrl(project);
+        Assert.Equal("http://localhost:8080/api/v4/projects/7/packages/nuget/index.json", url);
+        var cfg = XDocument.Parse(ModuleScaffold.NuGetConfig(url));
+        var gitlab = cfg.Descendants("add").Single(a => (string?)a.Attribute("key") == "gitlab");
+        Assert.Equal(url, (string?)gitlab.Attribute("value"));
+        Assert.Equal("true", (string?)gitlab.Attribute("allowInsecureConnections"));
+        Assert.Contains("gitlab", ModuleScaffold.Files(Client() with { PackageFeedUrl = url }).Single(f => f.Path == "nuget.config").Content);
+    }
+
+    [Fact]
     public void ClientFilesAreComplete()
     {
         var files = ModuleScaffold.Files(Client()).ToDictionary(f => f.Path, f => f.Content);
@@ -115,9 +131,7 @@ public sealed class ModuleScaffoldTests
                 }
                 // Pilot.ClientSdk ещё может не дойти до nuget.org: тогда пакет берётся из локальной папки SCAFFOLD_CLIENTSDK_FEED.
                 if (request.UseClientSdk && !string.IsNullOrEmpty(feed))
-                    File.WriteAllText(Path.Combine(dir, "nuget.config"), ModuleScaffold.NuGetConfig.Replace(
-                        "<add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />",
-                        $"<add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n    <add key=\"local\" value=\"{feed}\" />"));
+                    File.WriteAllText(Path.Combine(dir, "nuget.config"), ModuleScaffold.NuGetConfig(feed));
 
                 var psi = new ProcessStartInfo("dotnet", "build -c Release --nologo -p:CopyToPilot=false") { WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true };
                 using var process = Process.Start(psi)!;

@@ -1,4 +1,4 @@
-﻿using ProAdmin.Settings;
+using ProAdmin.Settings;
 
 namespace ProAdmin.Modules;
 
@@ -220,7 +220,8 @@ public static class ModuleCiTemplate
 
               # Версия модуля - в одном месте: <Version>X.Y.Z</Version> в .csproj (AssemblyVersion/FileVersion генерирует SDK).
               PROJ=$(ls *.csproj 2>/dev/null | head -1)
-              RAW=$( [ -n "$PROJ" ] && grep -ohP '<Version>\K[^<]+' "$PROJ" | head -1)
+              # Только элемент целиком (<Version>…</Version>): слово <Version> в XML-комментарии - не версия; \r - от CRLF.
+              RAW=$( [ -n "$PROJ" ] && tr -d '\r' < "$PROJ" | grep -oP '<Version>\s*\K[^<\s]+(?=\s*</Version>)' | head -1)
               [ -z "$RAW" ] || echo "$RAW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || warn "<Version>$RAW</Version> - не X.Y.Z. Версия модуля - три числа: $(echo "$RAW" | cut -d. -f1-3)."
               EXTRA=$( { [ -n "$PROJ" ] && grep -oE '<(FileVersion|AssemblyVersion)>[^<]*</' "$PROJ" | sed 's#</$##';
                          find . -maxdepth 2 -name AssemblyInfo.cs -exec grep -oE 'Assembly(File|Informational)?Version\("[^"]*"' {} \; ; } 2>/dev/null | tr '\n' ' ')
@@ -305,12 +306,43 @@ public static class ModuleCiTemplate
             - |
               # Пакеты из реестра GitLab (Pilot.ClientSdk и др.): источники с /api/v4/ на хосте $CI_SERVER_HOST из nuget.config - вход токеном этого job;
               # источникам на других хостах токен не отдаётся.
+              # Если адрес GitLab из nuget.config задание не видит (external_url = localhost), пакеты источника-проекта
+              # (/api/v4/projects/<id>/packages/nuget) скачиваются по внутреннему адресу GitLab в папку .nuget-gitlab, и источник
+              # на время сборки заменяется этой папкой: индекс NuGet GitLab всё равно ссылается на недоступный external_url.
+              # Внутренний адрес: переменная GITLAB_INTERNAL_URL, иначе первый отвечающий из http://gitlab (сеть раннера)
+              # и host.docker.internal с портом GitLab.
               HOST_RE=$(printf '%s' "$CI_SERVER_HOST" | sed 's/\./\\./g')
+              inner_url() {   # $1 - путь API для проверки
+                for C in ${GITLAB_INTERNAL_URL:-} http://gitlab "http://host.docker.internal:${CI_SERVER_PORT:-80}"; do
+                  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$C$1" || true)" != "000" ] && { echo "$C"; return; }
+                done
+              }
               for CFG in nuget.config NuGet.config NuGet.Config; do
                 [ -f "$CFG" ] || continue
                 for SRC in $(grep -oP '<add\s+key="\K[^"]+(?="\s+value="https?://'"$HOST_RE"'(:[0-9]+)?(/[^"]*)?/api/v4/)' "$CFG"); do
+                  URL=$(grep -oP '<add\s+key="\Q'"$SRC"'\E"\s+value="\K[^"]+' "$CFG")
+                  if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL" || true)" = "000" ]; then
+                    PRJ=$(printf '%s' "$URL" | grep -oP '/api/v4/projects/\K[^/]+(?=/packages/nuget/)' || true)
+                    [ -n "$PRJ" ] || { echo "Источник $SRC ($URL) недоступен из задания, а пакеты групп так не скачать - укажите источник проекта /api/v4/projects/<id>/packages/nuget/index.json."; exit 1; }
+                    INNER=$(inner_url "/api/v4/projects/$PRJ/packages/nuget/index.json")
+                    [ -n "$INNER" ] || { echo "Источник $SRC недоступен по $URL, внутренний адрес GitLab не найден - задайте переменную CI/CD GITLAB_INTERNAL_URL (например, http://gitlab)."; exit 1; }
+                    mkdir -p .nuget-gitlab
+                    echo "Источник $SRC недоступен по $URL - пакеты проекта $PRJ берутся через $INNER."
+                    for P in $(curl -sf --max-time 60 "$INNER/api/v4/projects/$PRJ/packages?package_type=nuget&per_page=100" | grep -oP '"name":"\K[^"]+","version":"[^"]+' | sed 's/","version":"/|/'); do
+                      N=$(printf '%s' "${P%%|*}" | tr 'A-Z' 'a-z'); V="${P##*|}"
+                      F="$INNER/api/v4/projects/$PRJ/packages/nuget/download/$N/$V/$N.$V.nupkg"
+                      # Открытый проект отдаёт пакет без входа; закрытый - токену задания (если проект разрешён в Job token allowlist).
+                      curl -sfL --max-time 120 -o ".nuget-gitlab/$N.$V.nupkg" "$F" || curl -sfL --max-time 120 -u "gitlab-ci-token:$CI_JOB_TOKEN" -o ".nuget-gitlab/$N.$V.nupkg" "$F" ||
+                        echo "Не скачан $N $V из проекта $PRJ."
+                    done
+                    [ -n "$(ls .nuget-gitlab)" ] || { echo "Из проекта $PRJ ($INNER) не скачано ни одного пакета NuGet."; exit 1; }
+                    ls .nuget-gitlab
+                    dotnet nuget remove source "$SRC" --configfile "$CFG" >/dev/null
+                    dotnet nuget add source "$CI_PROJECT_DIR/.nuget-gitlab" --name "$SRC" --configfile "$CFG" >/dev/null
+                    continue
+                  fi
                   # SDK 10 (NuGet 7) не пускает в источник по http и снимает allowInsecureConnections при update: разрешаем http только своему GitLab.
-                  case "$(grep -oP '<add\s+key="\Q'"$SRC"'\E"\s+value="\K[^"]+' "$CFG")" in http://*) INSECURE=--allow-insecure-connections ;; *) INSECURE= ;; esac
+                  case "$URL" in http://*) INSECURE=--allow-insecure-connections ;; *) INSECURE= ;; esac
                   dotnet nuget update source "$SRC" --username gitlab-ci-token --password "$CI_JOB_TOKEN" --store-password-in-clear-text $INSECURE --configfile "$CFG"
                 done
               done
@@ -321,7 +353,7 @@ public static class ModuleCiTemplate
               if [ "${CI_COMMIT_BRANCH:-}" = "dev" ]; then
                 BASE=$(grep -oP '<Version>\K[0-9]+\.[0-9]+\.[0-9]+' "$PROJ" | head -1 || true)
                 if [ -n "$BASE" ]; then
-                  TAG=$(git tag -l "v$BASE"); [ -n "$TAG" ] || TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- '-rc' | head -1)
+                  TAG=$(git tag -l "v$BASE"); [ -n "$TAG" ] || TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- '-rc' | head -1 || true)
                   # Задачи - коммиты без слияний, кроме служебных (шаблон CI, версия и CHANGELOG.md релиза), как «задачи сверх релиза» в админке.
                   N=$(git log --no-merges --format=%s ${TAG:+"$TAG..HEAD"} | grep -Evc '^(CI/CD модуля:|Merge branch|Релиз .*[Вв]ерси)|CHANGELOG\.md' || true)
                   BUILD_VERSION="$BASE.$N"

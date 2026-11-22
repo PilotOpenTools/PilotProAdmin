@@ -46,6 +46,15 @@ public static partial class ModuleCreation
         var path = project.PathWithNamespace;
         log("ok", $"Создан проект {path}.", project.WebUrl);
 
+        // Pilot.ClientSdk может ещё не быть в nuget.org: если в GitLab есть открытый реестр pilot-ci/nuget - он второй источник.
+        if (request.Kind == ModuleKind.Client && request.UseClientSdk && request.PackageFeedUrl is null)
+        {
+            var feed = await PackageFeedUrlAsync(git, ct);
+            request = request with { PackageFeedUrl = feed };
+            log(feed is null ? "info" : "ok", feed is null
+                ? $"Проекта {ModuleScaffold.PackageFeedProject} в GitLab нет - Pilot.ClientSdk только из nuget.org."
+                : $"nuget.config: nuget.org и реестр {ModuleScaffold.PackageFeedProject}.", null);
+        }
         var files = ModuleScaffold.Files(request);
         await git.CreateCommitAsync(path, ModuleBranches.Main, null, $"{request.Code}: каркас модуля из веб-админки",
             files.Select(f => GitLabCommitAction.Create(f.Path, f.Content)).ToList(), ct);
@@ -64,6 +73,76 @@ public static partial class ModuleCreation
         await ProtectAsync(git, path, "release/*", ReleasePushLevel, ReleaseMergeLevel, "release/* защищены: коммиты - только Maintainer (так делает админка при релизе).", log, ct);
         await ProtectAsync(git, path, ModuleBranches.Dev, DevPushLevel, DevMergeLevel, "Ветка dev защищена: изменения только через Merge Request.", log, ct);
         return project;
+    }
+
+    /// <summary>Переменные групп модулей с ключами выкладки: контур, имя, Protected (stage и prod - только защищённым веткам).</summary>
+    public static readonly (string Env, string Variable, bool Protected)[] DeployKeyVariables =
+    {
+        ("test", "DEPLOY_KEY_TEST", false), ("stage", "DEPLOY_KEY_STAGE", true), ("prod", "DEPLOY_KEY_PROD", true),
+    };
+
+    /// <summary>
+    /// Ключи выкладки в группе модулей: недостающие DEPLOY_KEY_TEST / _STAGE / _PROD создаются из ключей админки
+    /// (MODULES_DEPLOY_KEY_*) - Masked, у stage и prod ещё Protected. Установщик задаёт их только группам, которые были
+    /// при установке; без этого шага deploy_* модуля в группе, созданной позже, падает «Не задана переменная DEPLOY_KEY_TEST».
+    /// Существующие переменные не меняются. Ошибки - предупреждения в журнал, модуль создаётся всё равно.
+    /// </summary>
+    public static async Task EnsureDeployKeysAsync(GitLabClient git, string group, Infrastructure.CiDeployOptions keys,
+        Action<string, string, string?> log, CancellationToken ct)
+    {
+        var added = new List<string>();
+        var noKey = new List<string>();
+        foreach (var (env, name, isProtected) in DeployKeyVariables)
+        {
+            try
+            {
+                if (await git.GroupVariableExistsAsync(group, name, ct))
+                    continue;
+                var key = keys.KeyFor(env);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    noKey.Add(name);
+                    continue;
+                }
+                await git.CreateGroupVariableAsync(group, name, key, masked: true, isProtected, ct);
+                added.Add(name);
+            }
+            catch (GitLabApiException ex)
+            {
+                log("warn", $"Переменная {name} группы {group} не задана: {ex.Message}. Задайте её вручную (Settings / CI/CD / Variables группы, " +
+                            $"значение MODULES_DEPLOY_KEY_{env.ToUpperInvariant()} из .env админки), иначе deploy_{env} модуля упадёт.", null);
+            }
+        }
+        if (added.Count > 0)
+            log("ok", $"В группе {group} заданы ключи выкладки из CI: {string.Join(", ", added)}.", null);
+        if (noKey.Count > 0)
+            log("warn", $"У админки нет ключей для {string.Join(", ", noKey)} (MODULES_DEPLOY_KEY_* в .env) - выкладка из CI на эти контуры выключена.", null);
+    }
+
+    /// <summary>
+    /// Адрес реестра NuGet проекта <see cref="ModuleScaffold.PackageFeedProject"/> - каким его видят разработчики (от WebUrl проекта);
+    /// null - проекта нет или GitLab недоступен.
+    /// </summary>
+    internal static async Task<string?> PackageFeedUrlAsync(GitLabClient git, CancellationToken ct)
+    {
+        try
+        {
+            var project = await git.FindProjectAsync(ModuleScaffold.PackageFeedProject, ct);
+            return project is null ? null : PackageFeedUrl(project);
+        }
+        catch (GitLabApiException)
+        {
+            return null;
+        }
+    }
+
+    internal static string? PackageFeedUrl(GitLabProject project)
+    {
+        var web = project.WebUrl.TrimEnd('/');
+        var suffix = "/" + project.PathWithNamespace;
+        if (!web.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return $"{web[..^suffix.Length]}/api/v4/projects/{project.Id}/packages/nuget/index.json";
     }
 
     private static async Task ProtectAsync(GitLabClient git, string project, string branch, int push, int merge, string done,

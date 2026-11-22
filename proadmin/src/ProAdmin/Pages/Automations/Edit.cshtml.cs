@@ -44,7 +44,7 @@ public class EditModel : AppPageModel
 
     /// <summary>
     /// Правка через ветку: на тесте (dev) - ветка задачи, на проде (main) - hotfix. «Сохранить» коммитит в неё, сервер не меняется;
-    /// на сервер изменения попадают со страницы автоматизации: «Влить / тест» / «Hotfix в прод».
+    /// на сервер изменения попадают со страницы автоматизации: «Влить в тест» / «Hotfix в прод».
     /// </summary>
     public bool WorkMode => Current.Branch is AutomationRepositories.DevBranch or AutomationRepositories.MainBranch;
     public bool IsHotfixMode => Current.Branch == AutomationRepositories.MainBranch;
@@ -310,7 +310,7 @@ public class EditModel : AppPageModel
             {
                 var commit = await git.CreateCommitAsync(repo.ProjectPath, branch, exists ? null : source, message, actions, ct);
                 TempData["Flash"] = $"Сохранено в ветку {branch}{(exists ? "" : $" (создана от {Current.Branch})")}: коммит {commit.ShortId}. " +
-                                    (IsHotfixMode ? "На прод - «Hotfix в прод» на странице автоматизации." : "На тест - «Влить / тест» на странице автоматизации.");
+                                    (IsHotfixMode ? "На прод - «Hotfix в прод» на странице автоматизации." : "На тест - «Влить в тест» на странице автоматизации.");
             }
         }
         catch (GitLabApiException ex)

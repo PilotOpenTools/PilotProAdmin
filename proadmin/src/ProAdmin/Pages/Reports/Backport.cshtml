@@ -38,13 +38,13 @@
             <div class="h3 mono">@Model.MainPath</div>
             <span class="badge badge-synced">источник</span>
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Ветка <code>dev</code></div>
             <div class="h3">@(Model.BranchesEqual ? "= main" : "будет обновлена")</div>
             <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "Merge Request main / dev")</span>
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Сервер @dev.Title</div>
             <div class="h3">@(Model.TestReport is null ? "нет" : Model.TestReport.Folder is { Length: > 0 } f ? f : "корень отчётов")</div>

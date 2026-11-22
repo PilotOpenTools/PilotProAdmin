@@ -109,7 +109,8 @@ branch_rules:
 
       # Версия модуля - в одном месте: <Version>X.Y.Z</Version> в .csproj (AssemblyVersion/FileVersion генерирует SDK).
       PROJ=$(ls *.csproj 2>/dev/null | head -1)
-      RAW=$( [ -n "$PROJ" ] && grep -ohP '<Version>\K[^<]+' "$PROJ" | head -1)
+      # Только элемент целиком (<Version>…</Version>): слово <Version> в XML-комментарии - не версия; \r - от CRLF.
+      RAW=$( [ -n "$PROJ" ] && tr -d '\r' < "$PROJ" | grep -oP '<Version>\s*\K[^<\s]+(?=\s*</Version>)' | head -1)
       [ -z "$RAW" ] || echo "$RAW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || warn "<Version>$RAW</Version> - не X.Y.Z. Версия модуля - три числа: $(echo "$RAW" | cut -d. -f1-3)."
       EXTRA=$( { [ -n "$PROJ" ] && grep -oE '<(FileVersion|AssemblyVersion)>[^<]*</' "$PROJ" | sed 's#</$##';
                  find . -maxdepth 2 -name AssemblyInfo.cs -exec grep -oE 'Assembly(File|Informational)?Version\("[^"]*"' {} \; ; } 2>/dev/null | tr '\n' ' ')
@@ -210,7 +211,7 @@ build_module:
       if [ "${CI_COMMIT_BRANCH:-}" = "dev" ]; then
         BASE=$(grep -oP '<Version>\K[0-9]+\.[0-9]+\.[0-9]+' "$PROJ" | head -1 || true)
         if [ -n "$BASE" ]; then
-          TAG=$(git tag -l "v$BASE"); [ -n "$TAG" ] || TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- '-rc' | head -1)
+          TAG=$(git tag -l "v$BASE"); [ -n "$TAG" ] || TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- '-rc' | head -1 || true)
           # Задачи - коммиты без слияний, кроме служебных (шаблон CI, версия и CHANGELOG.md релиза), как «задачи сверх релиза» в админке.
           N=$(git log --no-merges --format=%s ${TAG:+"$TAG..HEAD"} | grep -Evc '^(CI/CD модуля:|Merge branch|Релиз .*[Вв]ерси)|CHANGELOG\.md' || true)
           BUILD_VERSION="$BASE.$N"

@@ -218,11 +218,17 @@ internal abstract class ModuleWorkflowBase
         return null;
     }
 
-    /// <summary>Задачи ветки относительно main: заголовки коммитов (без merge-коммитов и служебных).</summary>
-    protected async Task<List<GitLabCommit>> TaskCommitsAsync(string from, string to, CancellationToken ct) =>
-        (await Git.CompareCommitsAsync(Project, from, to, ct))
-        .Where(c => c.ParentIds is not { Count: > 1 } && !IsServiceCommit(c.Title))
-        .ToList();
+    /// <summary>
+    /// Задачи ветки относительно main: заголовки коммитов (без merge-коммитов и служебных). Задачи, уже выпущенные
+    /// в main копией (выборочный релиз), не считаются - иначе они снова попали бы в следующий релиз.
+    /// </summary>
+    protected async Task<List<GitLabCommit>> TaskCommitsAsync(string from, string to, CancellationToken ct)
+    {
+        var commits = (await Git.CompareCommitsAsync(Project, from, to, ct))
+            .Where(c => c.ParentIds is not { Count: > 1 } && !IsServiceCommit(c.Title))
+            .ToList();
+        return from == ModuleBranches.Main ? await Git.WithoutPickedIntoAsync(Project, from, commits, ct) : commits;
+    }
 
     /// <summary>Заголовок коммита с шаблоном CI (подключение репозитория и «Обновить CI»).</summary>
     internal const string CiCommitPrefix = "CI/CD модуля:";
@@ -617,15 +623,19 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
     private readonly IReadOnlyCollection<string>? _selected;
     private readonly IReadOnlyList<string> _notes;
     private readonly bool _deployToStage;
+    private readonly string? _replaces;
 
+    /// <param name="replaces">Активный релиз, который новый заменяет: его MR закрываются и ветки удаляются,
+    /// когда новая ветка уже собрана (не удалось собрать - старый релиз остаётся).</param>
     public ModulePrepareReleaseWorkflow(IModuleTarget pilot, GitLabClient git, PublishJob job, ModuleContext ctx,
-        ModuleVersion version, IReadOnlyCollection<string>? selectedShas, IReadOnlyList<string> notes, bool deployToStage = true)
+        ModuleVersion version, IReadOnlyCollection<string>? selectedShas, IReadOnlyList<string> notes, bool deployToStage = true, string? replaces = null)
         : base(pilot, git, job, ctx)
     {
         _version = version;
         _selected = selectedShas;
         _notes = notes;
         _deployToStage = deployToStage;
+        _replaces = replaces;
     }
 
     public override async Task RunAsync(CancellationToken ct)
@@ -678,8 +688,20 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
             }
         }
 
+        if (_replaces is { } old)
+        {
+            foreach (var oldMr in await Git.ListOpenMergeRequestsToAsync(Project, old, ct) ?? new())
+                await Git.CloseMergeRequestAsync(Project, oldMr.Iid, ct);
+            if (ModuleBranches.ReleaseVersion(old) is { } oldVersion)
+                try { await Git.DeleteBranchAsync(Project, ModuleBranches.ReleasePrep(oldVersion), ct); } catch (GitLabApiException) { /* уже нет */ }
+            await Git.DeleteBranchAsync(Project, old, ct);
+            Ok($"Релиз {old} заменён на {release}: его Merge Request закрыты, ветка удалена (в прод он не пойдёт).");
+        }
+
         var description =
-            $"## Релиз {_version}\n\n### Задачи\n\n{list}\n" +
+            $"## Релиз {_version}\n\n" +
+            (_replaces is { } replaced ? $"Заменяет {replaced} (не выпущен).\n\n" : "") +
+            $"### Задачи\n\n{list}\n" +
             (skipped.Count > 0 ? $"\n### Не входят в релиз (остаются в dev)\n\n{string.Join("\n", skipped.Select(c => $"- {c.Title}"))}\n" : "") +
             (_notes.Count > 0 ? $"\n### Заметки\n\n{string.Join("\n", _notes.Select(n => "- " + n))}\n" : "") +
             $"\n---\n\nСоздано PilotProAdmin: Merge Request вливается сразу, релиз выкладывается на стейдж.\n\n- Pilot: {Job.PilotUser}";

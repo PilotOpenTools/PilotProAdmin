@@ -42,17 +42,23 @@ public class SettingsModel : AppPageModel
 
     public async Task<IActionResult> OnPostDeployAsync([FromServices] DeployAccounts accounts, CancellationToken ct)
     {
-        var before = SettingsStore.Current;
-        var updated = before.Clone();
         var notes = new List<string>();
-        if (await accounts.ApplyAsync(updated, Deploy, _pilot, ct, notes) is { } error)
+        if (await SaveDeployAsync(accounts, notes, ct) is { } error)
             TempData["FlashError"] = string.Join(" ", notes.Append(error));
         else
-        {
-            SettingsStore.UpdateDeployLogins(before, updated);
             TempData["Flash"] = string.Join(" ", notes.Prepend("Служебные учётные записи Pilot сохранены."));
-        }
         return RedirectToPage(null, null, null, "deploy-accounts");
+    }
+
+    /// <summary>Служебные учётные записи из общей формы; null - сохранено.</summary>
+    private async Task<string?> SaveDeployAsync(DeployAccounts accounts, List<string> notes, CancellationToken ct)
+    {
+        var before = SettingsStore.Current;
+        var updated = before.Clone();
+        if (await accounts.ApplyAsync(updated, Deploy, _pilot, ct, notes) is { } error)
+            return error;
+        SettingsStore.UpdateDeployLogins(before, updated);
+        return null;
     }
 
     public List<(string Title, string Level, string Text)> CheckResults { get; } = new();
@@ -100,8 +106,18 @@ public class SettingsModel : AppPageModel
     /// <summary>Сохранить режим библиотек: менять его может Developer и выше в группе модулей этого вида.</summary>
     public async Task<IActionResult> OnPostLibrariesAsync(CancellationToken ct)
     {
-        var who = Who;
         var saved = new List<string>();
+        if (await SaveLibrariesAsync(saved, ct) is { } error)
+            TempData["FlashError"] = error;
+        else
+            TempData["Flash"] = saved.Count == 0 ? "Режим библиотек не изменился." : "Библиотеки модулей: " + string.Join("; ", saved) + ".";
+        return RedirectToPage(null, null, null, "libraries");
+    }
+
+    /// <summary>Режим библиотек из общей формы; null - сохранено, в <paramref name="saved"/> - что изменилось.</summary>
+    private async Task<string?> SaveLibrariesAsync(List<string> saved, CancellationToken ct)
+    {
+        var who = Who;
         foreach (var (kind, form, title) in new[] { (ModuleKind.Client, ClientLibraries, "клиентские"), (ModuleKind.Server, ServerLibraries, "серверные") })
         {
             var spec = _libraries.For(kind);
@@ -109,24 +125,17 @@ public class SettingsModel : AppPageModel
             if (spec.Mode == form.Mode && (form.Mode != AssemblySpecMode.SharedModule || spec.SharedModule == shared))
                 continue;
             if (form.Mode == AssemblySpecMode.SharedModule && shared.Length == 0)
-            {
-                TempData["FlashError"] = $"Модули ({title}): для режима «{AssemblySpec.ModeTitle(form.Mode)}» выберите общий модуль.";
-                return RedirectToPage(null, null, null, "libraries");
-            }
+                return $"Модули ({title}): для режима «{AssemblySpec.ModeTitle(form.Mode)}» выберите общий модуль.";
             var access = await GetGroupAccessAsync(kind.GroupPath(AppSettings), fresh: false, ct);
             if (GitLabGroupAccess.CannotChange(access))
-            {
-                TempData["FlashError"] = $"Модули ({title}): менять режим библиотек может Developer и выше в группе «{kind.GroupPath(AppSettings)}» (GitLab должен быть подключён, а доступ определён).";
-                return RedirectToPage(null, null, null, "libraries");
-            }
+                return $"Модули ({title}): менять режим библиотек может Developer и выше в группе «{kind.GroupPath(AppSettings)}» (GitLab должен быть подключён, а доступ определён).";
             spec.Mode = form.Mode;
             if (form.Mode == AssemblySpecMode.SharedModule)
                 spec.SharedModule = shared;
             _libraries.Save(kind, spec, who);
             saved.Add($"{title} - {AssemblySpec.ModeTitle(spec.Mode)}{(spec.IsShared ? $" (общий модуль «{spec.SharedModule}»)" : "")}");
         }
-        TempData["Flash"] = saved.Count == 0 ? "Режим библиотек не изменился." : "Библиотеки модулей: " + string.Join("; ", saved) + ".";
-        return RedirectToPage(null, null, null, "libraries");
+        return null;
     }
 
     private async Task LoadFormAccessAsync(CancellationToken ct)
@@ -138,7 +147,8 @@ public class SettingsModel : AppPageModel
         TypesProjectAccess = await GetGroupAccessAsync(ProAdmin.Types.TypesRepository.GroupOf(Form.TypesProjectPath), fresh: true, ct);
     }
 
-    public async Task<IActionResult> OnPostAsync(CancellationToken ct)
+    /// <summary>Одна кнопка «Сохранить» внизу: общие настройки, служебные учётные записи (если их меняли) и режим библиотек.</summary>
+    public async Task<IActionResult> OnPostAsync([FromServices] DeployAccounts accounts, CancellationToken ct)
     {
         ViewData["Section"] = "settings";
         Validate();
@@ -198,9 +208,24 @@ public class SettingsModel : AppPageModel
         HttpContext.RequestServices.GetRequiredService<ILogger<SettingsModel>>().LogInformation(
             "Общие настройки изменены: {Login} с адреса {Address}; изменено: {Fields}", Who,
             HttpContext.Connection.RemoteIpAddress, ChangedFields(before, Form));
-        TempData["Flash"] = connected
-            ? "Настройки сохранены."
-            : "Настройки сохранены. Группа будет проверена после подключения GitLab к этому серверу.";
+        var messages = new List<string> { connected ? "Настройки сохранены." : "Настройки сохранены. Группа будет проверена после подключения GitLab к этому серверу." };
+        var problems = new List<string>();
+        if (accounts.HasChanges(SettingsStore.Current, Deploy))
+        {
+            var notes = new List<string>();
+            if (await SaveDeployAsync(accounts, notes, ct) is { } deployError)
+                problems.AddRange(notes.Append("Служебные учётные записи не сохранены: " + deployError));
+            else
+                messages.AddRange(notes.Prepend("Служебные учётные записи Pilot сохранены."));
+        }
+        var libraries = new List<string>();
+        if (await SaveLibrariesAsync(libraries, ct) is { } librariesError)
+            problems.Add(librariesError);
+        else if (libraries.Count > 0)
+            messages.Add("Библиотеки модулей: " + string.Join("; ", libraries) + ".");
+        TempData["Flash"] = string.Join(" ", messages);
+        if (problems.Count > 0)
+            TempData["FlashError"] = string.Join(" ", problems);
 
         return connected ? RedirectToPage() : RedirectToPage("/GitLab/Index", new { returnUrl = "/Settings" });
     }

@@ -81,7 +81,7 @@
 {
     <section class="card@(Model.NextStep?.Href?.Contains("from=hotfix") == true ? " is-focus" : "")" id="hotfix">
         <h2>Hotfix</h2>
-        <p class="muted small">Исправление прода: Reports отправляет его в <code>hotfix/…</code> от main. «Hotfix в прод» переносит ветку в main и на продовый сервер, затем «/ В тест» вернёт исправление в dev.</p>
+        <p class="muted small">Исправление прода: Reports отправляет его в <code>hotfix/…</code> от main. «Hotfix в прод» переносит ветку в main и на продовый сервер, затем «В тест» вернёт исправление в dev.</p>
         @foreach (var h in Model.Branches.Active.Where(a => a.Kind == "hotfix"))
         {
             <div class="btn-row">
@@ -89,7 +89,7 @@
                 <span class="muted small">+@h.Ahead к main@(h.Branch.Commit is { } c ? $" · {c.AuthorName}, {ProAdmin.GitLab.BranchActivity.Ago(c.CommittedDate)}" : "")</span>
                 @if (!ro && h.Ahead > 0)
                 {
-                    <a class="btn btn-sm btn-primary" href="/Reports/Promote?name=@q&from=@Uri.EscapeDataString(h.Branch.Name)">Hotfix в прод /</a>
+                    <a class="btn btn-sm btn-primary" href="/Reports/Promote?name=@q&from=@Uri.EscapeDataString(h.Branch.Name)">Hotfix в прод</a>
                 }
             </div>
         }
@@ -101,8 +101,16 @@
     <div class="btn-row">
         @if (!ro)
         {
-            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Reports/Promote") == true ? "btn-primary" : "")" href="/Reports/Promote?name=@q">На прод /</a>
-            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Reports/Backport") == true ? "btn-primary" : "")" href="/Reports/Backport?name=@q">В тест</a>
+            @* «На прод» - только когда в dev есть что переносить и следующий шаг не предлагает это же;
+               «В тест» (main / dev) - только когда в main есть то, чего нет в dev (после hotfix). *@
+            @if (!Model.DevEqualsMain && Model.Drift != ReportDrift.MainAhead && Model.NextStep?.Href?.StartsWith("/Reports/Promote") != true)
+            {
+                <a class="btn" href="/Reports/Promote?name=@q">На прод</a>
+            }
+            @if (Model.Drift is ReportDrift.MainAhead or ReportDrift.Diverged && Model.NextStep?.Href?.StartsWith("/Reports/Backport") != true)
+            {
+                <a class="btn" href="/Reports/Backport?name=@q">В тест</a>
+            }
             <a class="btn" href="/Reports/Rollback?name=@q">Откатить прод</a>
             @if (Model.RollbackTo is not null && Model.UndoRollbackTag is not null)
             {

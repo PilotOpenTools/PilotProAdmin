@@ -24,7 +24,11 @@ public abstract class AppPageModel : PageModel
     public bool GitHubTypesMode => HttpContext.RequestServices
         .GetRequiredService<Microsoft.Extensions.Options.IOptions<ProAdmin.Infrastructure.AppOptions>>().Value.GitHubTypes.IsConfigured;
 
-    public bool GitLabConnected => !GitHubTypesMode && CurrentSession.IsGitLabConnected(AppSettings);
+    /// <summary>Ключи выкладки из CI по контурам (MODULES_DEPLOY_KEY_*).</summary>
+    protected ProAdmin.Infrastructure.CiDeployOptions CiDeployOptions => HttpContext.RequestServices
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<ProAdmin.Infrastructure.AppOptions>>().Value.CiDeploy;
+
+    public bool GitLabConnected =>!GitHubTypesMode && CurrentSession.IsGitLabConnected(AppSettings);
 
     /// <summary>Путь группы автоматизаций в GitLab (например «automation»).</summary>
     public string? GroupPath => AppSettings.GitLabGroupPath;

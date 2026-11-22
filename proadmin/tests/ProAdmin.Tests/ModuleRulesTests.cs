@@ -435,6 +435,49 @@ public class ModuleRulesTests
     }
 
     [Fact]
+    public void New_module_skeleton_is_not_deployed_before_first_task()
+    {
+        NextStepInput Base() => new() { Test = ModuleSync.Synced, Stage = ModuleSync.NoBranch, Prod = ModuleSync.Missing };
+        var fresh = Base() with { Test = ModuleSync.Missing };
+        // Ветка задачи с коммитом - сначала MR, а не выкладка пустого каркаса.
+        var mr = ModuleNextSteps.For(fresh with { BranchWithoutMr = "feature/KTN-4432", NewMrUrl = "http://mr" });
+        Assert.Equal((FlowStage.Task, "http://mr"), (mr.Stage, mr.Href));
+        // Ни веток, ни задач - предлагается начать задачу.
+        Assert.Equal((FlowStage.Task, "#tasks"), ModuleNextSteps.For(fresh) is var start ? (start.Stage, start.Href) : default);
+        // В dev уже есть задачи, а на тесте модуля нет - выложить dev.
+        Assert.Equal("#envs", ModuleNextSteps.For(fresh with { Unreleased = 1 }).Href);
+        Assert.Equal("#envs", ModuleNextSteps.For(Base() with { Test = ModuleSync.Behind, BranchWithoutMr = "feature/x" }).Href);
+        // Несколько веток без MR: в шаге каждая со своей кнопкой «Создать MR».
+        var two = ModuleNextSteps.For(Base() with { BranchWithoutMr = "feature/a", NewMrUrl = "http://mr/a",
+            BranchesWithoutMr = new[] { ("feature/a", "http://mr/a"), ("feature/b", "http://mr/b") } });
+        Assert.Equal(new[] { ("feature/a", "http://mr/a"), ("feature/b", "http://mr/b") }, two.Items.Select(i => (i.Title, i.Href)));
+        Assert.Null(two.ActionLabel);
+        Assert.Contains("2 ветки", two.Title);
+        var one = ModuleNextSteps.For(Base() with { BranchWithoutMr = "feature/a", NewMrUrl = "http://mr/a",
+            BranchesWithoutMr = new[] { ("feature/a", "http://mr/a") } });
+        Assert.Equal(("Ветка feature/a: создайте MR в dev", "http://mr/a"), (one.Title, one.Items.Single().Href));
+        // Одна задача уже на тесте, другая ветка без MR: шаг «соберите релиз», но «Создать MR» не пропадает.
+        var both = ModuleNextSteps.For(Base() with { Unreleased = 1, BranchWithoutMr = "feature/b", NewMrUrl = "http://mr/b",
+            BranchesWithoutMr = new[] { ("feature/b", "http://mr/b") } });
+        Assert.Equal(("#release", "http://mr/b"), (both.Href, both.Items.Single().Href));
+        // Релиз на стейдже, в dev задача вне релиза: «Добавить в релиз» рядом с выпуском в прод.
+        var candidate = new NextStepItem("fix: Log", "Добавить в релиз", "#add-to-release") { IsBranch = false, PostAction = "/add", PostValue = "c002" };
+        var inRelease = ModuleNextSteps.For(Base() with { Release = "release/1.2.0", Stage = ModuleSync.Synced, Unreleased = 2,
+            ReleaseCandidates = new[] { candidate } });
+        Assert.Equal(("#release-prod", "c002"), (inRelease.Href, inRelease.Items.Single().PostValue));
+        // Без активного релиза кандидаты не показываются.
+        Assert.DoesNotContain(candidate, ModuleNextSteps.For(Base() with { Unreleased = 2, ReleaseCandidates = new[] { candidate } }).Items);
+    }
+
+    [Fact]
+    public void New_mr_url_targets_branch_of_task()
+    {
+        var url = ProAdmin.Pages.Modules.ModuleModel.NewMrUrl("http://gl/client/m", "bugfix/KTN-1-x", "release/1.2.0");
+        Assert.Contains("source_branch%5D=bugfix%2FKTN-1-x", url);
+        Assert.Contains("target_branch%5D=release%2F1.2.0", url);
+    }
+
+    [Fact]
     public void Ci_template_has_build_job_and_branch_rules()
     {
         var settings = new AdminSettings();

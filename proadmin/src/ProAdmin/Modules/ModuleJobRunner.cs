@@ -48,6 +48,13 @@ public sealed class ModuleJobRunner
             (job, git) => new ModulePrepareReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, version, selected, notes),
             $"Готово: релиз {version} на стейдже.");
 
+    /// <summary>Новый релиз вместо активного (не выпущенного): выбранные задачи dev, старый релиз удаляется.</summary>
+    public PublishJob StartReplaceRelease(ModuleContext ctx, string oldRelease, ModuleVersion version, IReadOnlyCollection<string> selected,
+        IReadOnlyList<string> notes, string pilotUser, string? gitLabUser) =>
+        Start(ctx, ModuleEnv.Stage, "новый релиз / стейдж", $"{oldRelease} / {ModuleBranches.Release(version)} / {EnvTitle(ctx, ModuleEnv.Stage)}", notes, pilotUser, gitLabUser,
+            (job, git) => new ModulePrepareReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, version, selected, notes, replaces: oldRelease),
+            $"Готово: релиз {version} вместо {oldRelease} на стейдже.");
+
     public PublishJob StartAddToRelease(ModuleContext ctx, string release, IReadOnlyCollection<string> selected, string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Stage, "задачи / релиз / стейдж", $"{ModuleBranches.Dev} / {release} / {EnvTitle(ctx, ModuleEnv.Stage)}", Array.Empty<string>(), pilotUser, gitLabUser,
             (job, git) => new ModuleAddToReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, release, selected),

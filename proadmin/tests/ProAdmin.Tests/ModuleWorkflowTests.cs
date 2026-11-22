@@ -60,6 +60,30 @@ public class ModuleWorkflowTests
     }
 
     [Fact]
+    public async Task Tasks_released_as_cherry_pick_copies_are_not_released_again()
+    {
+        // Прошлый выборочный релиз перенёс KTN-101 в main копией: исходный коммит в dev остаётся «впереди» main.
+        var gitlab = new FakeGitLab
+        {
+            MainCommits = new object[]
+            {
+                new { id = "k1k1k1k1k1", short_id = "k1k1k1k1", title = "KTN-101: экспорт", parent_ids = new[] { "p" },
+                      message = "KTN-101: экспорт\n\n(cherry picked from commit c1c1c1c1c1)" },
+            },
+        };
+        var job = await RunPrepareAsync(gitlab, new[] { "c1c1c1c1c1", "c2c2c2c2c2", "c3c3c3c3c3" });
+
+        Assert.Null(job.Error);
+        // KTN-101 уже на проде: остальные две - это все задачи релиза (снимок dev, содержимое KTN-101 в main уже есть),
+        // в описании и CHANGELOG её нет.
+        Assert.Empty(gitlab.CherryPicks);
+        Assert.Contains("release-prep/1.4.0 / devhead0000", gitlab.CreatedBranches);
+        var description = Assert.Single(gitlab.MergeRequests).GetProperty("description").GetString()!;
+        Assert.DoesNotContain("KTN-101", description);
+        Assert.Contains("KTN-102", description);
+    }
+
+    [Fact]
     public async Task Cherry_pick_conflict_removes_release_branches()
     {
         var gitlab = new FakeGitLab { ConflictOn = "c3c3c3c3c3" };
@@ -103,6 +127,8 @@ public class ModuleWorkflowTests
     private sealed class FakeGitLab : HttpMessageHandler
     {
         public string? ConflictOn { get; init; }
+        /// <summary>История main (для копий задач, выпущенных выборочным релизом).</summary>
+        public object[] MainCommits { get; init; } = Array.Empty<object>();
         public List<string> CreatedBranches { get; } = new();
         public List<string> DeletedBranches { get; } = new();
         public List<string> CherryPicks { get; } = new();
@@ -124,6 +150,11 @@ public class ModuleWorkflowTests
                 Assert.Contains("from=main", query);
                 Assert.Contains("to=devhead0000", query);
                 return Json(HttpStatusCode.OK, new { commits = DevCommits });
+            }
+            if (method == "GET" && path == "/repository/commits")
+            {
+                Assert.Contains("ref_name=main", query);
+                return Json(HttpStatusCode.OK, MainCommits);
             }
             if (method == "POST" && path == "/repository/branches")
             {

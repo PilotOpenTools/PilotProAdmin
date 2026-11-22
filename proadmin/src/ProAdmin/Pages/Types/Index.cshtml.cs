@@ -318,29 +318,29 @@ public class IndexModel : AppPageModel
         ModuleNextStep next;
         if (!test.Ok)
             next = new(FlowStage.Test, NextStepKind.Warn, "Тестовый сервер расходится с dev",
-                "Запишите dev на сервер или, если типы правили прямо на тесте, заберите отличия в ветку изменения.", "К серверам ", "#servers");
+                "Запишите dev на сервер или, если типы правили прямо на тесте, заберите отличия в ветку изменения.", "К серверам", "#servers");
         else if (working.FirstOrDefault(c => c.Ahead > 0) is { } ready)
             next = new(FlowStage.Task, NextStepKind.Action, $"Ветка {ready.Branch!.Name}: влейте в dev",
-                "«Влить / тест» создаст MR со squash в dev, дождётся pipeline и запишет dev на тестовый сервер. После этого изменение можно связать с модулем.",
-                "К изменениям ", "#changes");
+                "MR со squash в dev, pipeline и запись dev на тестовый сервер. После этого изменение можно связать с модулем.",
+                "Влить в тест", "#" + MergeDialogId(ready.Branch.Name));
         else if (onTest.Count > 0 && !AllLinked(onTest))
             next = new(FlowStage.Test, NextStepKind.Action, $"В dev {ModuleNextSteps.Plural(onTest.Count, "изменение ждёт", "изменения ждут", "изменений ждут")} стейджа",
                 "Свяжите изменение с коммитом модуля или автоматизации - оно уйдёт на стейдж и прод вместе с ним. Или перенесите вручную.",
-                "На стейдж /", "/Types/Promote?target=release");
+                "На стейдж", "/Types/Promote?target=release");
         else if (!stage.Ok)
-            next = new(FlowStage.Stage, NextStepKind.Warn, "Сервер стейджа расходится с release", "Запишите release на сервер стейджа.", "К серверам ", "#servers");
+            next = new(FlowStage.Stage, NextStepKind.Warn, "Сервер стейджа расходится с release", "Запишите release на сервер стейджа.", "К серверам", "#servers");
         else if (onStage.Count > 0 && !AllLinked(onStage))
             next = new(FlowStage.Stage, NextStepKind.Action, $"На стейдже {ModuleNextSteps.Plural(onStage.Count, "изменение ждёт", "изменения ждут", "изменений ждут")} прода",
-                "Проверьте на стейдже и выпустите: перенос release / main с версией, CHANGELOG и тегом.", "На прод /", "/Types/Promote?target=main");
+                "Проверьте на стейдже и выпустите: перенос release / main с версией, CHANGELOG и тегом.", "На прод", "/Types/Promote?target=main");
         else if (onTest.Count + onStage.Count > 0)
             next = new(onStage.Count > 0 ? FlowStage.Stage : FlowStage.Test, NextStepKind.Wait,
                 $"Изменения едут вместе с модулями: {onTest.Count + onStage.Count}",
-                "Они перейдут на стейдж и прод, когда туда выйдут связанные коммиты модулей и автоматизаций.", "К изменениям ", "#changes");
+                "Они перейдут на стейдж и прод, когда туда выйдут связанные коммиты модулей и автоматизаций.", "К изменениям", "#changes");
         else if (!prod.Ok)
-            next = new(FlowStage.Prod, NextStepKind.Warn, "Продовый сервер расходится с main", "Запишите main на прод или выясните, кто менял типы напрямую.", "К серверам ", "#servers");
+            next = new(FlowStage.Prod, NextStepKind.Warn, "Продовый сервер расходится с main", "Запишите main на прод или выясните, кто менял типы напрямую.", "К серверам", "#servers");
         else if (working.Count > 0)
             next = new(FlowStage.Task, NextStepKind.Action, "Ветки изменений без правок",
-                "Откройте тип, состояние или группу состояний и сохраните правку в ветку - или удалите ветку.", "К изменениям ", "#changes");
+                "Откройте тип, состояние или группу состояний и сохраните правку в ветку - или удалите ветку.", "К изменениям", "#changes");
         else
             next = new(FlowStage.Done, NextStepKind.Done, $"Всё выпущено: v{MainVersion} на проде",
                 "Изменений вне main нет, серверы совпадают с ветками. Новое изменение начинается с ветки.", "+ Новое изменение", "#new-change");
@@ -353,8 +353,12 @@ public class IndexModel : AppPageModel
             FlowStage.Prod => 3,
             _ => 4,
         };
-        return new FlowCard(steps, current, next, Array.Empty<ActiveBranch>(), Project?.WebUrl ?? "", lanes);
+        // Линии изменений не рисуем: каждое изменение со своим этапом - в таблице «Изменения» ниже, карточка - только этапы и шаг.
+        return new FlowCard(steps, current, next, Array.Empty<ActiveBranch>(), Project?.WebUrl ?? "");
     }
+
+    /// <summary>Окно «Влить в тест» ветки изменения (открывается и кнопкой следующего шага).</summary>
+    public static string MergeDialogId(string branch) => "merge-" + branch.Replace('/', '-');
 
     public string? TaskUrl(string? text) =>
         ModuleBranches.TaskUrl(ModuleBranches.Task(text, AppSettings.TaskPattern), AppSettings.TaskUrlTemplate);

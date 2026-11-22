@@ -12,6 +12,9 @@ public sealed class DeployAccountInput
 {
     public string? Login { get; set; }
     public string? Password { get; set; }
+
+    /// <summary>Пароль уже сохранён (в настройках или в .env установщика) - пустое поле его не меняет.</summary>
+    public bool HasPassword { get; set; }
 }
 
 public sealed class DeployAccounts(IDataProtectionProvider protection, IOptions<AppOptions> options)
@@ -30,7 +33,15 @@ public sealed class DeployAccounts(IDataProtectionProvider protection, IOptions<
     }
 
     public List<DeployAccountInput> Prefill(AdminSettings settings) => Contours.Select(contour =>
-        new DeployAccountInput { Login = Get(settings, contour)?.Login }).ToList();
+        Get(settings, contour) is { } login
+            ? new DeployAccountInput { Login = login.Login, HasPassword = !string.IsNullOrEmpty(login.Password) }
+            : new DeployAccountInput()).ToList();
+
+    /// <summary>Есть ли в форме изменения: введён пароль или другой логин. Без изменений сохранение учёток не трогает Pilot.</summary>
+    public bool HasChanges(AdminSettings settings, IReadOnlyList<DeployAccountInput> inputs) =>
+        inputs.Count == Contours.Count && inputs.Select((input, i) =>
+            !string.IsNullOrEmpty(input.Password) ||
+            (!string.IsNullOrWhiteSpace(input.Login) && input.Login.Trim() != Get(settings, Contours[i])?.Login)).Any(c => c);
 
     /// <param name="notes">Что сделано в базах (создан служебный пользователь) и предупреждения по учётным записям,
     /// которые не менялись: их проблемы сохранение не останавливают.</param>
