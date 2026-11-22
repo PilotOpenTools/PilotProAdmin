@@ -15,7 +15,9 @@
     <a class="action-link" href="#automation-ci">CI/CD</a>
     <a class="action-link" href="#reports">Отчёты</a>
     <a class="action-link" href="#checks">Проверки</a>
+    <a class="action-link" href="#deploy-accounts">Служебные учётные записи</a>
     <a class="action-link" href="#libraries">Библиотеки</a>
+    <a class="action-link" href="#stats">Статистика</a>
 </nav>
 <partial name="_ProdAdminBanner" model="Model" />
 
@@ -155,7 +157,7 @@
         </label>
         <label class="check">
             <input type="radio" name="Form.AutomationsAutoStage" value="true" @(Model.Form.AutomationsAutoStage ? "checked" : "") />
-            <span><b>Тест и стейдж вместе</b>: «Влить / тест» сразу записывает то же на стейдж; на прод переносится <code>dev</code> (без веток <code>release/*</code>).</span>
+            <span><b>Тест и стейдж вместе</b>: «Влить в тест» сразу записывает то же на стейдж; на прод переносится <code>dev</code> (без веток <code>release/*</code>).</span>
         </label>
     </section>
 
@@ -208,28 +210,11 @@
         </div>
     </section>
 
-    <section class="card">
-        <h2>Статистика</h2>
-        <label asp-for="Form.GrafanaUrl">Адрес Grafana</label>
-        <input asp-for="Form.GrafanaUrl" type="url" />
+    @{ Model.Deploy = Model.DeployPrefill; }
+    <section class="card" id="deploy-accounts">
+        <partial name="_DeployAccounts" for="Deploy" />
     </section>
-    <div class="form-actions">
-        <button class="btn btn-primary" type="submit">Сохранить</button>
-        <button class="btn" type="submit" asp-page-handler="Check">Проверить подключения</button>
-        @if (Model.AppSettings.UpdatedAt is { } at)
-        {
-            <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm"), @Model.AppSettings.UpdatedBy</span>
-        }
-    </div>
-</form>
 
-@{ Model.Deploy = Model.DeployPrefill; }
-<form method="post" asp-page-handler="Deploy" id="deploy-accounts" class="form settings-form">
-    <partial name="_DeployAccounts" for="Deploy" />
-    <button type="submit">Сохранить служебные учётные записи</button>
-</form>
-
-<form method="post" asp-page-handler="Libraries" class="form settings-form">
     <section class="card" id="libraries">
         <h2>Библиотеки модулей</h2>
         <p class="muted small">
@@ -278,14 +263,36 @@
                         </small>
                     </label>
                 </div>
-                @if (spec.UpdatedAt is { } at)
+                @if (spec.UpdatedAt is { } specAt)
                 {
-                    <p class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @spec.UpdatedBy</p>
+                    <p class="muted small">Изменено @specAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @spec.UpdatedBy</p>
                 }
             </fieldset>
         }
-        <div class="form-actions">
-            <button class="btn btn-primary" type="submit">Сохранить режим библиотек</button>
-        </div>
     </section>
+
+    <section class="card" id="stats">
+        <h2>Статистика</h2>
+        <label class="field">
+            <span>Адрес Grafana</span>
+            <input asp-for="Form.GrafanaUrl" type="url" placeholder="http://localhost:3000" />
+        </label>
+    </section>
+
+    <div class="form-actions settings-actions">
+        @if (Model.IsAdmin)
+        {
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <button class="btn" type="submit" asp-page-handler="Check">Проверить подключения</button>
+        }
+        else
+        {
+            @* Не администратору доступен только режим библиотек (Developer в группе модулей). *@
+            <button class="btn btn-primary" type="submit" asp-page-handler="Libraries">Сохранить режим библиотек</button>
+        }
+        @if (Model.AppSettings.UpdatedAt is { } at)
+        {
+            <span class="muted small">Изменено @at.ToLocalTime().ToString("dd.MM.yyyy HH:mm"), @Model.AppSettings.UpdatedBy</span>
+        }
+    </div>
 </form>

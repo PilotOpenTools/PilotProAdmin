@@ -35,7 +35,8 @@ public class CreateModel : AppPageModel
     [BindProperty] public bool UseClientSdk { get; set; } = true;
     [BindProperty] public string DebugClient { get; set; } = ModuleScaffold.PilotBim;
     [BindProperty] public string? Folder { get; set; }
-    [BindProperty] public bool DeployToTest { get; set; } = true;
+    /// <summary>Выложить каркас на тест сразу. По умолчанию нет: модуль попадёт на тест с первой влитой задачей.</summary>
+    [BindProperty] public bool DeployToTest { get; set; }
 
     public List<(string Folder, long GroupId)> Folders { get; private set; } = new();
     public ModuleCreationHints? Hints { get; private set; }
@@ -88,7 +89,10 @@ public class CreateModel : AppPageModel
         _jobs.Add(job);
         try
         {
-            var project = await ModuleCreation.CreateAsync(CreateGitLabClient(), AppSettings, request, target.GroupId, DeployToTest,
+            var git = CreateGitLabClient();
+            // Ключи выкладки - до коммита CI: pipeline dev (выкладка на тест) стартует сразу после него.
+            await ModuleCreation.EnsureDeployKeysAsync(git, ModulesGroupPath!, CiDeployOptions, (level, text, url) => job.Add(level, text, url), ct);
+            var project = await ModuleCreation.CreateAsync(git, AppSettings, request, target.GroupId, DeployToTest,
                 (level, text, url) => job.Add(level, text, url), ct);
             Finish(job, null);
             TempData["Flash"] = $"Создан модуль {request.Code}: репозиторий {project.PathWithNamespace}, ветки main и dev." +

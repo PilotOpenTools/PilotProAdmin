@@ -32,7 +32,7 @@ public static class BranchActivity
                 continue;
             var mr = openMrs.FirstOrDefault(m => m.SourceBranch == b.Name);
             var target = mr?.TargetBranch ?? c.Base;
-            var ahead = (await git.CompareCommitsAsync(project, target, b.Name, ct)).Count(x => x.ParentIds is not { Count: > 1 });
+            var ahead = (await git.UnmergedCommitsAsync(project, target, b.Name, ct)).Count;
             if (ahead > 0 || mr is not null || !await git.IsBranchMergedAsync(project, b, ct))
                 result.Active.Add(new ActiveBranch(b, c.Kind, target, ahead, mr));
             else

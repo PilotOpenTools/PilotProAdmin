@@ -30,6 +30,12 @@ public sealed record ModuleScaffoldRequest
     public string DebugClient { get; init; } = ModuleScaffold.PilotBim;
 
     public string Author { get; init; } = "";
+
+    /// <summary>
+    /// Реестр NuGet проекта GitLab с пакетами, которых нет в nuget.org (<see cref="ModuleScaffold.PackageFeedProject"/>);
+    /// null - проекта нет, в nuget.config только nuget.org.
+    /// </summary>
+    public string? PackageFeedUrl { get; init; }
 }
 
 /// <summary>
@@ -42,7 +48,7 @@ public static partial class ModuleScaffold
     public const string PilotSdkVersion = "26.13.0";
 
     /// <summary>Pilot.ClientSdk публикуется в nuget.org из github.com/PilotOpenTools/PilotClientSdk.</summary>
-    public const string DefaultClientSdkVersion = "2.1.2";
+    public const string DefaultClientSdkVersion = "2.1.3";
     public const string PilotBim = "Pilot-BIM";
     public const string PilotIce = "Pilot-ICE Enterprise";
     public const string InitialVersion = "1.0.0";
@@ -82,7 +88,7 @@ public static partial class ModuleScaffold
     public static List<(string Path, string Content)> Files(ModuleScaffoldRequest r)
     {
         var files = r.Kind == ModuleKind.Server ? ServerFiles(r) : ClientFiles(r);
-        files.Add(("nuget.config", NuGetConfig));
+        files.Add(("nuget.config", NuGetConfig(r.PackageFeedUrl)));
         files.Add((".gitignore", GitIgnore));
         files.Add(("CHANGELOG.md", ChangelogText(r)));
         files.Add(("README.md", Readme(r)));
@@ -108,7 +114,7 @@ public static partial class ModuleScaffold
     private static string ClientProject(ModuleScaffoldRequest r, string asm) => $$"""
         <Project Sdk="Microsoft.NET.Sdk">
 
-        	<!-- {{Xml(r.Title)}}: клиентский модуль Pilot. Версия модуля - только <Version>, её поднимает веб-админка при релизе. -->
+        	<!-- {{Xml(r.Title)}}: клиентский модуль Pilot. Версия модуля - только элемент Version, её поднимает веб-админка при релизе. -->
         	<PropertyGroup>
         		<TargetFramework>net48</TargetFramework>
         		<UseWPF>true</UseWPF>
@@ -121,7 +127,7 @@ public static partial class ModuleScaffold
         		<PlatformTarget>AnyCPU</PlatformTarget>
         		<!-- Сборка на Linux-раннере GitLab -->
         		<EnableWindowsTargeting>true</EnableWindowsTargeting>
-        		<!-- AssemblyVersion/FileVersion генерирует SDK из <Version>, остальные атрибуты - в AssemblyInfo.cs -->
+        		<!-- AssemblyVersion/FileVersion генерирует SDK из элемента Version, остальные атрибуты - в AssemblyInfo.cs -->
         		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
         		<GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
         		<GenerateAssemblyDescriptionAttribute>false</GenerateAssemblyDescriptionAttribute>
@@ -346,21 +352,32 @@ public static partial class ModuleScaffold
 
         """;
 
-    /// <summary>
-    /// nuget.config модуля: только nuget.org - там и Pilot SDK, и Pilot.ClientSdk. Явный список (clear): сборка не зависит
-    /// от источников, настроенных на машине разработчика или раннере.
-    /// </summary>
-    internal const string NuGetConfig = """
-        <?xml version="1.0" encoding="utf-8"?>
-        <!-- Источники пакетов модуля: Pilot SDK и Pilot.ClientSdk (github.com/PilotOpenTools/PilotClientSdk) публикуются в nuget.org. -->
-        <configuration>
-          <packageSources>
-            <clear />
-            <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-          </packageSources>
-        </configuration>
+    /// <summary>Открытый проект GitLab с пакетами NuGet для сборки модулей, которых нет в nuget.org (копии релизов Pilot.ClientSdk).</summary>
+    public const string PackageFeedProject = "pilot-ci/nuget";
 
-        """;
+    /// <summary>
+    /// nuget.config модуля: nuget.org (Pilot SDK) и, если есть, открытый реестр <see cref="PackageFeedProject"/> (Pilot.ClientSdk).
+    /// Явный список (clear): сборка не зависит от источников, настроенных на машине разработчика или раннере.
+    /// </summary>
+    internal static string NuGetConfig(string? feedUrl)
+    {
+        var feed = string.IsNullOrWhiteSpace(feedUrl) ? "" :
+            $"    <add key=\"gitlab\" value=\"{Xml(feedUrl)}\"{(feedUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? " allowInsecureConnections=\"true\"" : "")} />\n";
+        var comment = feed.Length == 0
+            ? "Источники пакетов модуля: Pilot SDK и Pilot.ClientSdk (github.com/PilotOpenTools/PilotClientSdk) - nuget.org."
+            : $"Источники пакетов модуля: Pilot SDK - nuget.org, Pilot.ClientSdk - nuget.org или открытый проект GitLab {PackageFeedProject}\n       (копии релизов github.com/PilotOpenTools/PilotClientSdk; вход не нужен).";
+        return $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <!-- {comment} -->
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            {feed}  </packageSources>
+            </configuration>
+
+            """;
+    }
 
     // ------------------------------------------------------------------ серверный модуль
 

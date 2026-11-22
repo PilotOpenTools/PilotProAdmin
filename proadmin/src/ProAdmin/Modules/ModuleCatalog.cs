@@ -252,6 +252,9 @@ public sealed class ModuleCatalog
             var devTree = await git.ListTreeAsync(repo.ProjectPath, ModuleBranches.Dev, ct) ?? new();
             devCsproj = await ReadAsync(git, repo.ProjectPath, devTree, projectFile, ct);
             devInfo = await ReadAsync(git, repo.ProjectPath, devTree, infoFile, ct);
+            // Шаблон CI (создание модуля, «Подключить») кладётся только в dev, в main он придёт с первым релизом:
+            // CI в dev - репозиторий уже готов к CI/CD.
+            hasCi = hasCi || ModuleSources.HasCi(devTree, repo.CiConfigPath);
         }
 
         var mainVersion = mainHasProject ? ModuleSources.Version(csproj, info) : null;

@@ -12,7 +12,7 @@
 		<OutputType>Library</OutputType>
 		<PlatformTarget>AnyCPU</PlatformTarget>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
-		<!-- Версия модуля - только <Version>: AssemblyVersion/FileVersion генерирует SDK. Остальные атрибуты - в AssemblyInfo.cs. -->
+		<!-- Версия модуля - только элемент Version: AssemblyVersion/FileVersion генерирует SDK. Остальные атрибуты - в AssemblyInfo.cs. -->
 		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 		<GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
 		<GenerateAssemblyDescriptionAttribute>false</GenerateAssemblyDescriptionAttribute>

@@ -153,7 +153,7 @@ else if (catalog is not null)
                             <td class="small">
                                 @if (git.TaskBranches.Count > 0) { <span class="badge" title="@string.Join(", ", git.TaskBranches.Select(b => b.Name))">задачи: @git.TaskBranches.Count</span> }
                                 @if (git.HotfixBranches.Count > 0) { <span class="badge badge-failed" title="@string.Join(", ", git.HotfixBranches.Select(b => b.Name))">hotfix: @git.HotfixBranches.Count</span> }
-                                <a href="/Modules/Module?name=@q@kindQuery">открыть /</a>
+                                <a href="/Modules/Module?name=@q@kindQuery">открыть</a>
                             </td>
                         </tr>
                     }

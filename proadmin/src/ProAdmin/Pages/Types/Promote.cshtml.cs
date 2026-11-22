@@ -97,7 +97,7 @@ public class PromoteModel : AppPageModel
         try
         {
             Pending = await TypesRepository.PendingAsync(git, project, Source, Target, ct);
-            // Ссылка «/ прод» с коммита dev: отметить его перенос в release.
+            // Ссылка «На прод» с коммита dev: отметить его перенос в release.
             if (Selected.Count > 0 && IsMain)
                 Selected = Pending.Where(p => Selected.Contains(p.Commit.Id) ||
                                              TypesRepository.PickedFrom(p.Commit.Message).Any(x => Selected.Any(s => s.StartsWith(x, StringComparison.Ordinal))))

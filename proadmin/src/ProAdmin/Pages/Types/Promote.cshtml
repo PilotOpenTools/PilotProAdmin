@@ -73,7 +73,8 @@
                 <label class="field narrow-field"><span>Версия (сейчас @Model.MainVersion)</span>
                     <input asp-for="Version" required pattern="\d+\.\d+\.\d+" /></label>
                 <label class="field narrow-field"><span>Задача@(Model.AppSettings.Find(TypesEnv.Prod)?.RequireTaskReference == true ? "" : " (необязательно)")</span>
-                    <input asp-for="TaskId" placeholder="KTN-…" /></label>
+                    <input asp-for="TaskId" placeholder="KTN-…" autocomplete="off" required="@(Model.AppSettings.Find(TypesEnv.Prod)?.RequireTaskReference == true)"
+                           data-required-message="Для выпуска в прод укажите задачу (так настроен контур «Прод»)." /></label>
             </div>
             <label class="field">
                 <span>CHANGELOG - пункты раздела <code>[версия]</code> (строка = пункт)</span>

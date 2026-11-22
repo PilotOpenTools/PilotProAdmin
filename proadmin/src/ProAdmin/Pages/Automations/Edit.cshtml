@@ -65,14 +65,6 @@
     </div>
     <div class="head-actions">
         <a class="btn btn-sm" href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)" title="Схема этапов, ветки, релизы">К автоматизации</a>
-        @if (env.Branch == AutomationRepositories.MainBranch && Model.Repo is not null)
-        {
-            <a class="btn btn-sm btn-ghost" href="/Automations/Rollback?name=@Uri.EscapeDataString(Model.Name)" title="Вернуть прод к одному из прошлых релизов">Откатить версию</a>
-        }
-        @if (env.Branch == AutomationRepositories.DevBranch && Model.Repo is not null)
-        {
-            <a class="btn btn-sm btn-promote" href="/Automations/Promote?name=@Uri.EscapeDataString(Model.Name)" title="Отправить версию из dev в main и на продовый сервер">Перенести на прод /</a>
-        }
         <a class="btn btn-sm" href="/Automations/Rename?name=@Uri.EscapeDataString(Model.Name)">Переименовать</a>
         <a class="btn btn-sm" href="/Automations/Create?copyFrom=@Uri.EscapeDataString(Model.Name)">Копировать</a>
         <a class="btn btn-sm btn-ghost" href="/Automations/Delete?name=@Uri.EscapeDataString(Model.Name)">Удалить</a>
@@ -242,8 +234,8 @@ else if (Model.PilotVersion is null && Model.GitJson is not null)
                     <p class="muted small">
                         Сервер @env.Title не меняется. @(Model.IsHotfixMode
                             ? "На прод hotfix выпускается кнопкой «Hotfix в прод» на странице автоматизации."
-                            : "На тест ветка попадает кнопкой «Влить / тест» на странице автоматизации (MR в dev, pipeline, запись на сервер).")
-                        <a href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)">Страница автоматизации /</a>
+                            : "На тест ветка попадает кнопкой «Влить в тест» на странице автоматизации (MR в dev, pipeline, запись на сервер).")
+                        <a href="/Automations/Item?name=@Uri.EscapeDataString(Model.Name)">Страница автоматизации</a>
                     </p>
                     <ul class="checklist" id="validate-output"></ul>
                 </section>

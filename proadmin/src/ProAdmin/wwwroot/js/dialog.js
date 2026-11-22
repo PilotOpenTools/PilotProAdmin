@@ -181,3 +181,15 @@
     window.addEventListener('hashchange', fromHash);
     document.addEventListener('DOMContentLoaded', fromHash);
 })();
+
+// Обязательные поля с data-required-message: браузер показывает понятную причину прямо у поля (в том же окне).
+(() => {
+    document.addEventListener('invalid', e => {
+        const el = e.target;
+        if (el instanceof HTMLInputElement && el.dataset.requiredMessage && el.validity.valueMissing)
+            el.setCustomValidity(el.dataset.requiredMessage);
+    }, true);
+    document.addEventListener('input', e => {
+        if (e.target instanceof HTMLInputElement && e.target.dataset.requiredMessage) e.target.setCustomValidity('');
+    });
+})();

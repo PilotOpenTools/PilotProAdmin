@@ -175,7 +175,7 @@ else if (catalog is not null)
                                 {
                                     @if (dev is not null && main is not null && (row.PendingPromotion || row.For(main)?.State is not SyncState.Synced))
                                     {
-                                        <a class="promote" href="/Automations/Promote?name=@q" title="Перенести версию из dev в main и на продовый сервер">На прод /</a>
+                                        <a class="promote" href="/Automations/Promote?name=@q" title="Перенести версию из dev в main и на продовый сервер">На прод</a>
                                     }
                                 }
                                 @if (!Model.AutomationsReadOnly)
