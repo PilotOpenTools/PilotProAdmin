@@ -577,16 +577,20 @@ try {
 # --- база Pilot из файловой базы: не запустилась - установка падает, а не пишет .installed ---
 Write-Host "`nФайловая база Pilot: база не запустилась"
 $dbFunctions = @{}
-foreach ($name in 'Import-PilotDatabase', 'Assert-PilotDatabaseLaunched', 'Wait-PilotDatabase') {
+foreach ($name in 'Import-PilotDatabase', 'Assert-PilotDatabaseLaunched', 'Wait-PilotDatabase', 'Get-PilotImportMarker', 'Test-PilotDatabaseRegistered', 'Resume-PilotDatabaseImport') {
     $dbFunctions[$name] = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)[0]
     if (-not $dbFunctions[$name]) { throw "В install.ps1 нет функции $name" }
 }
 $notLaunched = @('Import-PilotDatabase', 'Assert-PilotDatabaseLaunched' | ForEach-Object {
     $dbFunctions[$_].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match '\$state -ne ''Launched''' }, $true) })
 Check ($notLaunched.Count -eq 2 -and @($notLaunched | Where-Object { $_.Clauses[0].Item2.Extent.Text -notmatch '\bthrow\b' -or $_.Clauses[0].Item2.Extent.Text -match '\breturn\b' }).Count -eq 0) 'не запустилась (загрузка и повторная установка) - throw, без return'
-# Релизная обёртка при повторном запуске не передаёт -PilotDatabases: проверка загруженной базы должна идти и без него.
+# Релизная обёртка при повторном запуске не передаёт -PilotDatabases: начатая загрузка проверяется или продолжается и без него.
 $installText = [IO.File]::ReadAllText($installPs1)
-Check ($installText -match '(?s)if \(-not \(Test-Path "\$root/\.installed"\)\) \{\s*foreach \(\$c in @\(\$myContours \| Where-Object \{ -not \$pilotDbSources\.Contains\(\$_\) -and \(Test-Path -LiteralPath "[^"]*settings\.xml\.before-import"\) \}\)\) \{\s*Assert-PilotDatabaseLaunched \$c') 'повторный запуск без -PilotDatabases (релизная обёртка): загруженная база проверяется'
+Check ($installText -match '(?s)if \(-not \(Test-Path "\$root/\.installed"\)\) \{\s*foreach \(\$c in @\(\$myContours \| Where-Object \{ -not \$pilotDbSources\.Contains\(\$_\) \}\)\) \{ Resume-PilotDatabaseImport \$c \}') 'повторный запуск без -PilotDatabases (релизная обёртка): начатая загрузка проверяется до .installed'
+# Метка незавершённой загрузки - до первой записи данных (рабочая копия), снимается только после запуска базы.
+$importText = $dbFunctions['Import-PilotDatabase'].Body.Extent.Text
+$markerAt = $importText.IndexOf('WriteAllText((Get-PilotImportMarker $c)')
+Check ($markerAt -gt 0 -and $markerAt -lt $importText.IndexOf('Copy-PilotDbSource') -and $importText.LastIndexOf('Get-PilotImportMarker') -gt $importText.IndexOf("'Launched'")) 'метка загрузки ставится до рабочей копии и снимается после запуска базы'
 foreach ($f in $dbFunctions.Values) { Invoke-Expression $f.Extent.Text }
 $dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-state-" + [guid]::NewGuid().ToString('N'))
 try {
@@ -607,7 +611,27 @@ try {
     $script:serverLog = "Database $pilotDbName to state Launched"
     $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
     Check ($msg -eq '') 'повторная установка: запущенная база - пропуск без ошибки'
-    Remove-Item Function:\docker, Function:\Start-Sleep
+
+    # Загрузка оборвалась до записи settings.xml (например, на копировании в RustFS): рабочая папка есть, before-import нет.
+    [IO.File]::WriteAllText("$root/test/pilot-server/settings/settings.xml", '<Configuration><Databases /></Configuration>')
+    New-Item -ItemType Directory -Force "$root/test/databases/.import-$pilotDbName" | Out-Null
+    function Import-PilotDatabase { param($c, $source) $script:resumed = "$c|$($source.Title)" }
+    function Resolve-PilotDbSource { param($p) if ($p -eq 'D:\base') { @{ Dir = $p; Title = $p } } else { throw "Не найдено: $p" } }
+    $script:resumed = ''
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), "D:\base`n")
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '' -and $script:resumed -eq 'test|D:\base') 'прерванная загрузка без -PilotDatabases продолжается из сохранённого источника'
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), "D:\moved`n")
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'не завершена' -and $msg -match '-PilotDatabases') 'источник недоступен - остановка с инструкцией (без .installed)'
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), '')
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'источник неизвестен') 'источник не сохранён - остановка с инструкцией'
+    Remove-Item -LiteralPath (Get-PilotImportMarker 'test')
+    $script:resumed = ''
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '' -and $script:resumed -eq '') 'без метки и before-import - контур без загрузки базы, проверка не нужна'
+    Remove-Item Function:\docker, Function:\Start-Sleep, Function:\Import-PilotDatabase, Function:\Resolve-PilotDbSource
 } finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
 
 Write-Host ''
