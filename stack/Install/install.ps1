@@ -265,7 +265,37 @@ function Assert-PilotDatabaseLaunched([string]$c) {
         throw ("pilot-server-${c}: база $pilotDbName прописана в settings.xml, но не запущена ($state). Журнал: docker logs pilot-server-$c. " +
             "Чтобы загрузить её заново: верните $settingsFile.before-import вместо settings.xml, удалите базу (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова.")
     }
+    Remove-Item -LiteralPath (Get-PilotImportMarker $c) -Force -ErrorAction SilentlyContinue
     Write-Host "  ${c}: база $pilotDbName уже подключена и запущена"
+}
+
+# Метка незавершённой загрузки базы: пишется до первой записи данных (рабочая копия, PostgreSQL, RustFS) и хранит источник,
+# снимается, когда база запущена. Пока она есть, повторный запуск (и релизная обёртка без -PilotDatabases) не пишет .installed.
+function Get-PilotImportMarker([string]$c) { "$root/$c/.pilot-import-pending" }
+
+function Test-PilotDatabaseRegistered([string]$c) {
+    $settingsFile = "$root/$c/pilot-server/settings/settings.xml"
+    if (-not (Test-Path -LiteralPath $settingsFile)) { return $false }
+    $settings = New-Object Xml.XmlDocument
+    $settings.LoadXml([IO.File]::ReadAllText($settingsFile))
+    [bool]$settings.SelectSingleNode("/Configuration/Databases/DatabaseParameters[@Name='$pilotDbName']")
+}
+
+# Повторный запуск без -PilotDatabases: загрузка, начатая прошлым запуском, либо проверяется (база уже в settings.xml),
+# либо продолжается с тем же источником; источника нет - остановка с инструкцией, без отметки об успешной установке.
+function Resume-PilotDatabaseImport([string]$c) {
+    $marker = Get-PilotImportMarker $c
+    $imported = Test-Path -LiteralPath "$root/$c/pilot-server/settings/settings.xml.before-import"
+    if (-not (Test-Path -LiteralPath $marker) -and -not $imported) { return }
+    if (Test-PilotDatabaseRegistered $c) { Assert-PilotDatabaseLaunched $c; return }
+    $saved = if (Test-Path -LiteralPath $marker) { [IO.File]::ReadAllText($marker).Trim() } else { '' }
+    $hint = "Загрузите базу заново: удалите postgres-$c/$pilotDbName, если она есть (docker exec postgres-$c dropdb -U postgres --if-exists $pilotDbName), " +
+            "и запустите установку с -PilotDatabases @{ $c = '<путь к базе>' }."
+    if (-not $saved) { throw "Загрузка базы $pilotDbName в контур $c прошлым запуском не завершена, источник неизвестен. $hint" }
+    try { $source = Resolve-PilotDbSource $saved }
+    catch { throw "Загрузка базы $pilotDbName в контур $c прошлым запуском не завершена, источник $saved недоступен: $($_.Exception.Message) $hint" }
+    Write-Host "  ${c}: загрузка базы $pilotDbName прошлым запуском не завершена - продолжаю из $($source.Title)"
+    Import-PilotDatabase $c $source
 }
 
 function Import-PilotDatabase([string]$c, $source) {
@@ -293,6 +323,9 @@ function Import-PilotDatabase([string]$c, $source) {
     if (-not (Test-Docker @('image', 'inspect', $migrationImage))) {
         throw "Нет образа миграции ${migrationImage}: он шифрует ключ S3 для settings.xml. Установите на эту машину и роль admin или загрузите образ."
     }
+
+    # Метка - до первой записи: при сбое на любом шаге ниже повтор не отметит установку успешной.
+    [IO.File]::WriteAllText((Get-PilotImportMarker $c), "$($source.Title)`n", (New-Object Text.UTF8Encoding $false))
 
     # 1. Рабочая копия: PostgresMigration дописывает в файлы базы (-wal, обновление версии), исходник не трогаем.
     $work = "$root/$c/databases/.import-$pilotDbName"
@@ -395,6 +428,7 @@ select version from dbp.databaseid limit 1;
         throw "pilot-server-${c}: база $pilotDbName не запустилась ($state). Журнал: docker logs pilot-server-$c. Рабочая копия оставлена в $work, прежний settings.xml - $settingsFile.before-import."
     }
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Get-PilotImportMarker $c) -Force -ErrorAction SilentlyContinue
     Write-Host "  ${c}: база $pilotDbName запущена (Id $dbId)" -ForegroundColor Green
 }
 
@@ -1282,11 +1316,9 @@ if ($pilotDbSources.Count) {
     foreach ($c in $pilotDbSources.Keys) { Import-PilotDatabase $c $pilotDbSources[$c] }
 }
 # Повторный запуск после сбоя загрузки базы (.installed ещё нет): релизная обёртка с сохранёнными ROLES не передаёт
-# -PilotDatabases, но база, загруженная установщиком (рядом settings.xml.before-import), всё равно должна быть запущена.
+# -PilotDatabases, но начатая загрузка (метка .pilot-import-pending или settings.xml.before-import) проверяется или продолжается.
 if (-not (Test-Path "$root/.installed")) {
-    foreach ($c in @($myContours | Where-Object { -not $pilotDbSources.Contains($_) -and (Test-Path -LiteralPath "$root/$_/pilot-server/settings/settings.xml.before-import") })) {
-        Assert-PilotDatabaseLaunched $c
-    }
+    foreach ($c in @($myContours | Where-Object { -not $pilotDbSources.Contains($_) })) { Resume-PilotDatabaseImport $c }
 }
 
 New-Item -ItemType Directory -Force $root | Out-Null

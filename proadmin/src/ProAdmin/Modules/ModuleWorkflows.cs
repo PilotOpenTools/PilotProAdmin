@@ -718,9 +718,21 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
         catch (Exception ex) when (_replaces is { } kept && ex is not OperationCanceledException)
         {
             var details = (ex as WorkflowException)?.Details;
-            if (stage?.Deployed == true)
+            // Выкладку делает не только админка: deploy_stage в CI пишет release/* на стейдж сам, ещё до того, как админка
+            // скачает артефакт. Поэтому до удаления ветки смотрим, что фактически стоит на стейдже.
+            var onStage = stage is null ? false : stage.Deployed ? true : await ProbeStage(stage, CancellationToken.None);
+            if (onStage is null)
             {
-                // Сбой после записи на стейдж (тег rc, журнал): на сервере уже новая версия - её ветку не трогаем,
+                // Не удалось узнать, что на стейдже: ветку не удаляем (вдруг там уже эта версия), старый релиз не трогаем.
+                Add("warn", $"Не удалось проверить, выложен ли {release} на стейдж: ветка {release} и релиз {kept} сохранены.");
+                throw new WorkflowException(
+                    $"{ex.Message} Выложен ли релиз {release} на стейдж, установить не удалось (сервер стейджа или GitLab недоступен). " +
+                    $"Ветка {release} сохранена, релиз {kept} не закрыт. Проверьте стейдж: если там {release} - повторите «На стейдж», " +
+                    $"если нет - удалите ветку {release} в GitLab, и активным снова станет {kept}.", details);
+            }
+            if (onStage == true)
+            {
+                // Новая версия уже на стейдже (записала админка или CI), упал шаг после этого: её ветку не трогаем,
                 // а заменённый релиз закрываем, как после успешной выкладки.
                 var retired = await TryRetireAsync(kept, release);
                 throw new WorkflowException(
@@ -755,6 +767,9 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
 
     /// <summary>Шаг «стейдж» (в тестах подменяется, чтобы проверить сбой до и после записи на сервер).</summary>
     internal Func<ModuleReleaseToStageWorkflow, CancellationToken, Task> RunStage { get; init; } = (stage, ct) => stage.RunAsync(ct);
+
+    /// <summary>Что фактически на стейдже после сбоя: true - коммит релиза, false - нет, null - не удалось узнать.</summary>
+    internal Func<ModuleReleaseToStageWorkflow, CancellationToken, Task<bool?>> ProbeStage { get; init; } = (stage, ct) => stage.IsOnStageAsync(ct);
 
     private async Task<bool> TryRetireAsync(string old, string release)
     {
@@ -798,6 +813,30 @@ internal sealed class ModuleReleaseToStageWorkflow : ModuleWorkflowBase
 
     /// <summary>Сборка уже записана на сервер стейджа (дальше - только тег rc и журнал).</summary>
     public bool Deployed { get; internal set; }
+
+    /// <summary>
+    /// Стоит ли на сервере стейджа коммит этого релиза (его выкладывает и deploy_stage в CI). null - не удалось узнать:
+    /// сервер стейджа или GitLab недоступен. Сервер стейджа не настроен - false: выложить было некуда.
+    /// </summary>
+    public async Task<bool?> IsOnStageAsync(CancellationToken ct)
+    {
+        var env = ModuleEnv.Find(Ctx.Settings, ModuleEnv.Stage);
+        if (env is null || string.IsNullOrWhiteSpace(env.PilotUrl))
+            return false;
+        try
+        {
+            var shas = (await Git.CompareCommitsAsync(Project, ModuleBranches.Main, _release, ct)).Select(c => c.Id).ToList();
+            if (await Git.FindBranchAsync(Project, _release, ct) is { Commit.Id: { } head })
+                shas.Add(head);
+            var modules = (await Pilot.ListAsync(env.PilotUrl, Ctx.Login(env.Key), License, ct)).Modules;
+            return modules.Any(m => m.DeployedSha is { } deployed && shas.Any(s => ModuleDeploy.SameCommit(deployed, s)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Add("warn", $"Проверка стейджа: {ex.Message}");
+            return null;
+        }
+    }
 
     public ModuleReleaseToStageWorkflow(IModuleTarget pilot, GitLabClient git, PublishJob job, ModuleContext ctx, string release, long? mrIid)
         : base(pilot, git, job, ctx)
