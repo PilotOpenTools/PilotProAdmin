@@ -51,6 +51,19 @@ public class GitLabAdminCheckTests
     }
 
     [Fact]
+    public async Task Skipping_code_review_requires_current_gitlab_admin_role()
+    {
+        // Роль администратора отозвана, обычный доступ Developer остался: обход Code Review больше не разрешён,
+        // в том числе в режиме входа в Pilot, где администратор админки определяется не по GitLab.
+        var (check, _, session, _) = Setup("""{"id":7,"username":"root","is_admin":false}""");
+        Assert.False(await check.ConfirmGitLabAdminAsync(session, CancellationToken.None));
+        Assert.False(session.GitLabUser!.IsAdmin);
+
+        var (granted, _, admin, _) = Setup("""{"id":7,"username":"root","is_admin":true}""");
+        Assert.True(await granted.ConfirmGitLabAdminAsync(admin, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Token_of_another_user_denies_write()
     {
         var (check, settings, session, _) = Setup("""{"id":8,"username":"other","is_admin":true}""");

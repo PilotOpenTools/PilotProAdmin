@@ -116,7 +116,48 @@ public class ModuleWorkflowTests
         Assert.Equal(new[] { "release-prep/1.3.0", "release/1.3.0" }, gitlab.DeletedBranches);
     }
 
-    private static async Task<PublishJob> RunPrepareAsync(FakeGitLab gitlab, IReadOnlyCollection<string>? selected, string? replaces = null)
+    [Fact]
+    public async Task Stage_failure_before_deploy_removes_replacement_and_keeps_old_release()
+    {
+        var gitlab = new FakeGitLab();
+        var ex = await Assert.ThrowsAsync<WorkflowException>(() => RunPrepareAsync(gitlab, null, replaces: "release/1.3.0",
+            stage: (_, _) => throw new WorkflowException("Pipeline упал.")));
+
+        Assert.Contains("release/1.3.0 сохранён", ex.Message);
+        Assert.Contains("Ветки нового релиза удалены", ex.Message);
+        Assert.DoesNotContain("release/1.3.0", gitlab.DeletedBranches);
+        Assert.Contains("release/1.4.0", gitlab.DeletedBranches);
+        Assert.Contains(5L, gitlab.ClosedMergeRequests);
+    }
+
+    [Fact]
+    public async Task Stage_failure_after_deploy_keeps_deployed_release_and_retires_old()
+    {
+        // Сборка уже на стейдже, упал следующий шаг (список тегов - 503): ветку выложенной версии удалять нельзя.
+        var gitlab = new FakeGitLab();
+        var ex = await Assert.ThrowsAsync<WorkflowException>(() => RunPrepareAsync(gitlab, null, replaces: "release/1.3.0",
+            stage: (s, _) => { s.Deployed = true; throw new WorkflowException("GitLab 503: теги недоступны."); }));
+
+        Assert.Contains("release/1.4.0 уже выложен на стейдж", ex.Message);
+        Assert.DoesNotContain("release/1.4.0", gitlab.DeletedBranches);
+        Assert.Contains("release/1.3.0", gitlab.DeletedBranches);
+        Assert.DoesNotContain(5L, gitlab.ClosedMergeRequests);
+    }
+
+    [Fact]
+    public async Task Failed_cleanup_is_reported_instead_of_claiming_branch_removed()
+    {
+        var gitlab = new FakeGitLab { FailDelete = { "release/1.4.0" } };
+        var ex = await Assert.ThrowsAsync<WorkflowException>(() => RunPrepareAsync(gitlab, null, replaces: "release/1.3.0",
+            stage: (_, _) => throw new WorkflowException("Pipeline упал.")));
+
+        Assert.Contains("Не удалось удалить ветки release/1.4.0", ex.Message);
+        Assert.DoesNotContain("удалены", ex.Message);
+        Assert.DoesNotContain("сохранён - его можно продолжить", ex.Message);
+    }
+
+    private static async Task<PublishJob> RunPrepareAsync(FakeGitLab gitlab, IReadOnlyCollection<string>? selected, string? replaces = null,
+        Func<ModuleReleaseToStageWorkflow, CancellationToken, Task>? stage = null)
     {
         var network = new NetworkAddressMapper(null);
         var auth = new GitLabAuthService(new NoFactory(), network, Options.Create(new AppOptions()));
@@ -135,8 +176,9 @@ public class ModuleWorkflowTests
             Logins = new Dictionary<string, PilotLogin>(),
         };
         var job = new PublishJob { PilotUser = "tester" };
+        // Без stage - только ветки и MR; со stage - подменённый шаг «стейдж» (влитие, сборка, выкладка - ModuleReleaseToStageWorkflow).
         await new ModulePrepareReleaseWorkflow(pilot, git, job, ctx, new ModuleVersion(1, 4, 0), selected, Array.Empty<string>(),
-                deployToStage: false, replaces: replaces) // здесь - только ветки и MR; влитие и стейдж - ModuleReleaseToStageWorkflow
+                deployToStage: stage is not null, replaces: replaces) { RunStage = stage ?? ((w, ct) => w.RunAsync(ct)) }
             .RunAsync(CancellationToken.None);
         return job;
     }
@@ -150,6 +192,9 @@ public class ModuleWorkflowTests
     {
         public string? ConflictOn { get; init; }
         public HttpStatusCode MergeRequestStatus { get; init; } = HttpStatusCode.Created;
+        /// <summary>Ветки, удаление которых GitLab отклоняет (503).</summary>
+        public HashSet<string> FailDelete { get; } = new();
+        public List<long> ClosedMergeRequests { get; } = new();
         /// <summary>История main (для копий задач, выпущенных выборочным релизом).</summary>
         public object[] MainCommits { get; init; } = Array.Empty<object>();
         public List<string> CreatedBranches { get; } = new();
@@ -186,6 +231,8 @@ public class ModuleWorkflowTests
             }
             if (method == "DELETE" && path.StartsWith("/repository/branches/"))
             {
+                if (FailDelete.Contains(path["/repository/branches/".Length..]))
+                    return Json(HttpStatusCode.ServiceUnavailable, new { message = "503 Service Unavailable" });
                 DeletedBranches.Add(path["/repository/branches/".Length..]);
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
@@ -196,6 +243,13 @@ public class ModuleWorkflowTests
                     return Json(HttpStatusCode.BadRequest, new { message = "Sorry, we cannot cherry-pick this commit automatically." });
                 CherryPicks.Add($"{sha} / {body.GetProperty("branch").GetString()}");
                 return Json(HttpStatusCode.Created, new { id = "new" + sha, short_id = "new" + sha[..4] });
+            }
+            if (method == "GET" && path == "/merge_requests/5")
+                return Json(HttpStatusCode.OK, new { id = 1, iid = 5, state = "opened", sha = "prephead0000", target_branch = "release/1.4.0", web_url = "http://gitlab.test/mr/5" });
+            if (method == "PUT" && path == "/merge_requests/5")
+            {
+                ClosedMergeRequests.Add(5);
+                return Json(HttpStatusCode.OK, new { id = 1, iid = 5, state = "closed" });
             }
             if (method == "GET" && path == "/merge_requests")
                 return Json(HttpStatusCode.OK, Array.Empty<object>());

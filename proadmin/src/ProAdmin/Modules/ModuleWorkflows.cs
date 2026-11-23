@@ -680,10 +680,10 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
                 }
                 catch (GitLabApiException ex)
                 {
-                    await CleanupAsync(release, source);
+                    var left = await CleanupAsync(release, source);
                     throw new WorkflowException(
                         $"cherry-pick {c.ShortId} «{c.Title}» не удался: {ex.Message}. Задача зависит от невыбранной или конфликтует с main - " +
-                        "включите в релиз задачи, от которых она зависит. Ветки релиза удалены.");
+                        "включите в релиз задачи, от которых она зависит. " + CleanupText(left));
                 }
             }
         }
@@ -696,6 +696,7 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
             (_notes.Count > 0 ? $"\n### Заметки\n\n{string.Join("\n", _notes.Select(n => "- " + n))}\n" : "") +
             $"\n---\n\nСоздано PilotProAdmin: Merge Request вливается сразу, релиз выкладывается на стейдж.\n\n- Pilot: {Job.PilotUser}";
         long? mrIid = null;
+        ModuleReleaseToStageWorkflow? stage = null;
         try
         {
             var (mr, _) = await EnsureMergeRequestAsync(source, release, $"Релиз {_version}", description,
@@ -710,17 +711,30 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
             {
                 for (var i = 0; i < 15 && string.IsNullOrEmpty((await Git.GetMergeRequestAsync(Project, mr.Iid, ct)).Sha); i++)
                     await Task.Delay(TimeSpan.FromSeconds(2), ct); // sha нового MR GitLab заполняет асинхронно
-                await new ModuleReleaseToStageWorkflow(Pilot, Git, Job, Ctx, release, mr.Iid).RunAsync(ct);
+                stage = new ModuleReleaseToStageWorkflow(Pilot, Git, Job, Ctx, release, mr.Iid);
+                await RunStage(stage, ct);
             }
         }
         catch (Exception ex) when (_replaces is { } kept && ex is not OperationCanceledException)
         {
+            var details = (ex as WorkflowException)?.Details;
+            if (stage?.Deployed == true)
+            {
+                // Сбой после записи на стейдж (тег rc, журнал): на сервере уже новая версия - её ветку не трогаем,
+                // а заменённый релиз закрываем, как после успешной выкладки.
+                var retired = await TryRetireAsync(kept, release);
+                throw new WorkflowException(
+                    $"{ex.Message} Релиз {release} уже выложен на стейдж, его ветка сохранена - повторите «На стейдж», чтобы завершить шаги после выкладки. " +
+                    (retired ? $"Релиз {kept} закрыт." : $"Релиз {kept} закрыть не удалось - закройте его MR и удалите ветку {kept} вручную."), details);
+            }
             // Замена не выложена: новый релиз убирается целиком, заменяемый остаётся активным и его можно продолжить.
             if (mrIid is { } created)
-                try { await Git.CloseMergeRequestAsync(Project, created, CancellationToken.None); } catch { /* уборка */ }
-            await CleanupAsync(release, source);
-            throw new WorkflowException($"{ex.Message} Новый релиз {release} не выложен и удалён, релиз {kept} сохранён - его можно продолжить.",
-                (ex as WorkflowException)?.Details);
+                try { await Git.CloseMergeRequestAsync(Project, created, CancellationToken.None); } catch { /* ветка удаляется ниже - MR закроется с ней */ }
+            var left = await CleanupAsync(release, source);
+            throw new WorkflowException($"{ex.Message} Новый релиз {release} не выложен. {CleanupText(left)} " +
+                (left.Contains(release)
+                    ? $"Пока ветка {release} есть, активным считается он, а не {kept}."
+                    : $"Релиз {kept} сохранён - его можно продолжить."), details);
         }
 
         // Старый релиз закрывается только после успешной выкладки замены.
@@ -739,11 +753,38 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
         Ok($"Релиз {old} заменён на {release}: его Merge Request закрыты, ветка удалена (в прод он не пойдёт).");
     }
 
-    private async Task CleanupAsync(string release, string prep)
+    /// <summary>Шаг «стейдж» (в тестах подменяется, чтобы проверить сбой до и после записи на сервер).</summary>
+    internal Func<ModuleReleaseToStageWorkflow, CancellationToken, Task> RunStage { get; init; } = (stage, ct) => stage.RunAsync(ct);
+
+    private async Task<bool> TryRetireAsync(string old, string release)
     {
-        try { await Git.DeleteBranchAsync(Project, prep, CancellationToken.None); } catch { /* уборка */ }
-        try { await Git.DeleteBranchAsync(Project, release, CancellationToken.None); } catch { /* уборка */ }
+        try
+        {
+            await RetireAsync(old, release, CancellationToken.None);
+            return true;
+        }
+        catch (GitLabApiException)
+        {
+            return false;
+        }
     }
+
+    /// <summary>Удалить ветки нового релиза. Возвращает те, что удалить не удалось (уже удалённая - не ошибка).</summary>
+    private async Task<List<string>> CleanupAsync(string release, string prep)
+    {
+        var left = new List<string>();
+        foreach (var branch in new[] { prep, release })
+        {
+            try { await Git.DeleteBranchAsync(Project, branch, CancellationToken.None); }
+            catch (GitLabApiException ex) when (ex.StatusCode == StatusCodes.Status404NotFound) { /* уже нет */ }
+            catch (Exception ex) when (ex is GitLabApiException or HttpRequestException or TaskCanceledException) { left.Add(branch); }
+        }
+        return left;
+    }
+
+    private static string CleanupText(List<string> left) => left.Count == 0
+        ? "Ветки нового релиза удалены."
+        : $"Не удалось удалить ветки {string.Join(", ", left)} - удалите их в GitLab вручную.";
 }
 
 /// <summary>
@@ -754,6 +795,9 @@ internal sealed class ModuleReleaseToStageWorkflow : ModuleWorkflowBase
 {
     private readonly string _release;
     private readonly long? _mrIid;
+
+    /// <summary>Сборка уже записана на сервер стейджа (дальше - только тег rc и журнал).</summary>
+    public bool Deployed { get; internal set; }
 
     public ModuleReleaseToStageWorkflow(IModuleTarget pilot, GitLabClient git, PublishJob job, ModuleContext ctx, string release, long? mrIid)
         : base(pilot, git, job, ctx)
@@ -803,6 +847,7 @@ internal sealed class ModuleReleaseToStageWorkflow : ModuleWorkflowBase
             await types.For(Git, Job).StageAsync(Ctx.TypesKind, Project, _release, notSaved, ct);
 
         await DeployAsync(Env(ModuleEnv.Stage), _release, head, package, tasks, ct);
+        Deployed = true;
         await StageTagAsync(version, head, _release, ct);
         Ok($"Релиз {version} на стейдже. Проверьте его и нажмите «Выпустить в прод» (или влейте мелкие багфиксы в {_release}).");
     }
