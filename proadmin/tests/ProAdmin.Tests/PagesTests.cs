@@ -225,6 +225,9 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
         public const string CiKey = "test-ci-key";
         private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "pwa-tests-" + Guid.NewGuid().ToString("N"));
 
+        /// <summary>Проверка прав администратора GitLab без сервера GitLab: доверяет сессии, кроме отозванных.</summary>
+        public FakeAdminCheck AdminCheck { get; } = new();
+
         public Factory()
         {
             Environment.SetEnvironmentVariable("App__DataDirectory", _dataDir);
@@ -275,6 +278,7 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
             {
                 // Ограничение перебора в общих тестах не мешает (адрес у тестового сервера один); сам предел проверяют отдельные тесты.
                 services.AddSingleton(new ProAdmin.Infrastructure.AuthFailureLimiter(limit: 100_000));
+                services.AddSingleton<GitLabAdminCheck>(AdminCheck);
                 services.AddHttpClient(ProAdmin.Modules.CiJobVerifier.ClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => new GitLabJobHandler(this));
                 services.AddAuthentication(TestAuthHandler.Scheme)
@@ -320,6 +324,19 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
                 new Claim(SessionVault.SidClaim, sid.ToString()),
             }, Scheme);
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme)));
+        }
+    }
+
+    /// <summary>Как <see cref="GitLabAdminCheck"/>, но вместо запроса в GitLab - список сессий, у которых роль отозвана.</summary>
+    public sealed class FakeAdminCheck() : GitLabAdminCheck(null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<GitLabAdminCheck>.Instance)
+    {
+        public HashSet<string> RevokedSessions { get; } = new();
+
+        public override Task<bool> ConfirmAsync(UserSession session, AdminSettings settings, CancellationToken ct)
+        {
+            if (RevokedSessions.Contains(session.Id) && session.GitLabUser is { } user)
+                user.IsAdmin = false;
+            return Task.FromResult(session.IsAdmin(settings));
         }
     }
 }

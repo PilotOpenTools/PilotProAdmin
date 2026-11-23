@@ -158,6 +158,10 @@ public abstract class AppPageModel : PageModel
     /// </summary>
     public bool IsAdmin => CurrentSession.IsAdmin(AppSettings);
 
+    /// <summary>Перед административной записью: права администратора подтверждаются заново (роль GitLab могли отозвать).</summary>
+    protected Task<bool> ConfirmAdminAsync(CancellationToken ct) =>
+        HttpContext.RequestServices.GetRequiredService<Sessions.GitLabAdminCheck>().ConfirmAsync(CurrentSession, AppSettings, ct);
+
     /// <summary>С Pilot работаем служебными учётками из настроек (вход через GitLab), а не своим входом в Pilot.</summary>
     public bool UsesServiceAccounts => CurrentSession.UsesServiceAccounts;
 

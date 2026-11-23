@@ -85,13 +85,19 @@
 
             @if (!Model.IsServer)
             {
+                var sdkMissing = Model.ClientSdk == ClientSdkSource.None;
                 <label class="check">
-                    <input type="checkbox" asp-for="UseClientSdk" />
+                    <input type="checkbox" asp-for="UseClientSdk" disabled="@(sdkMissing && !Model.UseClientSdk)" />
                     На Pilot.ClientSdk: статистика действий в Grafana, окно «Загрузка модулей», общие методы SDK
                 </label>
+                @if (sdkMissing)
+                {
+                    <div class="alert alert-warn small">@Model.ClientSdkMissingText</div>
+                }
                 <small class="muted">
-                    Пакет <code>Pilot.ClientSdk @ModuleScaffold.DefaultClientSdkVersion</code> из <a href="https://www.nuget.org/packages/Pilot.ClientSdk" target="_blank" rel="noopener">nuget.org</a>. На серверах модуль
-                    <a href="/OpenTools">PilotClientSdk</a> должен быть назначен пользователям.
+                    Пакет <code>Pilot.ClientSdk @ModuleScaffold.DefaultClientSdkVersion</code>
+                    @(Model.ClientSdk == ClientSdkSource.GitLabFeed ? $"из реестра GitLab {ModuleScaffold.PackageFeedProject}" : "из nuget.org").
+                    На серверах модуль <a href="/OpenTools">PilotClientSdk</a> должен быть назначен пользователям.
                 </small>
 
                 <label class="field">

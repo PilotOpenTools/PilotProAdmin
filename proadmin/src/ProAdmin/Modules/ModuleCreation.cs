@@ -123,6 +123,45 @@ public static partial class ModuleCreation
     /// Адрес реестра NuGet проекта <see cref="ModuleScaffold.PackageFeedProject"/> - каким его видят разработчики (от WebUrl проекта);
     /// null - проекта нет или GitLab недоступен.
     /// </summary>
+    /// <summary>Именованный HttpClient для проверки пакета в nuget.org.</summary>
+    public const string NuGetProbeClient = "nuget-probe";
+
+    /// <summary>Имя пакета Pilot.ClientSdk в NuGet.</summary>
+    public const string ClientSdkPackage = "Pilot.ClientSdk";
+
+    /// <summary>
+    /// Откуда сборка модуля восстановит Pilot.ClientSdk нужной версии: реестр <see cref="ModuleScaffold.PackageFeedProject"/>
+    /// в GitLab или nuget.org. <see cref="ClientSdkSource.None"/> - ниоткуда: модуль с ClientSdk не соберётся (NU1101).
+    /// </summary>
+    public static async Task<ClientSdkSource> ClientSdkSourceAsync(GitLabClient git, HttpClient nuget, string version, CancellationToken ct)
+    {
+        try
+        {
+            if (await git.HasNuGetPackageAsync(ModuleScaffold.PackageFeedProject, ClientSdkPackage, version, ct) == true)
+                return ClientSdkSource.GitLabFeed;
+        }
+        catch (GitLabApiException)
+        {
+            // реестр недоступен - проверяем nuget.org
+        }
+        try
+        {
+            using var response = await nuget.GetAsync($"https://api.nuget.org/v3-flatcontainer/{ClientSdkPackage.ToLowerInvariant()}/index.json", ct);
+            if (response.IsSuccessStatusCode)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+                if (doc.RootElement.TryGetProperty("versions", out var versions) &&
+                    versions.EnumerateArray().Any(v => string.Equals(v.GetString(), version, StringComparison.OrdinalIgnoreCase)))
+                    return ClientSdkSource.NuGetOrg;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            // закрытый контур без интернета
+        }
+        return ClientSdkSource.None;
+    }
+
     internal static async Task<string?> PackageFeedUrlAsync(GitLabClient git, CancellationToken ct)
     {
         try
@@ -163,3 +202,6 @@ public static partial class ModuleCreation
     private static partial Regex LeadingNumber();
 
 }
+
+/// <summary>Где доступен пакет Pilot.ClientSdk для сборки нового модуля.</summary>
+public enum ClientSdkSource { None, NuGetOrg, GitLabFeed }

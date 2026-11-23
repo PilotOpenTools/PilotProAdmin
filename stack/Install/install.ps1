@@ -257,7 +257,16 @@ function Import-PilotDatabase([string]$c, $source) {
     $settings = New-Object Xml.XmlDocument
     $settings.LoadXml([IO.File]::ReadAllText($settingsFile))
     if ($settings.SelectSingleNode("/Configuration/Databases/DatabaseParameters[@Name='$pilotDbName']")) {
-        Write-Host "  ${c}: база $pilotDbName уже подключена - пропуск"; return
+        # Повторная установка: база прописана прошлым запуском, но могла не запуститься - проверяем её состояние с момента старта сервера.
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $started = "$(docker inspect -f '{{.State.StartedAt}}' "pilot-server-$c" 2>$null)".Trim() } finally { $ErrorActionPreference = $prev }
+        $since = if ($started) { ([datetime]::Parse($started)).ToLocalTime().AddSeconds(-5) } else { (Get-Date).AddMinutes(-10) }
+        $state = Wait-PilotDatabase $c $since
+        if ($state -ne 'Launched') {
+            throw ("pilot-server-${c}: база $pilotDbName прописана в settings.xml, но не запущена ($state). Журнал: docker logs pilot-server-$c. " +
+                "Чтобы загрузить её заново: верните $settingsFile.before-import вместо settings.xml, удалите базу (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова.")
+        }
+        Write-Host "  ${c}: база $pilotDbName уже подключена и запущена - пропуск"; return
     }
     if (Invoke-ContourSql $c 'postgres' "select 1 from pg_database where datname = '$pilotDbName';") {
         throw "В postgres-$c уже есть база $pilotDbName, но Pilot-Server её не подключил (прошлая загрузка оборвалась?). Удалите её (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова."
@@ -374,8 +383,8 @@ select version from dbp.databaseid limit 1;
     Run docker start "pilot-server-$c" | Out-Null
     $state = Wait-PilotDatabase $c $since
     if ($state -ne 'Launched') {
-        Write-Warning "pilot-server-${c}: база $pilotDbName не запустилась ($state). Журнал: docker logs pilot-server-$c. Рабочая копия оставлена в $work, прежний settings.xml - $settingsFile.before-import."
-        return
+        # Установка прерывается с ошибкой: метка .installed не пишется, «Готово» не выводится.
+        throw "pilot-server-${c}: база $pilotDbName не запустилась ($state). Журнал: docker logs pilot-server-$c. Рабочая копия оставлена в $work, прежний settings.xml - $settingsFile.before-import."
     }
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "  ${c}: база $pilotDbName запущена (Id $dbId)" -ForegroundColor Green

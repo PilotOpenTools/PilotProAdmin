@@ -94,7 +94,29 @@ public class ModuleWorkflowTests
         Assert.Empty(gitlab.MergeRequests);
     }
 
-    private static async Task<PublishJob> RunPrepareAsync(FakeGitLab gitlab, IReadOnlyCollection<string>? selected)
+    [Fact]
+    public async Task Replaced_release_is_kept_when_new_merge_request_fails()
+    {
+        var gitlab = new FakeGitLab { MergeRequestStatus = HttpStatusCode.Forbidden };
+        var ex = await Assert.ThrowsAsync<WorkflowException>(() => RunPrepareAsync(gitlab, null, replaces: "release/1.3.0"));
+
+        Assert.Contains("release/1.3.0 сохранён", ex.Message);
+        Assert.DoesNotContain("release/1.3.0", gitlab.DeletedBranches);
+        Assert.Contains("release/1.4.0", gitlab.DeletedBranches);
+        Assert.Contains("release-prep/1.4.0", gitlab.DeletedBranches);
+    }
+
+    [Fact]
+    public async Task Replaced_release_is_removed_after_replacement_is_ready()
+    {
+        var gitlab = new FakeGitLab();
+        await RunPrepareAsync(gitlab, null, replaces: "release/1.3.0");
+
+        Assert.Single(gitlab.MergeRequests);
+        Assert.Equal(new[] { "release-prep/1.3.0", "release/1.3.0" }, gitlab.DeletedBranches);
+    }
+
+    private static async Task<PublishJob> RunPrepareAsync(FakeGitLab gitlab, IReadOnlyCollection<string>? selected, string? replaces = null)
     {
         var network = new NetworkAddressMapper(null);
         var auth = new GitLabAuthService(new NoFactory(), network, Options.Create(new AppOptions()));
@@ -114,7 +136,7 @@ public class ModuleWorkflowTests
         };
         var job = new PublishJob { PilotUser = "tester" };
         await new ModulePrepareReleaseWorkflow(pilot, git, job, ctx, new ModuleVersion(1, 4, 0), selected, Array.Empty<string>(),
-                deployToStage: false) // здесь - только ветки и MR; влитие и стейдж - ModuleReleaseToStageWorkflow
+                deployToStage: false, replaces: replaces) // здесь - только ветки и MR; влитие и стейдж - ModuleReleaseToStageWorkflow
             .RunAsync(CancellationToken.None);
         return job;
     }
@@ -127,6 +149,7 @@ public class ModuleWorkflowTests
     private sealed class FakeGitLab : HttpMessageHandler
     {
         public string? ConflictOn { get; init; }
+        public HttpStatusCode MergeRequestStatus { get; init; } = HttpStatusCode.Created;
         /// <summary>История main (для копий задач, выпущенных выборочным релизом).</summary>
         public object[] MainCommits { get; init; } = Array.Empty<object>();
         public List<string> CreatedBranches { get; } = new();
@@ -178,6 +201,8 @@ public class ModuleWorkflowTests
                 return Json(HttpStatusCode.OK, Array.Empty<object>());
             if (method == "POST" && path == "/merge_requests")
             {
+                if (MergeRequestStatus != HttpStatusCode.Created)
+                    return Json(MergeRequestStatus, new { message = "403 Forbidden" });
                 MergeRequests.Add(body);
                 return Json(HttpStatusCode.Created, new { id = 1, iid = 5, state = "opened", web_url = "http://gitlab.test/mr/5" });
             }

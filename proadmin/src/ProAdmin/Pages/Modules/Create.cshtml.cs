@@ -39,6 +39,9 @@ public class CreateModel : AppPageModel
     [BindProperty] public bool DeployToTest { get; set; }
 
     public List<(string Folder, long GroupId)> Folders { get; private set; } = new();
+
+    /// <summary>Где сейчас доступен Pilot.ClientSdk; нигде - флажок ClientSdk по умолчанию снят, а включить его нельзя.</summary>
+    public ClientSdkSource ClientSdk { get; private set; } = ClientSdkSource.None;
     public ModuleCreationHints? Hints { get; private set; }
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
@@ -51,6 +54,7 @@ public class CreateModel : AppPageModel
             return deny;
         await LoadAsync(ct);
         Number ??= Hints?.SuggestedNumber;
+        UseClientSdk = !IsServer && ClientSdk != ClientSdkSource.None;
         return Page();
     }
 
@@ -69,6 +73,8 @@ public class CreateModel : AppPageModel
         var target = Folders.FirstOrDefault(f => f.Folder == (Folder ?? ""));
         if (target == default)
             Errors.Add("Выберите папку из списка.");
+        if (request.UseClientSdk && ClientSdk == ClientSdkSource.None)
+            Errors.Add(ClientSdkMissingText);
         if (!IsServer && Hints is not null && Hints.UsedNumbers.Contains(Number ?? ""))
             Errors.Add($"Номер {Number} уже занят другим модулем стенда - возьмите свободный (например, {Hints.SuggestedNumber}).");
         if (Errors.Count > 0)
@@ -107,6 +113,10 @@ public class CreateModel : AppPageModel
             return Page();
         }
     }
+
+    public string ClientSdkMissingText =>
+        $"Пакета {ModuleCreation.ClientSdkPackage} {ModuleScaffold.DefaultClientSdkVersion} нет ни в nuget.org, ни в реестре GitLab {ModuleScaffold.PackageFeedProject}: " +
+        "модуль с ClientSdk не соберётся (NU1101). Загрузите .nupkg из релиза PilotClientSdk в этот реестр (или откройте доступ к nuget.org) либо создайте модуль без ClientSdk.";
 
     public ModuleScaffoldRequest BuildRequest() => new()
     {
@@ -157,6 +167,11 @@ public class CreateModel : AppPageModel
             Errors.Add($"GitLab: {ex.Message}");
             return;
         }
+
+        if (!IsServer)
+            ClientSdk = await ModuleCreation.ClientSdkSourceAsync(git,
+                HttpContext.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient(ModuleCreation.NuGetProbeClient),
+                ModuleScaffold.DefaultClientSdkVersion, ct);
 
         // Занятые номера: сборки репозиториев группы и модули на серверах (в том числе без репозитория).
         var assemblies = new List<string>();

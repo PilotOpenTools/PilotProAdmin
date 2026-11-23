@@ -294,6 +294,27 @@ public sealed partial class PagesTests
     }
 
     [Fact]
+    public async Task RevokedGitLabAdminLosesWriteAccessInActiveSession()
+    {
+        var (id, session) = GitLabOnlySession(admin: true);
+        var client = ClientFor(id);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await PostForm(client, "/Jobs", "/Settings", ("Form.GitLabGroupUrl", "не адрес"))).StatusCode);
+
+        // Роль отозвали в GitLab, сессия жива: запись запрещена, роль в сессии сброшена.
+        _factory.AdminCheck.RevokedSessions.Add(id);
+        try
+        {
+            foreach (var url in new[] { "/Settings", "/Settings?handler=Deploy", "/Servers", "/Migration?handler=Plan" })
+                Assert.Equal(HttpStatusCode.Forbidden, (await PostForm(client, "/Jobs", url, ("env", "test"))).StatusCode);
+            Assert.False(session.GitLabUser!.IsAdmin);
+        }
+        finally
+        {
+            _factory.AdminCheck.RevokedSessions.Remove(id);
+        }
+    }
+
+    [Fact]
     public async Task GitLabSessionHasNoPilotLoginForms()
     {
         var (id, _) = GitLabOnlySession(admin: false);

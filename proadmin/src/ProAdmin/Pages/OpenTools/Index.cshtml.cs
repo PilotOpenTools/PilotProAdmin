@@ -75,6 +75,7 @@ public class IndexModel : AppPageModel
 
         var done = new List<string>();
         var failed = new List<string>();
+        bool? admin = null;
         foreach (var (row, envKey) in targets)
         {
             var env = state.Envs.FirstOrDefault(e => e.Key == envKey);
@@ -83,7 +84,7 @@ public class IndexModel : AppPageModel
                 failed.Add($"{row.Tool.Title} на {env?.Title ?? envKey}: устанавливать нечего");
                 continue;
             }
-            if (row.Tool.Kind == OpenToolKind.ServerHost && !IsAdmin)
+            if (row.Tool.Kind == OpenToolKind.ServerHost && !(admin ??= await ConfirmAdminAsync(ct)))
             {
                 _logger.LogWarning("Отказ: обновление ServerHost из PilotOpenTools - {Login} не администратор админки", CurrentSession.Actor);
                 failed.Add($"ServerHost на {env.Title}: обновлять центральный серверный модуль может только администратор админки");

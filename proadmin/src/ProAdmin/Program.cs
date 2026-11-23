@@ -80,6 +80,8 @@ builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.Fro
 // Проверка job-токена выкладки: тайм-аут 15 с и без редиректов (токен не должен уйти на другой хост).
 builder.Services.AddHttpClient(ProAdmin.Modules.CiJobVerifier.ClientName, client => client.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+// Наличие Pilot.ClientSdk в nuget.org при создании модуля: в закрытом контуре без интернета - быстрый отказ.
+builder.Services.AddHttpClient(ProAdmin.Modules.ModuleCreation.NuGetProbeClient, client => client.Timeout = TimeSpan.FromSeconds(8));
 builder.Services.AddHttpClient("gitlab-probe", client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddHttpClient<ProAdmin.Types.GitHubTypesClient>(client =>
@@ -115,6 +117,7 @@ builder.Services.AddSingleton<PilotGateway>();
 builder.Services.AddSingleton<GitLabAuthService>();
 builder.Services.AddSingleton<GitLabSignIn>();
 builder.Services.AddSingleton<GitLabClientFactory>();
+builder.Services.AddSingleton<ProAdmin.Sessions.GitLabAdminCheck>();
 builder.Services.AddSingleton<AutomationCatalog>();
 builder.Services.AddSingleton<AutomationOperations>();
 builder.Services.AddSingleton<JobStore>();
