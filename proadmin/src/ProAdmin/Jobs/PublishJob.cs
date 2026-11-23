@@ -52,6 +52,11 @@ public sealed class PublishJob
     public string? PipelineUrl { get; set; }
     public List<JobLogEntry> Log { get; set; } = new();
 
+    /// <summary>Путь проекта для поиска операции независимо от отображаемого имени модуля.</summary>
+    internal string? ModuleProjectPath { get; init; }
+    /// <summary>Ветка, которую эта операция сама выложит на стейдж после сборки в CI.</summary>
+    internal string? ManagedStageRelease { get; init; }
+
     [JsonIgnore]
     public bool IsFinished => Status is JobStatus.Succeeded or JobStatus.Failed;
 
