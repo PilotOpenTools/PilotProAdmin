@@ -29,6 +29,30 @@ public sealed record ModuleNextStep(FlowStage Stage, NextStepKind Kind, string T
     /// <summary>Вторая кнопка рядом с основной (например, «Отменить откат»).</summary>
     public string? AltLabel { get; init; }
     public string? AltHref { get; init; }
+
+    /// <summary>Несколько однотипных действий (например, «Создать MR» для каждой ветки задачи): строка и своя кнопка у каждого.</summary>
+    public IReadOnlyList<NextStepItem> Items { get; init; } = Array.Empty<NextStepItem>();
+}
+
+/// <summary>Строка шага: что (ветка), кнопка и куда она ведёт.</summary>
+public sealed record NextStepItem(string Title, string ActionLabel, string Href)
+{
+    public bool External => !Href.StartsWith('#');
+
+    /// <summary>Адрес POST «удалить ветку» (страница модуля заполняет его для веток задач); null - кнопки нет.</summary>
+    public string? DeleteAction { get; init; }
+
+    /// <summary>Пояснение после заголовка (например, «из feature/KTN-1»).</summary>
+    public string? Note { get; init; }
+
+    /// <summary>Кнопка - POST на этот адрес с полем PostField=PostValue (вместо ссылки Href).</summary>
+    public string? PostAction { get; init; }
+    public string PostField { get; init; } = "Selected";
+    public string? PostValue { get; init; }
+    public string? Confirm { get; init; }
+
+    /// <summary>Заголовок - имя ветки (моноширинно); задачи dev - текстом.</summary>
+    public bool IsBranch { get; init; } = true;
 }
 
 /// <summary>Этап на карточке «где сейчас»: название, ветка, подпись (версия на сервере, сколько задач).</summary>
@@ -55,13 +79,19 @@ public sealed record FlowCard(IReadOnlyList<FlowStep> Steps, int Current, Module
 /// Задача (ветка или коммит) на карточке «где сейчас»: своя линия от первого этапа до этапа, где она сейчас.
 /// Column - номер этапа в <see cref="FlowCard.Steps"/>.
 /// </summary>
-public sealed record FlowLane(string Title, string Ref, string? Url, int Column, string? Note = null);
+public sealed record FlowLane(string Title, string Ref, string? Url, int Column, string? Note = null)
+{
+    /// <summary>Ветка задачи, из которой пришёл коммит (сама ветка могла быть уже удалена).</summary>
+    public string? Source { get; init; }
+}
 
 /// <summary>Линии задач: ветки в работе, коммиты dev, которых нет в main (в релизе - на стейдже), и багфиксы релиза.</summary>
 public static class FlowLanes
 {
+    /// <param name="source">Ветка задачи, из которой пришёл коммит dev / релиза; null - неизвестно.</param>
     public static List<FlowLane> Build(string repoUrl, IEnumerable<(ProAdmin.GitLab.GitLabBranch Branch, string? Note)> branches,
-        IEnumerable<ProAdmin.GitLab.GitLabCommit> devOnly, IReadOnlyCollection<ProAdmin.GitLab.GitLabCommit> release, int testColumn, int stageColumn)
+        IEnumerable<ProAdmin.GitLab.GitLabCommit> devOnly, IReadOnlyCollection<ProAdmin.GitLab.GitLabCommit> release, int testColumn, int stageColumn,
+        Func<ProAdmin.GitLab.GitLabCommit, string?>? source = null)
     {
         var lanes = branches.Select(b => new FlowLane(b.Branch.Commit?.Title ?? b.Branch.Name, b.Branch.Name,
             $"{repoUrl}/-/commits/{Uri.EscapeDataString(b.Branch.Name)}", 0, b.Note)).ToList();
@@ -72,10 +102,10 @@ public static class FlowLanes
                                                         ProAdmin.Types.TypesRepository.PickedFrom(r.Message).Any(p => c.Id.StartsWith(p, StringComparison.Ordinal)));
             if (inRelease is not null)
                 matched.Add(inRelease.Id);
-            lanes.Add(new FlowLane(c.Title ?? c.ShortId, c.ShortId, c.WebUrl, inRelease is null ? testColumn : stageColumn));
+            lanes.Add(new FlowLane(c.Title ?? c.ShortId, c.ShortId, c.WebUrl, inRelease is null ? testColumn : stageColumn) { Source = source?.Invoke(c) });
         }
         lanes.AddRange(release.Where(r => !matched.Contains(r.Id))
-            .Select(r => new FlowLane(r.Title ?? r.ShortId, r.ShortId, r.WebUrl, stageColumn, "только в релизе")));
+            .Select(r => new FlowLane(r.Title ?? r.ShortId, r.ShortId, r.WebUrl, stageColumn, "только в релизе") { Source = source?.Invoke(r) }));
         return lanes;
     }
 
@@ -111,9 +141,13 @@ public sealed record NextStepInput
     public string? Hotfix { get; init; }
     /// <summary>Ветка задачи с коммитами, но без MR, и ссылка «создать MR».</summary>
     public string? BranchWithoutMr { get; init; }
+    /// <summary>Все ветки задач с коммитами и без MR со ссылками «создать MR» (при двух и больше шаг показывает каждую).</summary>
+    public IReadOnlyList<(string Branch, string Url)> BranchesWithoutMr { get; init; } = Array.Empty<(string, string)>();
     public string? NewMrUrl { get; init; }
     /// <summary>Только что созданная ветка задачи: коммитов и MR ещё нет.</summary>
     public string? EmptyBranch { get; init; }
+    /// <summary>Задачи dev, которых нет в активном релизе, с кнопкой «Добавить в релиз» (страница заполняет POST).</summary>
+    public IReadOnlyList<NextStepItem> ReleaseCandidates { get; init; } = Array.Empty<NextStepItem>();
 }
 
 public static class ModuleNextSteps
@@ -121,7 +155,27 @@ public static class ModuleNextSteps
     /// <summary>Сервер на голове своей ветки (или выложен вручную той же версии).</summary>
     public static bool Ok(ModuleSync? s) => s is ModuleSync.Synced or ModuleSync.SameVersion or ModuleSync.Released or ModuleSync.Disabled or ModuleSync.Unknown or null;
 
+    /// <summary>
+    /// Следующий шаг. Ветки задач без MR и задачи dev вне активного релиза не теряются, даже если главный шаг другой
+    /// (релиз, MR в dev, hotfix): кнопки «Добавить в релиз» и «Создать MR» добавляются к нему строками.
+    /// </summary>
     public static ModuleNextStep For(NextStepInput m)
+    {
+        var step = Primary(m);
+        if (!m.Ready)
+            return step;
+        var items = step.Items.ToList();
+        if (m.Release is not null && m.ReleaseCandidates.Count > 0)
+        {
+            items.AddRange(m.ReleaseCandidates);
+            step = step with { Text = $"{step.Text} В dev есть задачи вне релиза - их можно добавить в него (cherry-pick, релиз заново выложится на стейдж).".TrimStart() };
+        }
+        if (step.Items.Count == 0)
+            items.AddRange(m.BranchesWithoutMr.Select(b => new NextStepItem(b.Branch, "Создать MR", b.Url)));
+        return items.Count == step.Items.Count ? step : step with { Items = items };
+    }
+
+    private static ModuleNextStep Primary(NextStepInput m)
     {
         if (!m.Ready)
             return new(FlowStage.Task, NextStepKind.Warn, "Репозиторий не готов к CI/CD",
@@ -130,7 +184,7 @@ public static class ModuleNextSteps
         if (m.Hotfix is { } hotfix)
             return new(FlowStage.Prod, NextStepKind.Action, $"Hotfix {hotfix} ждёт выпуска в прод",
                 "Проверьте исправление (можно на стейдже) и нажмите «Hotfix в прод»: поднимется патч-версия, исправление вольётся в dev.",
-                "К hotfix ", "#hotfix");
+                "К hotfix", "#hotfix");
 
         if (m.Release is { } release)
         {
@@ -138,7 +192,7 @@ public static class ModuleNextSteps
             if (m.ReleaseMrs > 0)
                 return new(FlowStage.Stage, NextStepKind.Action, $"В релиз {v} ждут влития {Plural(m.ReleaseMrs, "MR", "MR", "MR")}",
                     "Code Review в GitLab, затем «Влить / стейдж». Пока они не влиты, выпуск в прод заблокирован.",
-                    "К MR релиза ", "#release");
+                    "К MR релиза", "#release");
             if (m.DeployingStage is { } stagePipeline)
                 return new(FlowStage.Stage, NextStepKind.Wait, $"Релиз {v} выкладывается на стейдж",
                     "CI собирает и выкладывает голову релиза. Обновите страницу, когда pipeline закончится.",
@@ -148,13 +202,13 @@ public static class ModuleNextSteps
                     "На стейдже не голова релиза.", "К релизу ", "#release");
             return new(FlowStage.Stage, NextStepKind.Action, $"Релиз {v} на стейдже - проверьте и выпустите в прод",
                 "После проверки на стейдже: «Выпустить в прод» выложит тот же артефакт на прод, вольёт релиз в main, поставит тег и Release.",
-                "Выпустить в прод ", "#release-prod");
+                "Выпустить в прод", "#release-prod");
         }
 
         var ready = m.DevMrs.Where(mr => !mr.Draft).ToList();
         if (ready.FirstOrDefault(mr => !ProAdmin.GitLab.GitLabPipeline.Blocks(mr.PipelineStatus) && (mr.Reviewed || !m.NeedReview)) is { } toMerge)
             return new(FlowStage.Task, NextStepKind.Action, $"Влейте !{toMerge.Iid} в dev",
-                $"«{toMerge.Title}»{PipelineNote(toMerge.PipelineStatus)}. «Влить / тест» сделает squash merge и выложит dev на тест.",
+                $"«{toMerge.Title}»{PipelineNote(toMerge.PipelineStatus)}. «Влить в тест» сделает squash merge и выложит dev на тест.",
                 "К MR задач ", "#tasks");
         if (ready.FirstOrDefault(mr => ProAdmin.GitLab.GitLabPipeline.Blocks(mr.PipelineStatus)) is { } failed)
             return new(FlowStage.Task, NextStepKind.Action, $"У !{failed.Iid} не прошёл pipeline",
@@ -162,7 +216,7 @@ public static class ModuleNextSteps
                 "К MR задач ", "#tasks");
         if (ready.FirstOrDefault() is { } waiting)
             return new(FlowStage.Task, NextStepKind.Wait, $"!{waiting.Iid} ждёт Approve ревьюера",
-                $"«{waiting.Title}»{PipelineNote(waiting.PipelineStatus)}. Ревьюер (не автор) нажимает Approve в GitLab, затем здесь - «Влить / тест».",
+                $"«{waiting.Title}»{PipelineNote(waiting.PipelineStatus)}. Ревьюер (не автор) нажимает Approve в GitLab, затем здесь - «Влить в тест».",
                 "MR в GitLab", waiting.WebUrl);
         if (m.DevMrs.FirstOrDefault() is { } draft)
             return new(FlowStage.Task, NextStepKind.Wait, $"!{draft.Iid} - черновик (Draft)",
@@ -171,9 +225,11 @@ public static class ModuleNextSteps
         if (m.DeployingTest is { } testPipeline)
             return new(FlowStage.Test, NextStepKind.Wait, "dev выкладывается на тест",
                 "CI собирает и выкладывает голову dev. Обновите страницу, когда pipeline закончится.", "Pipeline", testPipeline);
-        if (!Ok(m.Test))
-            return new(FlowStage.Test, NextStepKind.Action, "Выложите dev на тест",
-                "На тестовом сервере не голова dev - нажмите «Выложить dev» в карточке теста.", "К серверам ", "#envs");
+        // Новый модуль: на тесте его нет, а в dev только каркас (задач сверх main нет) - выкладывать пустой каркас незачем,
+        // модуль попадёт на тест с первой влитой задачей. Сначала - шаги по веткам задач, выкладка dev - в самом конце.
+        var onlySkeleton = m.Test == ModuleSync.Missing && m.Unreleased == 0;
+        if (!Ok(m.Test) && !onlySkeleton)
+            return DeployDev;
 
         if (m.Unreleased > 0)
         {
@@ -181,9 +237,18 @@ public static class ModuleNextSteps
             return new(FlowStage.Test, NextStepKind.Action, $"На тесте {Plural(m.Unreleased, "задача", "задачи", "задач")}{since} - соберите релиз",
                 m.HasStage ? "Проверьте задачи на тесте и нажмите «Релиз / стейдж»: создастся release/X.Y.Z и выложится на стейдж."
                            : "Укажите сервер стейджа в настройках, чтобы собрать релиз.",
-                "Релиз / стейдж ", "#release");
+                "Релиз / стейдж", "#release");
         }
 
+        // Каждая ветка - строкой со своими кнопками («Создать MR», «Удалить ветку» - если задачу не берём).
+        if (m.BranchesWithoutMr.Count > 0)
+            return new(FlowStage.Task, NextStepKind.Action, m.BranchesWithoutMr.Count == 1
+                    ? $"Ветка {m.BranchesWithoutMr[0].Branch}: создайте MR в dev"
+                    : $"{Plural(m.BranchesWithoutMr.Count, "ветка", "ветки", "веток")} задач без MR - создайте MR",
+                "В ветке есть коммиты, но Merge Request нет - без него задача не попадёт на тест. Задачу не берём - удалите ветку.")
+            {
+                Items = m.BranchesWithoutMr.Select(b => new NextStepItem(b.Branch, "Создать MR", b.Url)).ToList(),
+            };
         if (m.BranchWithoutMr is { } branch)
             return new(FlowStage.Task, NextStepKind.Action, $"Ветка {branch}: создайте MR в dev",
                 "В ветке есть коммиты, но Merge Request нет - без него задача не попадёт на тест.", "Создать MR", m.NewMrUrl);
@@ -192,15 +257,24 @@ public static class ModuleNextSteps
             return new(FlowStage.Task, NextStepKind.Wait, $"Ветка {empty} создана - коммитов пока нет",
                 $"git fetch && git switch {empty}, закоммитьте и запушьте изменения - затем здесь появится «Создать MR».");
 
+        if (onlySkeleton)
+            return new(FlowStage.Task, NextStepKind.Action, "Начните первую задачу",
+                "Модуля на тесте пока нет: он соберётся и выложится на тест, когда первая задача вольётся в dev. " +
+                "Выложить каркас сразу можно кнопкой «Выложить dev» в карточке теста.",
+                "Создать ветку задачи", "#tasks");
+
         if (!Ok(m.Prod))
             return new(FlowStage.Prod, NextStepKind.Warn, "На проде не голова main",
-                "Прод откатили или выложили вручную. Отменить откат: «Релизы на проде» / выберите последний релиз. Либо выпустите исправление релизом или hotfix.", "К релизам ", "#releases");
+                "Прод откатили или выложили вручную. Отменить откат: «Релизы на проде» / выберите последний релиз. Либо выпустите исправление релизом или hotfix.", "К релизам", "#releases");
 
         return new(FlowStage.Done, NextStepKind.Done,
             m.LastProd is { } last ? $"Всё выпущено: v{last} на проде" : "Новых задач нет",
             "Тест, стейдж и прод совпадают. Новая работа начинается с ветки задачи от dev.",
-            "Создать ветку задачи ", "#tasks");
+            "Создать ветку задачи", "#tasks");
     }
+
+    private static readonly ModuleNextStep DeployDev = new(FlowStage.Test, NextStepKind.Action, "Выложите dev на тест",
+        "На тестовом сервере не голова dev - нажмите «Выложить dev» в карточке теста.", "К серверам", "#envs");
 
     private static string PipelineNote(string? status) => status switch
     {

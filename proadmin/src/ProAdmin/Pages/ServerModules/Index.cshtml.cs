@@ -89,15 +89,15 @@ public class IndexModel : AppPageModel
 
     /// <summary>
     /// Новая версия самого ServerHost: zip записывается в объект хоста в базе, как при ручной установке. Pilot-Server
-    /// читает его только при старте, поэтому версия вступает в силу после перезапуска. Только вошедшему администратором прода.
+    /// читает его только при старте, поэтому версия вступает в силу после перезапуска. Только администратору админки.
     /// </summary>
     public async Task<IActionResult> OnPostUpdateHostAsync(CancellationToken ct)
     {
         Prepare();
-        if (Current is not null && !IsProdAdmin)
+        if (Current is not null && !await ConfirmAdminAsync(ct))
         {
-            _logger.LogWarning("Отказ (403): обновление ServerHost - вход {Login} без администратора Pilot контура «Прод», адрес {Address}",
-                CurrentSession.PilotLogin, HttpContext.Connection.RemoteIpAddress);
+            _logger.LogWarning("Отказ (403): обновление ServerHost - {Login} не администратор админки, адрес {Address}",
+                CurrentSession.Actor, HttpContext.Connection.RemoteIpAddress);
             return StatusCode(StatusCodes.Status403Forbidden);
         }
         if (await GuardAsync(ct) is { } deny)
@@ -116,16 +116,11 @@ public class IndexModel : AppPageModel
         {
             ServerHostPackage.CheckSize(Archive.Length, fileName);
             host = ServerHostPackage.Find(await _extensions.ListServerExtensionsAsync(Current!.PilotUrl, Login(), AppSettings.ReportsLicenseType, ct));
-            if (host is null)
-            {
-                TempData["FlashError"] = $"{Current.Title}: объекта ServerHost в базе нет - сначала установите хост по инструкции.";
-                return Back();
-            }
 
             var zip = new byte[Archive.Length];
             await using (var stream = Archive.OpenReadStream())
                 await stream.ReadExactlyAsync(zip, ct);
-            (package, downgrade) = ServerHostPackage.Check(zip, fileName, host.Version);
+            (package, downgrade) = ServerHostPackage.Check(zip, fileName, host?.Version);
         }
         catch (Exception ex) when (ex is InvalidDataException or PilotGatewayException)
         {
@@ -133,13 +128,16 @@ public class IndexModel : AppPageModel
             return Back();
         }
 
+        if (host is null)
+            return await InstallHostAsync(package, ct);
+
         if (downgrade && !AllowDowngrade)
         {
             TempData["FlashError"] = $"{Current.Title}: версия в архиве {package.Version} ниже записанной в базе ({host.Version}). Если это намеренно, отметьте «Понизить версию».";
             return Back();
         }
 
-        var actor = CurrentSession.GitLabUser?.Username ?? CurrentSession.PilotLogin;
+        var actor = CurrentSession.Actor;
         var job = new PublishJob
         {
             Operation = "обновление ServerHost",
@@ -173,6 +171,42 @@ public class IndexModel : AppPageModel
         FinishJob(job, null);
         TempData["Flash"] = $"{Current.Title}: ServerHost {package.Version} записан в базу. " +
                             "Новая версия хоста вступит в силу после перезапуска сервера Pilot (всех узлов в кластере).";
+        return Back();
+    }
+
+    /// <summary>Первая установка хоста: объект $PilotServerExtension в папке расширений; работает после перезапуска сервера.</summary>
+    private async Task<IActionResult> InstallHostAsync(ModulePackageInfo package, CancellationToken ct)
+    {
+        var job = new PublishJob
+        {
+            Operation = "установка ServerHost",
+            Env = Current!.Key,
+            EnvTitle = Current.Title,
+            Branch = "расширение сервера",
+            AutomationName = ServerHostPackage.ExtensionName,
+            CommitMessage = package.Version,
+            PilotUser = CurrentSession.PilotLogin,
+            GitLabUser = CurrentSession.GitLabUser?.Username,
+        };
+        _jobs.Add(job);
+        try
+        {
+            await _extensions.CreateServerExtensionAsync(Current.PilotUrl, Login(), AppSettings.ReportsLicenseType, ServerHostPackage.ExtensionName,
+                ServerHostPackage.ExtensionName + ".zip", package.Zip, package.ExtensionAdditional,
+                $"{package.Version} · установлен из админки, {CurrentSession.Actor}", ct);
+        }
+        catch (Exception ex)
+        {
+            FinishJob(job, ex.Message);
+            if (ex is not PilotGatewayException)
+                throw;
+            TempData["FlashError"] = $"{Current.Title}: {ex.Message}";
+            return Back();
+        }
+        job.Add("ok", $"ServerHost {package.Version} установлен в базу {Current.Title}; заработает после перезапуска сервера Pilot.");
+        FinishJob(job, null);
+        TempData["Flash"] = $"{Current.Title}: ServerHost {package.Version} установлен в базу. Перезапустите сервер Pilot (все узлы в кластере) - " +
+                            "это последний перезапуск, дальше серверные модули обновляются отсюда.";
         return Back();
     }
 
@@ -240,6 +274,8 @@ public class IndexModel : AppPageModel
         Prepare();
         if (Current is null)
             return Back();
+        if (UsesServiceAccounts)
+            return NotFound(); // при входе через GitLab учётки Pilot - только служебные из «Настроек»
         if (BlockedCredentialAttempt() is { } blocked)
             return blocked;
         var login = new PilotLogin(EnvLogin?.Trim() ?? "", EnvPassword ?? "");
@@ -348,7 +384,7 @@ public class IndexModel : AppPageModel
 
     private async Task<IActionResult> ModuleOpAsync(HostRequest request, string done, CancellationToken ct)
     {
-        request.Actor = CurrentSession.GitLabUser?.Username ?? CurrentSession.PilotLogin;
+        request.Actor = CurrentSession.Actor;
         try
         {
             var response = await _gateway.InvokeAsync(Current!.PilotUrl, Login(), AppSettings.ReportsLicenseType, request, ct);

@@ -17,8 +17,7 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
 {
     private const string Cookie = "pwa.setup";
     private static readonly TimeSpan GrantLifetime = TimeSpan.FromMinutes(20);
-    private readonly ITimeLimitedDataProtector _grant =
-        protection.CreateProtector("ProAdmin.FirstRun").ToTimeLimitedDataProtector();
+    private readonly ITimeLimitedDataProtector _grant = GrantProtector(protection);
 
     [BindProperty] public string? SetupKey { get; set; }
     [BindProperty] public string? GitLabUrl { get; set; }
@@ -27,15 +26,36 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
     [BindProperty] public List<DeployAccountInput> Deploy { get; set; } = [];
     public string? GitLabUser { get; private set; }
     public string? Error { get; private set; }
+    /// <summary>Вход через GitLab в браузере: в админке задано OAuth-приложение GitLab.</summary>
+    public bool OAuthEnabled => signIn.OAuthEnabled;
 
-    private bool Enabled => options.Value.FirstRunSetup && !options.Value.GitHubTypes.IsConfigured &&
-                            !store.Current.FirstRunCompleted;
+    private bool Enabled => IsOpen(options.Value, store);
     private string? Address => HttpContext.Connection.RemoteIpAddress?.ToString();
-    private CookieOptions SetupCookie => new()
+    private CookieOptions SetupCookie => SetupCookieFor(Request);
+
+    internal static bool IsOpen(AppOptions options, SettingsStore store) =>
+        options.FirstRunSetup && !options.GitHubTypes.IsConfigured && !store.Current.FirstRunCompleted;
+
+    private static ITimeLimitedDataProtector GrantProtector(IDataProtectionProvider protection) =>
+        protection.CreateProtector("ProAdmin.FirstRun").ToTimeLimitedDataProtector();
+
+    // Lax, не Strict: после входа в браузере пропуск ставит /GitLab/Callback и перенаправляет на /Setup. Эта цепочка начата
+    // на сайте GitLab (другой хост, например localhost:8080 против 127.0.0.1:5300), и Strict-cookie браузер на /Setup не отправит:
+    // мастер снова покажет первый шаг. Формы мастера защищает antiforgery.
+    private static CookieOptions SetupCookieFor(HttpRequest request) => new()
     {
-        HttpOnly = true, Secure = Request.IsHttps, SameSite = SameSiteMode.Strict,
-        Path = Request.PathBase.Add("/Setup").Value,
+        HttpOnly = true, Secure = request.IsHttps, SameSite = SameSiteMode.Lax,
+        Path = request.PathBase.Add("/Setup").Value,
     };
+
+    /// <summary>Пропуск во второй шаг мастера: GitLab подключён (токеном или входом в браузере).</summary>
+    internal static void IssueGrant(HttpContext context, IDataProtectionProvider protection, GitLabToken token, string user)
+    {
+        var cookie = SetupCookieFor(context.Request);
+        cookie.MaxAge = GrantLifetime;
+        var grant = new Grant(token.BaseUrl, token.AccessToken, user, token.RefreshToken, token.ExpiresAt, token.RedirectUri, token.IsOAuth);
+        context.Response.Cookies.Append(Cookie, GrantProtector(protection).Protect(JsonSerializer.Serialize(grant), GrantLifetime), cookie);
+    }
 
     public IActionResult OnGet()
     {
@@ -68,25 +88,18 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
             return RedirectToPage("/Login");
         if (limiter.IsBlocked(AuthFailureLimiter.LoginScope, Address))
             return StatusCode(429);
-        if (PilotConnectionModel.SetupKeyError(options.Value.SetupKey, SetupKey) is { } keyError)
-        {
-            limiter.Fail(AuthFailureLimiter.LoginScope, Address);
-            Error = keyError;
+        if (CheckKeyAndUrl() is not { } url)
             return Page();
-        }
-        if (!TryWebUrl(GitLabUrl, out var url) || new Uri(url).AbsolutePath != "/" ||
-            Token?.Trim() is not { Length: > 0 and <= 1024 } token)
+        if (Token?.Trim() is not { Length: > 0 and <= 1024 } token)
         {
-            Error = "Укажите HTTP(S)-адрес GitLab и Personal Access Token с правом api.";
+            Error = "Вставьте Personal Access Token с правом api или войдите через GitLab в браузере.";
             return Page();
         }
         try
         {
-            var user = await gitLab.Create(new GitLabToken { AccessToken = token, BaseUrl = url }).GetCurrentUserAsync(ct);
-            var cookie = SetupCookie;
-            cookie.MaxAge = GrantLifetime;
-            Response.Cookies.Append(Cookie, _grant.Protect(JsonSerializer.Serialize(new Grant(url, token, user.Username)),
-                GrantLifetime), cookie);
+            var gitLabToken = new GitLabToken { AccessToken = token, BaseUrl = url };
+            var user = await gitLab.Create(gitLabToken).GetCurrentUserAsync(ct);
+            IssueGrant(HttpContext, protection, gitLabToken, user.Username);
             return RedirectToPage();
         }
         catch (GitLabApiException ex)
@@ -94,6 +107,43 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
             Error = ex.Message;
             return Page();
         }
+    }
+
+    /// <summary>Вход через GitLab в браузере (OAuth): после возврата из GitLab мастер продолжается, как после токена.</summary>
+    public async Task<IActionResult> OnPostBrowserAsync(CancellationToken ct)
+    {
+        // Enter в поле токена отправляет форму первой кнопкой (вход в браузере): токен важнее.
+        if (!string.IsNullOrWhiteSpace(Token))
+            return await OnPostConnectAsync(ct);
+        if (!Enabled)
+            return RedirectToPage("/Login");
+        if (limiter.IsBlocked(AuthFailureLimiter.LoginScope, Address))
+            return StatusCode(429);
+        if (CheckKeyAndUrl() is not { } url)
+            return Page();
+        if (!OAuthEnabled)
+        {
+            Error = "Вход через GitLab в браузере не настроен: задайте GITLAB_OAUTH_CLIENT_ID и GITLAB_OAUTH_CLIENT_SECRET в .env админки или войдите с токеном.";
+            return Page();
+        }
+        return Redirect(await signIn.StartOAuthAsync(HttpContext, url, "/Setup", ct, setup: true));
+    }
+
+    /// <summary>Ключ установки и адрес GitLab; при ошибке заполняет Error и возвращает null.</summary>
+    private string? CheckKeyAndUrl()
+    {
+        if (PilotConnectionModel.SetupKeyError(options.Value.SetupKey, SetupKey) is { } keyError)
+        {
+            limiter.Fail(AuthFailureLimiter.LoginScope, Address);
+            Error = keyError;
+            return null;
+        }
+        if (!TryWebUrl(GitLabUrl, out var url) || new Uri(url).AbsolutePath != "/")
+        {
+            Error = "Укажите HTTP(S)-адрес GitLab без пути, например http://localhost:8080.";
+            return null;
+        }
+        return url;
     }
 
     public async Task<IActionResult> OnPostFinishAsync(CancellationToken ct)
@@ -128,12 +178,13 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
         current.ModulesGitLabGroupUrl = Input.Modules ?? "";
         current.ServerModulesGitLabGroupUrl = Input.ServerModules ?? "";
         current.TypesGitLabProjectUrl = Input.Types ?? "";
-        if (await accounts.ApplyAsync(current, Deploy, pilot, ct) is { } error)
+        var notes = new List<string>();
+        if (await accounts.ApplyAsync(current, Deploy, pilot, ct, notes) is { } error)
             return Invalid(error);
 
         current.UpdatedBy = grant.User;
         current.UpdatedAt = DateTimeOffset.UtcNow;
-        var token = new GitLabToken { AccessToken = grant.Token, BaseUrl = grant.Url };
+        var token = grant.ToToken();
         GitLabUser user;
         try { user = await signIn.VerifyAccessAsync(token, current, ct); }
         catch (GitLabApiException ex) { return Invalid(ex.Message); }
@@ -141,6 +192,8 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
             return RedirectToPage("/Login");
         Response.Cookies.Delete(Cookie, SetupCookie);
         await signIn.SignInAsync(HttpContext, token, user);
+        if (notes.Count > 0)
+            TempData["Flash"] = string.Join(" ", notes);
         return RedirectToPage("/Index");
     }
 
@@ -181,7 +234,16 @@ public sealed class SetupModel(SettingsStore store, IOptions<AppOptions> options
     private static string? MoveGroup(string url, string newBase) =>
         GitLabLocation.TryParse(url, out var location, out _) ? newBase + "/" + location!.Path : null;
 
-    private sealed record Grant(string Url, string Token, string User);
+    // Для входа в браузере хранится и refresh-токен: иначе сеанс после мастера оборвётся, когда истечёт OAuth-токен.
+    private sealed record Grant(string Url, string Token, string User, string? RefreshToken = null,
+        DateTimeOffset? ExpiresAt = null, string? RedirectUri = null, bool OAuth = false)
+    {
+        public GitLabToken ToToken() => new()
+        {
+            AccessToken = Token, BaseUrl = Url, RefreshToken = RefreshToken, ExpiresAt = ExpiresAt,
+            RedirectUri = RedirectUri, IsOAuth = OAuth,
+        };
+    }
 
     public sealed class SetupInput
     {

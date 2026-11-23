@@ -101,9 +101,9 @@
         {
             <button class="btn btn-primary" type="button" data-dialog="release">Релиз @Model.ActiveRelease.Name / стейдж / прод</button>
         }
-        else if (!Model.AutoStage && Model.Stage is not null)
+        else if (canRelease && releaseWhy is null)
         {
-            <button class="btn btn-primary" type="button" data-dialog="new-release" disabled="@(!canRelease || releaseWhy is not null)" title="@releaseWhy">Создать релиз</button>
+            <button class="btn btn-primary" type="button" data-dialog="release">Создать релиз</button>
         }
         @if (Model.Prod is not null)
         {
@@ -112,7 +112,7 @@
     </div>
     @if (canRelease && releaseWhy is null)
     {
-        <dialog class="modal modal-form" id="@(Model.ActiveRelease is null ? "release" : "new-release")">
+        <dialog class="modal modal-form" id="release">
             <div class="modal-form-body">
                 <div class="modal-form-head"><h2>Релиз v@(Model.DevVersion) / стейдж</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
                 <p class="muted small">
@@ -140,7 +140,7 @@
             @if (st.Pilot?.IsPaused == true) { <span class="badge badge-paused">на паузе</span> }
             @if (!ro && env.IsEditable)
             {
-                <div class="small" style="margin-top:8px"><a href="/Automations/@env.Key/Edit?name=@q">Изменить на сервере «@env.Title» /</a></div>
+                <div class="small" style="margin-top:8px"><a href="/Automations/@env.Key/Edit?name=@q">Изменить на сервере «@env.Title»</a></div>
             }
         </div>
     }
@@ -153,7 +153,7 @@
         <h2>Ветки задач и hotfix</h2>
         <p class="muted small">
             Правка начинается в редакторе: «Сохранить в ветку» коммитит в <code>feature/…</code> (от dev) или, на проде, в <code>hotfix/…</code> (от main) -
-            серверы при этом не меняются. «Влить / тест» отправляет ветку в dev и на тестовый сервер, «Hotfix в прод» - в main и на прод.
+            серверы при этом не меняются. «Влить в тест» отправляет ветку в dev и на тестовый сервер, «Hotfix в прод» - в main и на прод.
         </p>
         {
             <table class="table branches">
@@ -179,7 +179,7 @@
                                 {
                                     @if (isHotfix)
                                     {
-                                        <a class="btn btn-sm btn-primary" href="/Automations/Promote?name=@q&from=@Uri.EscapeDataString(b.Branch.Name)">Hotfix в прод /</a>
+                                        <a class="btn btn-sm btn-primary" href="/Automations/Promote?name=@q&from=@Uri.EscapeDataString(b.Branch.Name)">Hotfix в прод</a>
                                     }
                                     else if (w.Behind > 0)
                                     {
@@ -193,7 +193,7 @@
                                         <form method="post" asp-page-handler="MergeTask" asp-route-name="@Model.Name" class="inline"
                                               data-confirm="Влить @b.Branch.Name в dev? MR, pipeline, запись на тестовый сервер; ветка будет удалена.">
                                             <input type="hidden" name="Branch" value="@b.Branch.Name" />
-                                            <button class="btn btn-sm btn-primary" type="submit">Влить / тест</button>
+                                            <button class="btn btn-sm btn-primary" type="submit">Влить в тест</button>
                                         </form>
                                     }
                                 }
@@ -211,7 +211,7 @@
 {
     <section class="card" id="release">
         <h2>Стейдж вместе с тестом</h2>
-        <p class="muted small">Режим CI/CD в настройках: «Влить / тест» сразу записывает автоматизацию и на сервер @Model.Stage!.Title, на прод переносится <code>dev</code>. Веток <code>release/*</code> нет.</p>
+        <p class="muted small">Режим CI/CD в настройках: «Влить в тест» сразу записывает автоматизацию и на сервер @Model.Stage!.Title, на прод переносится <code>dev</code>. Веток <code>release/*</code> нет.</p>
     </section>
 }
 else if (Model.Stage is not null && repo is not null && Model.ActiveRelease is not null)
@@ -228,7 +228,7 @@ else if (Model.Stage is not null && repo is not null && Model.ActiveRelease is n
             @if (!ro)
             {
                 <div class="btn-row" id="release-prod">
-                    <a class="btn btn-primary" href="/Automations/Promote?name=@q">Выпустить в прод /</a>
+                    <a class="btn btn-primary" href="/Automations/Promote?name=@q">Выпустить в прод</a>
                     <form method="post" asp-page-handler="Release" asp-route-name="@Model.Name" class="inline">
                         <button class="btn" type="submit">Выложить на стейдж заново</button>
                     </form>
@@ -243,7 +243,11 @@ else if (Model.Stage is not null && repo is not null && Model.ActiveRelease is n
     <div class="btn-row">
         @if (!ro)
         {
-            <a class="btn @(Model.NextStep?.Href?.StartsWith("/Automations/Promote") == true ? "btn-primary" : "")" href="/Automations/Promote?name=@q">На прод /</a>
+            @* «На прод» - только когда dev впереди main и следующий шаг не предлагает это же. *@
+            @if (Model.DevVersion != Model.MainVersion && Model.NextStep?.Href?.StartsWith("/Automations/Promote") != true)
+            {
+                <a class="btn" href="/Automations/Promote?name=@q">На прод</a>
+            }
             <a class="btn" href="/Automations/Rollback?name=@q">Откатить прод</a>
             @if (Model.RollbackTo is not null && Model.UndoRollbackTag is not null)
             {

@@ -27,7 +27,7 @@
         <h1>@(Model.IsNew ? $"{Model.KindTitle}: новый" : $"{Model.KindTitle} {Model.Name}")@(Model.IsDeleted ? " (удалён)" : "")</h1>
         <p class="muted">
             Открыто из <code>@Model.SourceRef</code>. «Сохранить» - коммит в ветку изменения <code>types/…</code>;
-            на тестовый сервер правка попадёт после «Влить / тест» на вкладке «Типы».
+            на тестовый сервер правка попадёт после «Влить в тест» на вкладке «Типы».
         </p>
     </div>
     @if (!Model.IsNew)
@@ -70,79 +70,45 @@
     else if (Model.Kind == "state")
     {
         <section class="card">
-            <div class="grid-3">
-                @if (Model.IsNew)
-                {
-                    <label class="field"><span>Имя (латиница)</span><input name="NewName" value="@Model.NewName" required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label>
-                }
-                <label class="field"><span>Заголовок</span><input asp-for="Form.Title" required /></label>
-                <label class="field"><span>Цвет</span>
-                    <select asp-for="Form.Color" asp-items="Html.GetEnumSelectList<UserStateColors>()"></select></label>
-                <label class="check"><input type="checkbox" asp-for="Form.IsCompletionState" /><span>Завершающее</span></label>
-            </div>
-        </section>
-    }
-    else if (Model.Kind == "machine")
-    {
-        <section class="card">
-            <label class="field"><span>Заголовок группы</span><input asp-for="Form.Title" required /></label>
-            <p class="muted small">Переименование меняет и типы, которые используют группу, - тем же коммитом.</p>
-            <h3>Переходы</h3>
-            <p class="muted small">Строка без «В» - состояние без переходов. <code>@TypesSnapshot.NoState</code> - объект ещё без состояния. Должности - через запятую (например <code>&amp;initiator, &amp;executor</code>).</p>
-            <table class="table" id="rows">
-                <thead><tr><th>Из состояния</th><th>В состояние</th><th>Кнопка</th><th>Должности</th><th></th></tr></thead>
-                <tbody>
-                @for (var i = 0; i < Model.Form.Transitions.Count; i++)
-                {
-                    var r = Model.Form.Transitions[i];
-                    <tr>
-                        <td><select name="Form.Transitions[@i].From">@foreach (var s in Model.StateNames) { <option selected="@(s == r.From)">@s</option> }</select></td>
-                        <td><select name="Form.Transitions[@i].To"><option value="">-</option>@foreach (var s in Model.StateNames) { <option selected="@(s == r.To)">@s</option> }</select></td>
-                        <td><input name="Form.Transitions[@i].DisplayName" value="@r.DisplayName" /></td>
-                        <td><input name="Form.Transitions[@i].Positions" value="@r.Positions" /></td>
-                        <td><button type="button" class="btn btn-sm btn-ghost" data-remove-row>Закрыть</button></td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-            <template id="row-template">
-                <tr>
-                    <td><select name="Form.Transitions[__i__].From">@foreach (var s in Model.StateNames) { <option>@s</option> }</select></td>
-                    <td><select name="Form.Transitions[__i__].To"><option value="">-</option>@foreach (var s in Model.StateNames) { <option>@s</option> }</select></td>
-                    <td><input name="Form.Transitions[__i__].DisplayName" /></td>
-                    <td><input name="Form.Transitions[__i__].Positions" /></td>
-                    <td></td>
-                </tr>
-            </template>
-            <button type="button" class="btn btn-sm" data-add="rows">+ Переход</button>
-        </section>
-    }
-    else
-    {
-        <section class="card">
-            <div class="grid-3">
+            <div class="type-head">
                 @if (Model.IsNew)
                 {
                     <label class="field"><span>Имя (латиница, не меняется)</span><input name="NewName" value="@Model.NewName" required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label>
                 }
                 <label class="field"><span>Заголовок</span><input asp-for="Form.Title" required /></label>
-                <label class="field"><span>Вид</span><select asp-for="Form.TypeKind" asp-items="Html.GetEnumSelectList<TypeKind>()"></select></label>
-                <label class="field"><span>Порядок</span><input asp-for="Form.Sort" type="number" /></label>
-                <label class="field"><span>Группа состояний</span>
-                    <select asp-for="Form.StateMachine">
-                        <option value="">- нет -</option>
-                        @foreach (var m in snap.Machines.Where(m => !m.IsDeleted))
-                        {
-                            <option value="@m.Title">@m.Title</option>
-                        }
-                    </select></label>
-                <label class="field"><span>Дочерние типы</span>
-                    <select name="Form.Children" multiple size="6">
-                        @foreach (var t in snap.Types.Values.Where(t => !t.IsDeleted).OrderBy(t => t.Title ?? t.Name))
-                        {
-                            <option value="@t.Name" selected="@Model.Form.Children.Contains(t.Name)">@t.Title (@t.Name)</option>
-                        }
-                    </select></label>
+                @* Вид и порядок не редактируются: порядок новому типу рассчитан по серверу и ветке, вид - пользовательский. *@
+                <div class="field"><span>Вид</span><div class="field-value">@(Model.IsNew ? TypeKind.User : Model.Form.TypeKind)</div></div>
+                <div class="field"><span>Порядок</span><div class="field-value mono">@Model.Form.Sort</div>
+                    @if (Model.IsNew) { <input type="hidden" asp-for="Form.Sort" /> }</div>
+            </div>
+            @{
+                var allTypes = snap.Types.Values.Where(t => !t.IsDeleted && t.Name != Model.Name).OrderBy(t => t.Title ?? t.Name).ToList();
+            }
+            <div class="grid-2 type-pickers">
+                @foreach (var (field, title, hint, selected) in new[]
+                {
+                    ("Form.Children", "Дочерние типы", "Что можно создавать внутри объекта этого типа.", Model.Form.Children),
+                    ("Form.Parents", "Родительские типы", "Внутри каких типов можно создавать этот тип - меняются их «Дочерние типы».", Model.Form.Parents),
+                })
+                {
+                    <fieldset class="type-picker" data-type-picker>
+                        <legend>@title <span class="muted small" data-picker-count></span></legend>
+                        <p class="muted small">@hint</p>
+                        <div class="type-picker-tools">
+                            <input type="search" placeholder="Найти по заголовку или имени" aria-label="Поиск: @title" data-picker-filter />
+                            <label class="check small"><input type="checkbox" data-picker-only /><span>только выбранные</span></label>
+                        </div>
+                        <div class="type-picker-list">
+                            @foreach (var t in allTypes.OrderByDescending(t => selected.Contains(t.Name)))
+                            {
+                                <label class="check" data-picker-item data-text="@((t.Title + " " + t.Name).ToLowerInvariant())">
+                                    <input type="checkbox" name="@field" value="@t.Name" checked="@selected.Contains(t.Name)" />
+                                    <span>@t.Title <code class="muted">@t.Name</code></span>
+                                </label>
+                            }
+                        </div>
+                    </fieldset>
+                }
             </div>
             <div class="btn-row">
                 <label class="check"><input type="checkbox" asp-for="Form.HasFiles" /><span>Есть файлы</span></label>
@@ -273,6 +239,27 @@
 </form>
 
 <script>
+    // Выбор дочерних / родительских типов: поиск, «только выбранные», счётчик.
+    document.querySelectorAll('[data-type-picker]').forEach(picker => {
+        const filter = picker.querySelector('[data-picker-filter]');
+        const only = picker.querySelector('[data-picker-only]');
+        const count = picker.querySelector('[data-picker-count]');
+        const items = [...picker.querySelectorAll('[data-picker-item]')];
+        const update = () => {
+            const q = filter.value.trim().toLowerCase();
+            let n = 0;
+            items.forEach(item => {
+                const on = item.querySelector('input').checked;
+                if (on) n++;
+                item.hidden = (q && !item.dataset.text.includes(q)) || (only.checked && !on);
+            });
+            count.textContent = n ? `· выбрано ${n}` : '· не выбрано';
+        };
+        picker.addEventListener('input', update);
+        picker.addEventListener('change', update);
+        update();
+    });
+
     // Новые строки таблицы: индекс - следующий после последнего (ASP.NET связывает списки по сплошным индексам).
     document.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
         const kind = btn.dataset.add;

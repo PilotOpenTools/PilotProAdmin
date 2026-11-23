@@ -65,6 +65,9 @@ public sealed class EditForm
     public bool IsVisibleOnStorage { get; set; } = true;
     public string? StateMachine { get; set; }
     public List<string> Children { get; set; } = new();
+
+    /// <summary>Родительские типы: в чьих «Дочерних типах» стоит этот тип (при сохранении меняются и они - тем же коммитом).</summary>
+    public List<string> Parents { get; set; } = new();
     public string? Configuration { get; set; }
     public List<AttributeRow> Attributes { get; set; } = new();
 
@@ -84,7 +87,7 @@ public sealed class EditForm
 
 /// <summary>
 /// Редактор типа (с атрибутами), состояния или группы состояний. Сохранение - коммит в ветку изменения types/… от dev
-/// (выбранную или новую); на серверы ничего не пишется, пока ветка не влита в dev («Влить / тест» на вкладке «Типы»).
+/// (выбранную или новую); на серверы ничего не пишется, пока ветка не влита в dev («Влить в тест» на вкладке «Типы»).
 /// </summary>
 public class EditModel(PilotGateway pilot) : AppPageModel
 {
@@ -233,7 +236,7 @@ public class EditModel(PilotGateway pilot) : AppPageModel
                     branch += "-" + DateTime.Now.ToString("MMdd-HHmm");
             }
             var commit = await TypesRepository.CommitToDraftAsync(git, project, branch, message, actions, ct);
-            TempData["Flash"] = $"Сохранено в ветку изменения {branch} (коммит {commit.ShortId}): {message}. На тест попадёт после «Влить / тест».";
+            TempData["Flash"] = $"Сохранено в ветку изменения {branch} (коммит {commit.ShortId}): {message}. На тест попадёт после «Влить в тест».";
             return RedirectToPage("/Types/Index", new { view = ViewOf(Kind), branch });
         }
         catch (GitLabApiException ex)
@@ -260,9 +263,12 @@ public class EditModel(PilotGateway pilot) : AppPageModel
             var name = existing?.Name ?? (NewName ?? "").Trim();
             doc = new TypeDoc
             {
-                Name = name, Title = Text(Form.Title), Kind = Form.TypeKind, Sort = Form.Sort, HasFiles = Form.HasFiles, IsMountable = Form.IsMountable,
+                // Вид и порядок в форме не меняются (новому типу порядок рассчитан при открытии), группа состояний задаётся
+                // у атрибута «Состояние» - у типа сохраняется прежнее значение (правка - только в JSON).
+                Name = name, Title = Text(Form.Title), Kind = existing?.Kind ?? TypeKind.User, Sort = existing?.Sort ?? Form.Sort,
+                HasFiles = Form.HasFiles, IsMountable = Form.IsMountable,
                 IsService = Form.IsService, IsProject = Form.IsProject, IsVisibleOnStorage = Form.IsVisibleOnStorage, IsDeleted = existing?.IsDeleted ?? false,
-                StateMachine = Text(Form.StateMachine), Children = Form.Children.Where(c => c.Length > 0).Distinct().ToList(),
+                StateMachine = existing?.StateMachine, Children = Form.Children.Where(c => c.Length > 0).Distinct().ToList(),
                 Configuration = EditForm.Config(Form.Configuration), Icon = existing?.Icon,
                 Attributes = Form.Attributes.Where(a => !a.Remove && !string.IsNullOrWhiteSpace(a.Name))
                     .Select(a => a.ToDoc()).OrderBy(a => a.DisplaySortOrder).ToList(),
@@ -283,8 +289,9 @@ public class EditModel(PilotGateway pilot) : AppPageModel
             if (existing?.Attributes.All(x => x.Name != a.Name) != false)
                 Errors.Add($"Атрибут «{a.Name}»: имя - латиница, цифры и «_».");
 
+        var parentsChanged = Mode == "json" || delete ? 0 : SaveParents(snap, doc.Name, actions);
         if (existing is not null && TypesJson.Same(existing, doc))
-            return "";
+            return parentsChanged > 0 ? $"Тип {doc.Name}: родительские типы" : "";
         var path = existing is not null && snap.SourcePaths.TryGetValue(existing, out var p) ? p : TypesSnapshot.TypePath(doc.Name);
         snap.Types[doc.Name] = doc;
         actions.Add(existing is null ? GitLabCommitAction.Create(path, TypesJson.Write(doc)) : GitLabCommitAction.Update(path, TypesJson.Write(doc)));
@@ -412,6 +419,33 @@ public class EditModel(PilotGateway pilot) : AppPageModel
             : existing.Title != doc.Title ? $"Группа состояний «{existing.Title}» / «{doc.Title}»" : $"Группа состояний «{doc.Title}»: изменения";
     }
 
+    /// <summary>Типы, у которых <paramref name="name"/> в дочерних.</summary>
+    public static List<string> ParentsOf(TypesSnapshot snap, string name) =>
+        snap.Types.Values.Where(t => t.Name != name && t.Children.Contains(name)).Select(t => t.Name).ToList();
+
+    /// <summary>Родительские типы из формы: добавить тип в «Дочерние» выбранных и убрать из остальных. Возвращает число изменённых типов.</summary>
+    private int SaveParents(TypesSnapshot snap, string name, List<GitLabCommitAction> actions)
+    {
+        var wanted = Form.Parents.Where(x => x.Length > 0 && x != name).ToHashSet();
+        var changed = 0;
+        foreach (var t in snap.Types.Values.Where(t => t.Name != name).ToList())
+        {
+            var has = t.Children.Contains(name);
+            if (has == wanted.Contains(t.Name))
+                continue;
+            var copy = TypesJson.Read<TypeDoc>(TypesJson.Write(t), "тип");
+            if (has)
+                copy.Children.RemoveAll(c => c == name);
+            else
+                copy.Children.Add(name);
+            var typePath = snap.SourcePaths.TryGetValue(t, out var tp) ? tp : TypesSnapshot.TypePath(t.Name);
+            snap.Types[t.Name] = copy;
+            actions.Add(GitLabCommitAction.Update(typePath, TypesJson.Write(copy)));
+            changed++;
+        }
+        return changed;
+    }
+
     // ------------------------------------------------------------------
 
     private void Normalize()
@@ -485,6 +519,7 @@ public class EditModel(PilotGateway pilot) : AppPageModel
                 {
                     Title = t.Title, TypeKind = t.Kind, Sort = t.Sort, HasFiles = t.HasFiles, IsMountable = t.IsMountable, IsService = t.IsService,
                     IsProject = t.IsProject, IsVisibleOnStorage = t.IsVisibleOnStorage, StateMachine = t.StateMachine, Children = t.Children.ToList(),
+                    Parents = ParentsOf(snap, t.Name),
                     Configuration = t.Configuration, Attributes = t.Attributes.Select(AttributeRow.From).ToList(),
                 };
                 Json = TypesJson.Write(t);

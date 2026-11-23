@@ -24,7 +24,11 @@ public abstract class AppPageModel : PageModel
     public bool GitHubTypesMode => HttpContext.RequestServices
         .GetRequiredService<Microsoft.Extensions.Options.IOptions<ProAdmin.Infrastructure.AppOptions>>().Value.GitHubTypes.IsConfigured;
 
-    public bool GitLabConnected => !GitHubTypesMode && CurrentSession.IsGitLabConnected(AppSettings);
+    /// <summary>Ключи выкладки из CI по контурам (MODULES_DEPLOY_KEY_*).</summary>
+    protected ProAdmin.Infrastructure.CiDeployOptions CiDeployOptions => HttpContext.RequestServices
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<ProAdmin.Infrastructure.AppOptions>>().Value.CiDeploy;
+
+    public bool GitLabConnected =>!GitHubTypesMode && CurrentSession.IsGitLabConnected(AppSettings);
 
     /// <summary>Путь группы автоматизаций в GitLab (например «automation»).</summary>
     public string? GroupPath => AppSettings.GitLabGroupPath;
@@ -103,7 +107,7 @@ public abstract class AppPageModel : PageModel
     {
         var address = HttpContext.Connection.RemoteIpAddress?.ToString();
         HttpContext.RequestServices.GetRequiredService<ILogger<AppPageModel>>().LogWarning(
-            "Учётка контура {Env} не принята: сессия {Login}, адрес {Address}", env, CurrentSession.PilotLogin, address);
+            "Учётка контура {Env} не принята: сессия {Login}, адрес {Address}", env, CurrentSession.Actor, address);
         Limiter.Fail(ProAdmin.Infrastructure.AuthFailureLimiter.LoginScope, address);
     }
 
@@ -149,10 +153,17 @@ public abstract class AppPageModel : PageModel
     }
 
     /// <summary>
-    /// Вход администратором Pilot контура «Прод» (при настроенном проде): только такая сессия меняет общие настройки,
-    /// всё в разделе «Миграция» и настройки серверов. Остальные видят эти страницы только для чтения.
+    /// Администратор админки (<see cref="Sessions.UserSession.IsAdmin"/>): только он меняет общие настройки, всё в разделе
+    /// «Миграция» и настройки серверов. Остальные видят эти страницы только для чтения.
     /// </summary>
-    public bool IsProdAdmin => CurrentSession.IsProdAdmin(AppSettings);
+    public bool IsAdmin => CurrentSession.IsAdmin(AppSettings);
+
+    /// <summary>Перед административной записью: права администратора подтверждаются заново (роль GitLab могли отозвать).</summary>
+    protected Task<bool> ConfirmAdminAsync(CancellationToken ct) =>
+        HttpContext.RequestServices.GetRequiredService<Sessions.GitLabAdminCheck>().ConfirmAsync(CurrentSession, AppSettings, ct);
+
+    /// <summary>С Pilot работаем служебными учётками из настроек (вход через GitLab), а не своим входом в Pilot.</summary>
+    public bool UsesServiceAccounts => CurrentSession.UsesServiceAccounts;
 
     protected Pilot.PilotLogin ReportLogin(string env) => Vault.GetReportLogin(CurrentSession, env);
 

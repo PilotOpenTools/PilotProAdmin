@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Ascon.Pilot.Common;
 using Ascon.Pilot.DataClasses;
 using PilotMigration;
 using PilotMigration.Archives;
@@ -12,6 +13,20 @@ using PilotMigration.Scheduling;
 if (args is ["--cluster-readiness"])
 {
     await ClusterReadiness.RunAsync();
+    return;
+}
+
+// Для установщика: секрет S3 в том виде, в каком Pilot-Server хранит его в settings.xml (EncryptedSecretAccessKey).
+// Значение - из переменной окружения, чтобы не светить его в аргументах процесса.
+if (args is ["--encrypt-aes"])
+{
+    var secret = Environment.GetEnvironmentVariable("PILOT_SECRET");
+    if (string.IsNullOrEmpty(secret))
+    {
+        Console.Error.WriteLine("Задайте секрет в переменной окружения PILOT_SECRET.");
+        Environment.Exit(2);
+    }
+    Console.Write(secret.EncryptAes());
     return;
 }
 

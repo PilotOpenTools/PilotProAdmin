@@ -112,8 +112,9 @@ public class ModuleModel : AppPageModel
     private ModuleNextStep BuildNextStep()
     {
         var git = Git!;
-        var noMr = Work.FirstOrDefault(w => w.Mr is null && w.Target != ModuleBranches.Main && w.Commits.Count > 0);
-        return ModuleNextSteps.For(new NextStepInput
+        var withoutMr = Work.Where(w => w.Mr is null && w.Target != ModuleBranches.Main && w.Commits.Count > 0).ToList();
+        var noMr = withoutMr.FirstOrDefault();
+        var next = ModuleNextSteps.For(new NextStepInput
         {
             Ready = git.Dev is not null && git.HasCi,
             NeedReview = AppSettings.RequireDevReview,
@@ -132,11 +133,80 @@ public class ModuleModel : AppPageModel
             LastProd = LastProdVersion,
             Hotfix = Work.FirstOrDefault(w => w.Target == ModuleBranches.Main && w.Commits.Count > 0)?.Branch.Name,
             BranchWithoutMr = noMr?.Branch.Name,
+            BranchesWithoutMr = withoutMr.Select(w => (w.Branch.Name, NewMrUrl(git.Repo.WebUrl, w.Branch.Name, w.Target))).ToList(),
             EmptyBranch = Work.FirstOrDefault(w => w.Mr is null && w.Commits.Count == 0)?.Branch.Name,
-            NewMrUrl = noMr is null ? null
-                : $"{git.Repo.WebUrl}/-/merge_requests/new?merge_request%5Bsource_branch%5D={Uri.EscapeDataString(noMr.Branch.Name)}&merge_request%5Btarget_branch%5D=dev&merge_request%5Bsquash%5D=1",
+            NewMrUrl = noMr is null ? null : NewMrUrl(git.Repo.WebUrl, noMr.Branch.Name, noMr.Target),
+            ReleaseCandidates = git.ActiveRelease is { } active && !ModulesReadOnly
+                ? OutsideRelease.Select(c => new NextStepItem(c.Title ?? c.ShortId, "Добавить в релиз", "#add-to-release")
+                {
+                    IsBranch = false,
+                    Note = $"{c.ShortId}{(SourceOf(c) is { } src ? $" · из {src}" : "")} · в dev, не в {active.Name}",
+                    PostAction = Url.Page("/Modules/Module", "AddToRelease", new { name = Name, kind = ModuleKind.Query() }),
+                    PostValue = c.Id,
+                    Confirm = $"Добавить «{c.Title}» в {active.Name} и выложить релиз на стейдж?",
+                }).ToList()
+                : Array.Empty<NextStepItem>(),
         });
+        // Задачи вне релиза: кроме «Добавить в релиз» - собрать новый релиз (другой набор задач, версия выше).
+        if (git.ActiveRelease is { } replaceable && OutsideRelease.Count > 0 && !ModulesReadOnly && next.AltLabel is null &&
+            Envs.Any(e => e.Key == ModuleEnv.Stage))
+            next = next with
+            {
+                AltLabel = $"Новый релиз вместо {git.ActiveReleaseVersion?.ToString() ?? replaceable.Name}",
+                AltHref = "#replace-release",
+            };
+        if (next.Items.Count == 0 || ModulesReadOnly)
+            return next;
+        var delete = Url.Page("/Modules/Module", "DeleteBranch", new { name = Name, kind = ModuleKind.Query() });
+        return next with { Items = next.Items.Select(i => i.IsBranch ? i with { DeleteAction = delete } : i).ToList() };
     }
+
+    /// <summary>Задачи dev, которых нет в активном релизе (сверка по заголовку - релиз собирается cherry-pick'ом).</summary>
+    public List<GitLabCommit> OutsideRelease => Git?.ActiveRelease is null ? new() : Unreleased.Where(c => !InRelease.Contains(c.Title ?? "")).ToList();
+
+    /// <summary>Из какой ветки задачи пришёл коммит dev / релиза (по влитому MR): id коммита - имя ветки.</summary>
+    private readonly Dictionary<string, string> _sources = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ветка задачи, из которой пришёл коммит; для перенесённого в релиз cherry-pick'ом - ветка исходного коммита.</summary>
+    public string? SourceOf(GitLabCommit c)
+    {
+        if (_sources.TryGetValue(c.Id, out var b))
+            return b;
+        foreach (var picked in TypesRepository.PickedFrom(c.Message))
+            if (_sources.FirstOrDefault(s => s.Key.StartsWith(picked, StringComparison.OrdinalIgnoreCase)).Value is { } p)
+                return p;
+        return null;
+    }
+
+    /// <summary>
+    /// Источники задач dev и релиза: squash/merge-коммиты влитых MR, а для остальных (merge без squash, MR в релиз) -
+    /// MR, в котором есть сам коммит. Ветки после влития могут быть удалены - имя берётся из MR.
+    /// </summary>
+    private async Task LoadSourcesAsync(GitLabClient git, string project, CancellationToken ct)
+    {
+        var tasks = Unreleased.Concat(ReleaseTasks).ToList();
+        if (tasks.Count == 0)
+            return;
+        var targets = new[] { ModuleBranches.Dev, Git?.ActiveRelease?.Name }.OfType<string>().ToList();
+        foreach (var target in targets)
+            foreach (var mr in await git.ListMergedMergeRequestsToAsync(project, target, ct))
+                if (mr.SourceBranch is { } source)
+                    foreach (var sha in new[] { mr.SquashCommitSha, mr.MergeCommitSha }.OfType<string>())
+                        _sources.TryAdd(sha, source);
+        foreach (var c in tasks.Where(c => SourceOf(c) is null && !TypesRepository.PickedFrom(c.Message).Any()).Take(30))
+        {
+            var mr = (await git.ListCommitMergeRequestsAsync(project, c.Id, ct))
+                .FirstOrDefault(m => m.State == "merged" && m.TargetBranch is { } t && targets.Contains(t) &&
+                                     m.SourceBranch is { } s && !targets.Contains(s));
+            if (mr?.SourceBranch is { } source)
+                _sources[c.Id] = source;
+        }
+    }
+
+    /// <summary>Страница GitLab «новый MR» из ветки задачи в её целевую ветку (dev или release/X.Y.Z), squash включён.</summary>
+    public static string NewMrUrl(string repoUrl, string branch, string target) =>
+        $"{repoUrl}/-/merge_requests/new?merge_request%5Bsource_branch%5D={Uri.EscapeDataString(branch)}" +
+        $"&merge_request%5Btarget_branch%5D={Uri.EscapeDataString(target)}&merge_request%5Bsquash%5D=1";
 
     public string? TaskOf(string? text) => ModuleBranches.Task(text, AppSettings.TaskPattern);
     public string? TaskUrl(string? task) => ModuleBranches.TaskUrl(task, AppSettings.TaskUrlTemplate);
@@ -194,7 +264,7 @@ public class ModuleModel : AppPageModel
         return null;
     });
 
-    /// <summary>Защита dev: push - никто, merge - Developer+ (Code Review проверяет админка: «Влить / тест» только с апрувом).</summary>
+    /// <summary>Защита dev: push - никто, merge - Developer+ (Code Review проверяет админка: «Влить в тест» только с апрувом).</summary>
     private const int DevPushLevel = 0, DevMergeLevel = 30;
 
     /// <summary>Защитить dev: изменения только через Merge Request.</summary>
@@ -231,6 +301,29 @@ public class ModuleModel : AppPageModel
         }
         TempData["Flash"] = (deleted.Count == 0 ? "Удалять нечего." : $"Удалены ветки: {string.Join(", ", deleted)}.") +
                             (kept.Count == 0 ? "" : $" Оставлены (есть коммиты не из main или открытый MR): {string.Join(", ", kept)}.");
+        return null;
+    });
+
+    /// <summary>
+    /// Удалить ветку задачи (feature/bugfix/hotfix), которую не принимают: её открытые MR закрываются, ветка удаляется.
+    /// Только ветки из «В работе» - dev, main и release/* так не удалить. Коммиты остаются в GitLab, пока их не уберёт очистка.
+    /// </summary>
+    public Task<IActionResult> OnPostDeleteBranchAsync(CancellationToken ct) => ChangeAsync(ct, async git =>
+    {
+        var work = Work.FirstOrDefault(w => w.Branch.Name == Ref);
+        if (work is null)
+            return Fail($"Ветка {Ref} - не ветка задачи в работе: удалить можно только feature/, bugfix/ и hotfix/ ветки.");
+        var project = Git!.Repo.ProjectPath;
+        var closed = new List<string>();
+        foreach (var mr in OpenMergeRequests.Where(m => m.SourceBranch == work.Branch.Name).ToList())
+        {
+            await git.CloseMergeRequestAsync(project, mr.Iid, ct);
+            closed.Add($"!{mr.Iid}");
+        }
+        await git.DeleteBranchAsync(project, work.Branch.Name, ct);
+        TempData["Flash"] = $"Ветка {work.Branch.Name} удалена" +
+                            (work.Commits.Count > 0 ? $" ({ModuleNextSteps.Plural(work.Commits.Count, "коммит", "коммита", "коммитов")} не вошли в {work.Target})" : "") +
+                            (closed.Count > 0 ? $", закрыт MR {string.Join(", ", closed)}" : "") + ".";
         return null;
     });
 
@@ -271,6 +364,9 @@ public class ModuleModel : AppPageModel
         // После коммита CI: защищённая dev принимает изменения только через Merge Request.
         if (await git.ProtectBranchAsync(project, ModuleBranches.Dev, DevPushLevel, DevMergeLevel, ct))
             done.Add("ветка dev защищена (только через Merge Request)");
+        if (ModulesGroupPath is { } group)
+            await ModuleCreation.EnsureDeployKeysAsync(git, group, CiDeployOptions, (level, text, _) =>
+                done.Add(level == "ok" ? text.TrimEnd('.') : "ВНИМАНИЕ: " + text.TrimEnd('.')), ct);
         TempData["Flash"] = done.Count == 0 ? "Репозиторий уже подключён." : "Готово: " + string.Join("; ", done) + ".";
         return null;
     });
@@ -295,21 +391,30 @@ public class ModuleModel : AppPageModel
     });
 
     /// <summary>feature/bugfix / dev (squash) / тестовый сервер.</summary>
-    public Task<IActionResult> OnPostMergeToDevAsync(CancellationToken ct) => StartAsync(ct, ctx =>
+    public async Task<IActionResult> OnPostMergeToDevAsync(CancellationToken ct)
     {
-        var mr = OpenMergeRequests.FirstOrDefault(m => m.Iid == Iid && m.TargetBranch == ModuleBranches.Dev)
-                 ?? throw new InvalidOperationException($"Открытый Merge Request !{Iid} в dev не найден.");
-        string? skip = null;
-        if (AppSettings.RequireDevReview && DevReviewers.GetValueOrDefault(mr.Iid) is not { Count: > 0 })
+        // Исключение из Code Review - только администратору GitLab, и роль подтверждается в GitLab заново:
+        // после её отзыва обычного доступа Developer для слияния хватит, а ревью обходить уже нельзя.
+        var adminConfirmed = CanSkipReview && !string.IsNullOrWhiteSpace(SkipReviewReason) &&
+                             await HttpContext.RequestServices.GetRequiredService<Sessions.GitLabAdminCheck>().ConfirmGitLabAdminAsync(CurrentSession, ct);
+        return await StartAsync(ct, ctx =>
         {
-            if (!CanSkipReview)
-                throw new InvalidOperationException($"Merge Request !{mr.Iid} не одобрен: нужен Approve в GitLab от ревьюера (не автора).");
-            skip = string.IsNullOrWhiteSpace(SkipReviewReason)
-                ? throw new InvalidOperationException("Чтобы влить без Code Review, укажите причину.")
-                : SkipReviewReason.Trim();
-        }
-        return _runner.StartMergeToDev(ctx, mr.Iid, mr.SourceBranch ?? "", CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username, skip);
-    });
+            var mr = OpenMergeRequests.FirstOrDefault(m => m.Iid == Iid && m.TargetBranch == ModuleBranches.Dev)
+                     ?? throw new InvalidOperationException($"Открытый Merge Request !{Iid} в dev не найден.");
+            string? skip = null;
+            if (AppSettings.RequireDevReview && DevReviewers.GetValueOrDefault(mr.Iid) is not { Count: > 0 })
+            {
+                if (!CanSkipReview)
+                    throw new InvalidOperationException($"Merge Request !{mr.Iid} не одобрен: нужен Approve в GitLab от ревьюера (не автора).");
+                if (string.IsNullOrWhiteSpace(SkipReviewReason))
+                    throw new InvalidOperationException("Чтобы влить без Code Review, укажите причину.");
+                if (!adminConfirmed)
+                    throw new InvalidOperationException($"Права администратора GitLab не подтверждены - Merge Request !{mr.Iid} вливается только после Approve ревьюера.");
+                skip = SkipReviewReason.Trim();
+            }
+            return _runner.StartMergeToDev(ctx, mr.Iid, mr.SourceBranch ?? "", CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username, skip);
+        });
+    }
 
     /// <summary>Выложить голову ветки на контур: dev / тест, release/hotfix / стейдж.</summary>
     public Task<IActionResult> OnPostDeployAsync(CancellationToken ct) => StartAsync(ct, ctx =>
@@ -341,6 +446,31 @@ public class ModuleModel : AppPageModel
             throw new InvalidOperationException("Не выбрано ни одной задачи.");
         return _runner.StartPrepareRelease(ctx, version!, selected, Changelog.SplitNotes(Notes), CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username);
     });
+
+    /// <summary>
+    /// Новый релиз вместо активного: любой набор задач dev (уже в релизе, новые, без части), версия выше текущего релиза.
+    /// Собирается выборочно от main; старый релиз удаляется, только когда новая ветка собрана.
+    /// </summary>
+    public Task<IActionResult> OnPostReplaceReleaseAsync(CancellationToken ct) => StartAsync(ct, ctx =>
+    {
+        var old = Git!.ActiveRelease?.Name ?? throw new InvalidOperationException("Активного релиза нет - соберите релиз обычным способом.");
+        if (!ModuleVersion.TryParse(Version, out var version))
+            throw new InvalidOperationException("Версия релиза - X.Y.Z, например 1.3.0.");
+        if (Git.ActiveReleaseVersion is { } current && version! <= current)
+            throw new InvalidOperationException($"Версия {version} должна быть выше заменяемого релиза {current} (например {current.NextMinor()} или {current.NextPatch()}).");
+        if (LastProdVersion is { } last && version! <= last)
+            throw new InvalidOperationException($"Версия {version} не больше последней на проде ({last}).");
+        var all = Unreleased.Select(c => c.Id).ToHashSet();
+        IReadOnlyCollection<string> selected = Selected.Where(all.Contains).Distinct().ToList();
+        if (selected.Count == 0)
+            throw new InvalidOperationException("Не выбрано ни одной задачи.");
+        return _runner.StartReplaceRelease(ctx, old, version!, selected, Changelog.SplitNotes(Notes), CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username);
+    });
+
+    /// <summary>Задачи только в релизе (багфиксы MR в release/X.Y.Z): их нет в dev, новый релиз их не возьмёт.</summary>
+    public List<GitLabCommit> ReleaseOnlyTasks => ReleaseTasks
+        .Where(r => !Unreleased.Any(c => c.Id == r.Id || c.Title == r.Title || TypesRepository.PickedFrom(r.Message).Any(p => c.Id.StartsWith(p, StringComparison.Ordinal))))
+        .ToList();
 
     /// <summary>Выбранные задачи dev, которых нет в активном релизе, - cherry-pick в релиз и на стейдж.</summary>
     public Task<IActionResult> OnPostAddToReleaseAsync(CancellationToken ct) => StartAsync(ct, ctx =>
@@ -540,9 +670,11 @@ public class ModuleModel : AppPageModel
                     DevReviewers[mr.Iid] = (await git.GetApprovalsAsync(repo.ProjectPath, mr.Iid, ct)).Reviewers(mr);
 
             if (Git.Main is not null && Git.Dev is not null)
-                Unreleased = (await git.CompareCommitsAsync(repo.ProjectPath, ModuleBranches.Main, ModuleBranches.Dev, ct))
+                // Задачи, выпущенные копией (выборочный релиз - cherry-pick), уже в main: не ждут релиза.
+                Unreleased = await git.WithoutPickedIntoAsync(repo.ProjectPath, ModuleBranches.Main,
+                    (await git.CompareCommitsAsync(repo.ProjectPath, ModuleBranches.Main, ModuleBranches.Dev, ct))
                     .Where(c => c.ParentIds is not { Count: > 1 } && !IsService(c.Title))
-                    .ToList();
+                    .ToList(), ct);
             if (Git.ActiveRelease is not null)
             {
                 var inRelease = await git.CompareCommitsAsync(repo.ProjectPath, ModuleBranches.Main, Git.ActiveRelease.Name, ct);
@@ -551,12 +683,14 @@ public class ModuleModel : AppPageModel
                 ReleaseTasks = inRelease.Where(c => c.ParentIds is not { Count: > 1 } && !IsService(c.Title)).ToList();
             }
 
+            await LoadSourcesAsync(git, repo.ProjectPath, ct);
+
             // Схема работ: ветки задач (от dev или релиза) и hotfix (от main) с коммитами сверх базы.
             foreach (var b in Git.TaskBranches.Concat(Git.HotfixBranches))
             {
                 var mr = OpenMergeRequests.FirstOrDefault(m => m.SourceBranch == b.Name);
                 var target = mr?.TargetBranch ?? (ModuleBranches.IsHotfix(b.Name) ? ModuleBranches.Main : ModuleBranches.Dev);
-                var ahead = (await git.CompareCommitsAsync(repo.ProjectPath, target, b.Name, ct)).Where(c => c.ParentIds is not { Count: > 1 }).ToList();
+                var ahead = await git.UnmergedCommitsAsync(repo.ProjectPath, target, b.Name, ct);
                 // Без своих коммитов: влитая (был merged MR) - кандидат на удаление; иначе только что создана - в работе.
                 if (ahead.Count > 0 || mr is not null || !await git.IsBranchMergedAsync(repo.ProjectPath, b, ct))
                     Work.Add(new WorkBranch(b, target, ahead, mr));

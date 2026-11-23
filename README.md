@@ -58,24 +58,28 @@ GitLab и Runner в Docker. Папка `ci-checks/` содержит общие 
 
 | Решение | Что делает |
 |---|---|
-| `Pilot.ClientSdk/Pilot.ClientSdk.sln` | Общий клиентский модуль и NuGet-пакет: статистика модулей в Grafana и общие функции |
 | `Test-module/TestModule.sln` | Тестовый модуль для проверки CI/CD и ошибок в Grafana |
 
 Папка `ci-template/` содержит шаблон CI для репозитория клиентского модуля.
-
-### [`Reports/`](Reports/README.md) - модуль отчётов
-
-Клиентский модуль: проект `Reports.csproj` и решение `Reports.sln` (проект плюс тесты). Даёт скриптам отчётов общие функции и доступ к Pilot SDK, считает статистику построений и отправляет отчёты в GitLab при сохранении.
 
 ### [`server-extensions/`](server-extensions/README.md) - модули Pilot-Server
 
 | Решение | Что делает |
 |---|---|
 | `ServerHost/ServerHost.sln` | Загрузчик серверных модулей и его тесты: ставится в Pilot один раз, остальные модули обновляет без перезапуска сервера |
-| `Debug/Debug.sln` | Утилита для запуска серверного модуля под отладчиком на машине разработчика, на реальных данных |
 | `TestServerAction/TestServerAction.sln` | Пример обычного серверного модуля, образец для новых |
 
 Папка `ci-template/` содержит шаблон CI для репозитория серверного модуля.
+
+### Модули в отдельных репозиториях
+
+| Репозиторий | Что это |
+|---|---|
+| [PilotClientSdk](https://github.com/PilotOpenTools/PilotClientSdk) | Общий клиентский модуль `113Pilot.ClientSdk.ext2` и NuGet-пакет `Pilot.ClientSdk`: статистика модулей в Grafana, окно загрузки модулей и общие функции |
+| [PilotReports](https://github.com/PilotOpenTools/PilotReports) | Клиентский модуль отчётов `112Reports.ext2`: общие функции и Pilot SDK для скриптов отчётов, статистика построений, отправка отчётов в GitLab при сохранении |
+| [PilotServerDebug](https://github.com/PilotOpenTools/PilotServerDebug) | Утилита `debug` для отладки серверного модуля на машине разработчика на реальных данных, без остановки сервера |
+
+Сборка комплекта (`stack/build/build.ps1`) берёт PilotClientSdk и PilotReports из клонов рядом с этим репозиторием или клонирует их с GitHub.
 
 ## Запуск и остановка стека
 

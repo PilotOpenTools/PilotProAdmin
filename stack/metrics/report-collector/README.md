@@ -3,7 +3,7 @@
 > С 2026-09-27 сервис принимает и события клиентских модулей (Pilot.ClientSdk, до 2.0.0 - Modules): `POST /api/module-events` / `metrics.module_events`,
 > дашборды **«Pilot - клиентские модули»** и **«Pilot - серверные модули»**. См. раздел [«События модулей»](#события-модулей-pilotclientsdk).
 
-Небольшой сервис (ASP.NET 10, Docker). Принимает от клиентского модуля [Reports](../../../Reports/README.md)
+Небольшой сервис (ASP.NET 10, Docker). Принимает от клиентского модуля [Reports](https://github.com/PilotOpenTools/PilotReports)
 события «отчёт построен / ошибка / остановлен проверкой / отменён» и пишет их в PostgreSQL.
 Grafana строит по ним дашборд **«Pilot - отчёты»**.
 
@@ -48,7 +48,7 @@ curl http://localhost:5310/health                       # {"status":"ok"}
 curl "http://localhost:5310/api/report-events/summary?hours=24"   # при заданном ключе: -H "X-Api-Key: <ключ>"
 ```
 
-После запуска задайте адрес `http://<docker-хост>:5310/api/module-events` в общих настройках Pilot, раздел «Модули общие настройки», на каждом контуре. По нему отправляют статистику Pilot.ClientSdk и версия Reports, читающая общие настройки (в [CHANGELOG Reports](../../../Reports/CHANGELOG.md) она значится как «Не выпущено»). Остальные версии Reports читают адрес `…/api/report-events` из своего `Reports.config.json`.
+После запуска задайте адрес `http://<docker-хост>:5310/api/module-events` в общих настройках Pilot, раздел «PilotOpenTools отправка статистики», на каждом контуре. По нему отправляют статистику Pilot.ClientSdk и версия Reports, читающая общие настройки (в [CHANGELOG Reports](https://github.com/PilotOpenTools/PilotReports/blob/main/CHANGELOG.md) она значится как «Не выпущено»). Остальные версии Reports читают адрес `…/api/report-events` из своего `Reports.config.json`.
 
 ### Переменные `.env`
 
@@ -182,7 +182,7 @@ python grafana/gen_dashboard.py grafana/dashboard-pilot-reports.json
 
 ## События модулей (Pilot.ClientSdk)
 
-Клиентский модуль [Pilot.ClientSdk](../../../client-modules/Pilot.ClientSdk/README.md) (`113Pilot.ClientSdk.ext2`) шлёт пачки событий модулей:
+Клиентский модуль [Pilot.ClientSdk](https://github.com/PilotOpenTools/PilotClientSdk) (`113Pilot.ClientSdk.ext2`) шлёт пачки событий модулей:
 действия пользователей (`ModuleStats.Run/Use`) и «модуль загружен» с версией (через минуту после старта клиента).
 
 ### `POST /api/module-events`

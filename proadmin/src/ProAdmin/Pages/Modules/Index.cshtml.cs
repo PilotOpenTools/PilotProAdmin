@@ -163,6 +163,8 @@ public class IndexModel : AppPageModel
     {
         if (Prepare() is { } redirect)
             return redirect;
+        if (UsesServiceAccounts)
+            return NotFound(); // при входе через GitLab учётки Pilot - только служебные из «Настроек»
         if (BlockedCredentialAttempt() is { } blocked)
             return blocked;
         var env = CredEnv is null ? null : ModuleEnv.Find(AppSettings, CredEnv);
@@ -223,7 +225,7 @@ public class IndexModel : AppPageModel
         }
         var names = rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         spec.Entries = spec.Entries.Where(e => e.Rule != AssemblyRule.Allowed && !names.Contains(e.Name)).Concat(rows).ToList();
-        _libraries.Save(ModuleKind, spec, CurrentSession.GitLabUser?.Username is { Length: > 0 } u ? u : CurrentSession.PilotLogin);
+        _libraries.Save(ModuleKind, spec, CurrentSession.Actor);
         TempData["Flash"] = $"Список разрешённых библиотек сохранён ({rows.Count}) - проверяется в CI и при следующей выкладке.";
         return RedirectToPage(null, null, new { kind = ModuleKind.Query() }, "libraries");
     }

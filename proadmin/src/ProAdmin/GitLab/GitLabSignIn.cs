@@ -25,10 +25,13 @@ public sealed class GitLabSignIn(
 
     public bool IsConnected(UserSession? session) => session?.IsGitLabConnected(settings.Current) == true;
 
-    public async Task<string> StartOAuthAsync(HttpContext context, string baseUrl, string returnUrl, CancellationToken ct)
+    /// <param name="setup">Вход из мастера первой настройки: сервер GitLab задан в мастере (после проверки ключа установки),
+    /// в настройках его ещё может не быть.</param>
+    public async Task<string> StartOAuthAsync(HttpContext context, string baseUrl, string returnUrl, CancellationToken ct,
+        bool setup = false)
     {
         var pending = new PendingSignIn(Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
-            auth.ResolveRedirectUri(context.Request), baseUrl, returnUrl);
+            auth.ResolveRedirectUri(context.Request), baseUrl, returnUrl, setup);
         var publicBase = await auth.ResolvePublicBaseUrlAsync(baseUrl, ct);
         var cookie = CookieOptions(context.Request);
         cookie.MaxAge = StateLifetime;
@@ -51,7 +54,7 @@ public sealed class GitLabSignIn(
             return null;
         }
 
-        if (pending is null || pending.State != state || !MatchesServer(pending.BaseUrl))
+        if (pending is null || pending.State != state || !(pending.Setup || MatchesServer(pending.BaseUrl)))
             return null;
         context.Response.Cookies.Delete(StateCookie, CookieOptions(context.Request));
         return pending;
@@ -121,5 +124,5 @@ public sealed class GitLabSignIn(
         return session;
     }
 
-    public sealed record PendingSignIn(string State, string RedirectUri, string BaseUrl, string ReturnUrl);
+    public sealed record PendingSignIn(string State, string RedirectUri, string BaseUrl, string ReturnUrl, bool Setup = false);
 }

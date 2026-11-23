@@ -50,13 +50,13 @@
                 <span class="badge badge-differs">≠ сервер @src.Title</span>
             }
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Ветка <code>@dst.Branch</code></div>
             <div class="h3 mono">@(Model.TargetJson is null ? "нет" : V(Model.TargetJson.Text))</div>
             <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "будет обновлена")</span>
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Сервер @dst.Title</div>
             <div class="h3 mono">@(Model.TargetServer is null ? "нет" : V(Model.TargetServer.Triggers))</div>

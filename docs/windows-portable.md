@@ -11,6 +11,6 @@ Set-Location PilotProAdmin
 .\PilotProAdmin.exe --urls http://127.0.0.1:5300
 ```
 
-Откройте <http://127.0.0.1:5300>, войдите через GitLab и выберите «Подключить Pilot». Для скрытого ввода через `-MaskInput` нужен PowerShell 7.
+Откройте <http://127.0.0.1:5300>, войдите через GitLab и задайте служебные учётные записи Pilot в «Настройках». Для скрытого ввода через `-MaskInput` нужен PowerShell 7.
 
 Если нужен сервис миграции, запустите `PilotMigration.exe --urls http://127.0.0.1:5320` из папки `PilotMigration` в другом окне PowerShell. Параметры адреса и общего ключа описаны в [конфигурации](configuration.md#миграция).

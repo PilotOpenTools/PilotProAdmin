@@ -49,13 +49,13 @@
                 <span class="badge badge-differs">≠ сервер @dev.Title</span>
             }
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Ветка <code>main</code></div>
             <div class="h3">@(Model.BranchesEqual ? "= " + Model.Source : "будет обновлена")</div>
             <span class="badge @(Model.BranchesEqual ? "badge-synced" : "badge-onlypilot")">@(Model.BranchesEqual ? "уже эта версия" : "Merge Request " + Model.Source + " / main")</span>
         </div>
-        <div class="promote-arrow">/</div>
+        <div class="promote-arrow" aria-hidden="true">&rarr;</div>
         <div class="card promote-step">
             <div class="muted small">Сервер @main.Title</div>
             <div class="h3">@(Model.ProdReport is null ? "нет" : Model.ProdReport.Folder is { Length: > 0 } f ? f : "корень отчётов")</div>

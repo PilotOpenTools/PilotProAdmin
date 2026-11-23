@@ -31,9 +31,9 @@ public sealed class JobStore
 
     public PublishJob? Get(Guid id) => _jobs.TryGetValue(id, out var job) ? job : null;
 
-    /// <summary>Операцию видит администратор прода и тот, кто её запустил (по входу в Pilot или по пользователю GitLab).</summary>
-    public static bool CanSee(PublishJob job, Sessions.UserSession session, bool isProdAdmin) =>
-        isProdAdmin ||
+    /// <summary>Операцию видит администратор админки и тот, кто её запустил (по входу в Pilot или по пользователю GitLab).</summary>
+    public static bool CanSee(PublishJob job, Sessions.UserSession session, bool isAdmin) =>
+        isAdmin ||
         (session.LoginCredential is { } credential &&
          string.Equals(job.PilotUser, credential.Login, StringComparison.OrdinalIgnoreCase)) ||
         (job.GitLabUser is { Length: > 0 } gl && string.Equals(gl, session.GitLabUser?.Username, StringComparison.OrdinalIgnoreCase));
@@ -41,10 +41,11 @@ public sealed class JobStore
     public IReadOnlyList<PublishJob> Recent(int count) =>
         _jobs.Values.Select(j => j.Snapshot()).OrderByDescending(j => j.CreatedAt).Take(count).ToList();
 
-    public PublishJob? FindActive(string env, string name) =>
+    public PublishJob? FindActive(string env, string name, string? moduleProjectPath = null) =>
         _jobs.Values.FirstOrDefault(j => !j.IsFinished &&
                                          string.Equals(j.Env, env, StringComparison.OrdinalIgnoreCase) &&
-                                         j.AutomationName == name);
+                                         (j.AutomationName == name || (moduleProjectPath is not null &&
+                                             string.Equals(j.ModuleProjectPath, moduleProjectPath, StringComparison.OrdinalIgnoreCase))));
 
     public void Persist()
     {

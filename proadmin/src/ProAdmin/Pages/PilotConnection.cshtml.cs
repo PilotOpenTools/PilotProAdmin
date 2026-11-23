@@ -178,10 +178,15 @@ public class PilotConnectionModel : PageModel
         return Url.IsLocalUrl(ReturnUrl) ? LocalRedirect(ReturnUrl!) : RedirectToPage("/Index");
     }
 
+    /// <summary>
+    /// Вход в Pilot есть только в режиме типов из GitHub. С GitLab в админку входят через GitLab, а учётки Pilot -
+    /// служебные учётные записи контуров в «Настройках»: туда и отправляем.
+    /// </summary>
     private IActionResult? RequireConnection() =>
-        GitHubTypesMode || Session?.IsGitLabConnected(_settings.Current) == true
-            ? null
-            : RedirectToPage("/Login", new { returnUrl = "/PilotConnection" });
+        GitHubTypesMode ? null :
+        Session?.IsGitLabConnected(_settings.Current) == true
+            ? RedirectToPage("/Settings", null, null, "deploy-accounts")
+            : RedirectToPage("/Login");
 
     private void Load()
     {

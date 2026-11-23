@@ -114,7 +114,7 @@ internal sealed class ReportPromoteWorkflow
         if (drift is ReportDrift.MainAhead or ReportDrift.Diverged)
             throw new WorkflowException(
                 $"В ветке {Main} есть изменения отчёта, которых нет в {Dev} (хотфикс на проде). " +
-                $"Сначала перенесите их с прода в тест (кнопка «/ В тест» на вкладке «Отчёты»). {NotSaved}");
+                $"Сначала перенесите их с прода в тест (кнопка «В тест» на вкладке «Отчёты»). {NotSaved}");
 
         // 4. Раздел CHANGELOG.md коммитом в ветку-источник - MR перенесёт его в main вместе с отчётом
         await ReleaseChangelogAsync(ct);

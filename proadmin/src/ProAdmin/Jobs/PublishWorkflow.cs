@@ -247,7 +247,7 @@ internal sealed class PublishWorkflow
         }
         catch (Exception ex) when (ex is PilotGatewayException or WorkflowException or GitLabApiException)
         {
-            Add("warn", $"Стейдж не обновлён: {ex.Message}. Тест и dev обновлены; повторите «Влить / тест» или запишите на стейдж со страницы автоматизации.");
+            Add("warn", $"Стейдж не обновлён: {ex.Message}. Тест и dev обновлены; повторите «Влить в тест» или запишите на стейдж со страницы автоматизации.");
         }
     }
 

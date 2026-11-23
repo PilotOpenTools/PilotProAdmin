@@ -77,7 +77,7 @@ public static class MiniFlows
         if (row.Repo is null)
             return new MiniFlow(steps.Select(s => new MiniStage(s.Item1, MiniState.Idle)).ToList(), NextStepKind.Warn, "Нет репозитория - не проходит тест и прод через GitLab");
         var (kind, note) =
-            row.PendingBackport && row.RollbackTo is { } rt ? (NextStepKind.Action, $"Прод откачен на {rt} - dev ещё со старой версией: принять откат («/ В тест») или исправить в dev")
+            row.PendingBackport && row.RollbackTo is { } rt ? (NextStepKind.Action, $"Прод откачен на {rt} - dev ещё со старой версией: принять откат («В тест») или исправить в dev")
             : row.PendingBackport ? (NextStepKind.Action, "Правка на проде - вернуть в dev и на тест")
             : row.PendingPromotion ? (NextStepKind.Action, "Изменения на тесте - проверить и перенести на прод")
             : steps[2].Item2 ? (NextStepKind.Warn, "Серверы расходятся с ветками")

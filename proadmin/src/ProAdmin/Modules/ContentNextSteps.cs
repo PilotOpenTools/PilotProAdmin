@@ -34,7 +34,7 @@ public sealed record ContentFlowInput
     /// <summary>hotfix/… с коммитами сверх main и ссылка «Hotfix в прод».</summary>
     public string? Hotfix { get; init; }
     public string? HotfixUrl { get; init; }
-    /// <summary>Ветка задачи с коммитами, ждёт «Влить / тест».</summary>
+    /// <summary>Ветка задачи с коммитами, ждёт «Влить в тест».</summary>
     public string? ReadyTask { get; init; }
     /// <summary>Как привести тест к dev, если они расходятся (у отчёта - отправить из Pilot, у автоматизации - сохранить в редакторе).</summary>
     public string TestDiffersHint { get; init; } = "";
@@ -85,19 +85,19 @@ public static class ContentNextSteps
 
         if (m.Hotfix is { } hotfix)
             return new(FlowStage.Prod, NextStepKind.Action, $"Hotfix {hotfix} ждёт выпуска в прод",
-                "«Hotfix в прод» перенесёт ветку в main и на продовый сервер (MR, pipeline), затем верните исправление в dev.", "Hotfix в прод /", m.HotfixUrl);
+                "«Hotfix в прод» перенесёт ветку в main и на продовый сервер (MR, pipeline), затем верните исправление в dev.", "Hotfix в прод", m.HotfixUrl);
 
         if (m.MainAhead && m.RollbackTo is { } rolled)
             return new(FlowStage.Prod, NextStepKind.Action, $"Прод откачен на {rolled} - в dev всё ещё версия, от которой откатились",
-                $"Выберите: «/ В тест» принимает откат (dev и тест станут как прод) либо исправьте {m.Noun} в dev и перенесите на прод новой версией. " +
+                $"Выберите: «В тест» принимает откат (dev и тест станут как прод) либо исправьте {m.Noun} в dev и перенесите на прод новой версией. " +
                 "Пока dev не изменён, «На прод» вернёт на прод ту самую версию, от которой откатывались.",
-                "/ В тест (принять откат)", m.BackportUrl)
+                "В тест (принять откат)", m.BackportUrl)
             { AltLabel = m.UndoRollbackUrl is null ? null : "Отменить откат", AltHref = m.UndoRollbackUrl };
 
         if (m.MainAhead)
             return new(FlowStage.Test, NextStepKind.Action, "Прод меняли мимо теста - верните изменения в dev",
                 "В main есть правка, которой нет в dev: перенесите её в dev и на тест, иначе следующий перенос на прод её затрёт.",
-                "/ В тест", m.BackportUrl);
+                "В тест", m.BackportUrl);
 
         if (!Ok(m.Test))
             return new(FlowStage.Test, NextStepKind.Warn, m.Test == SyncState.OnlyGit ? "На тестовом сервере его нет" : "Тестовый сервер расходится с dev",
@@ -110,22 +110,22 @@ public static class ContentNextSteps
                 return new(FlowStage.Stage, NextStepKind.Action, $"Выложите релиз {v} на стейдж",
                     "На сервере стейджа не то, что в ветке релиза.", "К релизу ", "#release");
             return new(FlowStage.Stage, NextStepKind.Action, $"Релиз {v} на стейдже - проверьте и выпустите в прод",
-                "«На прод» перенесёт ветку релиза в main через Merge Request и pipeline и запишет на продовый сервер.", "На прод /", m.PromoteUrl);
+                "«На прод» перенесёт ветку релиза в main через Merge Request и pipeline и запишет на продовый сервер.", "На прод", m.PromoteUrl);
         }
 
         if (m.ReadyTask is { } task)
             return new(FlowStage.Task, NextStepKind.Action, $"Ветка {task}: проверьте и влейте в dev",
-                "«Влить / тест» создаст MR в dev, дождётся pipeline, запишет автоматизацию на тестовый сервер и удалит ветку.", "К веткам задач ", "#tasks");
+                "«Влить в тест» создаст MR в dev, дождётся pipeline, запишет автоматизацию на тестовый сервер и удалит ветку.", "К веткам задач", "#tasks");
 
         if (m.DevAhead && m.HasStage)
             return m.ReleaseBlocked is { } blocked
                 ? new(FlowStage.Test, NextStepKind.Warn, "Изменения на тесте, но релиз собрать нельзя", blocked, "К релизу ", "#release")
                 : new(FlowStage.Test, NextStepKind.Action, "Изменения на тесте - проверьте и соберите релиз",
-                    "«Релиз / стейдж» создаст ветку release от dev и запишет её на сервер стейджа.", "Релиз / стейдж ", "#release");
+                    "«Релиз / стейдж» создаст ветку release от dev и запишет её на сервер стейджа.", "Релиз / стейдж", "#release");
 
         if (m.DevAhead)
             return new(FlowStage.Test, NextStepKind.Action, "Изменения на тесте - проверьте и перенесите на прод",
-                "Стейдж не задан: «На прод» перенесёт dev в main через Merge Request и pipeline и запишет на продовый сервер.", "На прод /", m.PromoteUrl);
+                "Стейдж не задан: «На прод» перенесёт dev в main через Merge Request и pipeline и запишет на продовый сервер.", "На прод", m.PromoteUrl);
 
         if (!Ok(m.Prod))
             return new(FlowStage.Prod, NextStepKind.Warn, m.Prod == SyncState.OnlyGit ? "На продовом сервере его нет" : "Продовый сервер расходится с main",

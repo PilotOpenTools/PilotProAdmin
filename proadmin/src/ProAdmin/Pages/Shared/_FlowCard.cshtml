@@ -38,6 +38,7 @@
                         @if (lane.Url is not null) { <a class="mono" href="@lane.Url" target="_blank" rel="noopener">@lane.Ref</a> }
                         else { <span class="mono">@lane.Ref</span> }
                         <span class="lane-title" title="@lane.Title">@lane.Title</span>
+                        @if (lane.Source is not null) { <span class="muted">· из <span class="mono">@lane.Source</span></span> }
                         @if (lane.Note is not null) { <span class="muted">· @lane.Note</span> }
                     </span>
                 </div>
@@ -78,6 +79,40 @@
         @if (next.ActionLabel is not null && next.Href is not null)
         {
             <a class="btn @(next.Kind == NextStepKind.Action ? "btn-primary" : "")" href="@next.Href" target="@(next.External ? "_blank" : null)" rel="@(next.External ? "noopener" : null)">@next.ActionLabel</a>
+        }
+        @if (next.Items.Count > 0)
+        {
+            <ul class="next-items">
+                @foreach (var item in next.Items)
+                {
+                    <li>
+                        <span>
+                            <span class="@(item.IsBranch ? "mono" : null)">@item.Title</span>
+                            @if (item.Note is not null) { <span class="muted small">@item.Note</span> }
+                        </span>
+                        <span class="next-item-actions">
+                            @if (item.DeleteAction is not null)
+                            {
+                                <form method="post" action="@item.DeleteAction" asp-antiforgery="true" data-confirm="Удалить ветку @item.Title? Её коммиты не попадут в dev, открытый MR из неё закроется.">
+                                    <input type="hidden" name="Ref" value="@item.Title" />
+                                    <button class="btn" type="submit">Удалить ветку</button>
+                                </form>
+                            }
+                            @if (item.PostAction is not null)
+                            {
+                                <form method="post" action="@item.PostAction" asp-antiforgery="true" data-confirm="@item.Confirm">
+                                    <input type="hidden" name="@item.PostField" value="@item.PostValue" />
+                                    <button class="btn btn-primary" type="submit">@item.ActionLabel</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <a class="btn btn-primary" href="@item.Href" target="@(item.External ? "_blank" : null)" rel="@(item.External ? "noopener" : null)">@item.ActionLabel</a>
+                            }
+                        </span>
+                    </li>
+                }
+            </ul>
         }
     </div>
 </section>
