@@ -354,3 +354,10 @@ public sealed class GitLabRelease
     public string Name { get; set; } = "";
     public string? Description { get; set; }
 }
+
+/// <summary>Пакет в реестре пакетов проекта GitLab.</summary>
+public sealed class GitLabPackage
+{
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+}

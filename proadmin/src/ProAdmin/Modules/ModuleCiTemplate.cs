@@ -328,7 +328,11 @@ public static class ModuleCiTemplate
                     [ -n "$INNER" ] || { echo "Источник $SRC недоступен по $URL, внутренний адрес GitLab не найден - задайте переменную CI/CD GITLAB_INTERNAL_URL (например, http://gitlab)."; exit 1; }
                     mkdir -p .nuget-gitlab
                     echo "Источник $SRC недоступен по $URL - пакеты проекта $PRJ берутся через $INNER."
-                    for P in $(curl -sf --max-time 60 "$INNER/api/v4/projects/$PRJ/packages?package_type=nuget&per_page=100" | grep -oP '"name":"\K[^"]+","version":"[^"]+' | sed 's/","version":"/|/'); do
+                    # Список пакетов закрытого проекта анонимно пуст - запрос с токеном задания, анонимно - только если токен не пустили.
+                    LIST=$(curl -sf --max-time 60 -H "JOB-TOKEN: $CI_JOB_TOKEN" "$INNER/api/v4/projects/$PRJ/packages?package_type=nuget&per_page=100" ||
+                      curl -sf --max-time 60 "$INNER/api/v4/projects/$PRJ/packages?package_type=nuget&per_page=100" || true)
+                    case "$LIST" in *'"name":"'*) ;; *) echo "Список пакетов NuGet проекта $PRJ ($INNER) не получен или пуст. Закрытый проект: разрешите $CI_PROJECT_PATH в его CI/CD / Job token permissions (allowlist)."; exit 1 ;; esac
+                    for P in $(printf '%s' "$LIST" | grep -oP '"name":"\K[^"]+","version":"[^"]+' | sed 's/","version":"/|/'); do
                       N=$(printf '%s' "${P%%|*}" | tr 'A-Z' 'a-z'); V="${P##*|}"
                       F="$INNER/api/v4/projects/$PRJ/packages/nuget/download/$N/$V/$N.$V.nupkg"
                       # Открытый проект отдаёт пакет без входа; закрытый - токену задания (если проект разрешён в Job token allowlist).

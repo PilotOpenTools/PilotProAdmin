@@ -187,4 +187,13 @@ public sealed partial class PagesTests
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.DoesNotContain("OpenTools", response.Headers.Location!.OriginalString);
     }
+
+    [Theory]
+    [InlineData(null, "2.1.3", false)]        // модуля нет - установить
+    [InlineData("2.1.2", "2.1.3", false)]     // старше - обновить
+    [InlineData("2.1.3.0", "2.1.3", true)]    // та же версия - пропустить
+    [InlineData("2.2.0", "2.1.3", true)]      // CI успел выложить новее - не перезаписывать
+    [InlineData("не версия", "2.1.3", false)] // не разобрать - как раньше, установить
+    public void Install_rechecks_version_before_writing(string? installed, string package, bool skip) =>
+        Assert.Equal(skip, OpenToolsService.SkipInstall(installed, package) is not null);
 }

@@ -574,6 +574,29 @@ try {
     Check (-not (Test-Path "$dbTmp\out\Databases")) 'из .zip берётся только выбранная база'
 } finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
 
+# --- база Pilot из файловой базы: не запустилась - установка падает, а не пишет .installed ---
+Write-Host "`nФайловая база Pilot: база не запустилась"
+$import = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Import-PilotDatabase' }, $true)[0]
+if (-not $import) { throw 'В install.ps1 нет функции Import-PilotDatabase' }
+$notLaunched = $import.Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match '\$state -ne ''Launched''' }, $true)
+Check ($notLaunched.Count -eq 2 -and @($notLaunched | Where-Object { $_.Clauses[0].Item2.Extent.Text -notmatch '\bthrow\b' -or $_.Clauses[0].Item2.Extent.Text -match '\breturn\b' }).Count -eq 0) 'не запустилась (загрузка и повторная установка) - throw, без return'
+Invoke-Expression $import.Extent.Text
+$dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-state-" + [guid]::NewGuid().ToString('N'))
+try {
+    $root = $dbTmp; $pilotDbName = 'pilot-ice_ru'
+    New-Item -ItemType Directory -Force "$root/test/pilot-server/settings" | Out-Null
+    [IO.File]::WriteAllText("$root/test/pilot-server/settings/settings.xml", "<Configuration><Databases><DatabaseParameters Name='$pilotDbName' /></Databases></Configuration>")
+    function docker { '2026-11-20T10:00:00Z' }
+    function Wait-PilotDatabase { $script:dbState }
+    $script:dbState = 'Broken'
+    $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'не запущена \(Broken\)' -and $msg -match 'before-import') 'повторная установка: прописанная, но сломанная база - ошибка с инструкцией'
+    $script:dbState = 'Launched'
+    $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '') 'повторная установка: запущенная база - пропуск без ошибки'
+    Remove-Item Function:\docker, Function:\Wait-PilotDatabase
+} finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
+
 Write-Host ''
 if ($failed) { Write-Host "НЕ ПРОЙДЕНО: $failed" -ForegroundColor Red; exit 1 }
 Write-Host 'ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' -ForegroundColor Green

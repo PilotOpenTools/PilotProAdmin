@@ -94,7 +94,7 @@ public class IndexModel : AppPageModel
     public async Task<IActionResult> OnPostUpdateHostAsync(CancellationToken ct)
     {
         Prepare();
-        if (Current is not null && !IsAdmin)
+        if (Current is not null && !await ConfirmAdminAsync(ct))
         {
             _logger.LogWarning("Отказ (403): обновление ServerHost - {Login} не администратор админки, адрес {Address}",
                 CurrentSession.Actor, HttpContext.Connection.RemoteIpAddress);

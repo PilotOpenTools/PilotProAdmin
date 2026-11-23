@@ -473,6 +473,14 @@ public sealed class GitLabClient
 
     private static string E(string value) => Uri.EscapeDataString(value);
 
+    /// <summary>Есть ли в реестре пакетов проекта пакет NuGet этой версии (null - проекта нет).</summary>
+    public async Task<bool?> HasNuGetPackageAsync(string project, string name, string version, CancellationToken ct)
+    {
+        var packages = await GetOrNullAsync<List<GitLabPackage>>(
+            $"projects/{E(project)}/packages?package_type=nuget&package_name={E(name)}&per_page=100", ct);
+        return packages?.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase) && p.Version == version);
+    }
+
     private async Task<T> GetAsync<T>(string relative, CancellationToken ct)
     {
         using var response = await SendAsync(HttpMethod.Get, relative, null, ct);

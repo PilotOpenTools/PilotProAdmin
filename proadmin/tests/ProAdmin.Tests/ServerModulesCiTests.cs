@@ -152,6 +152,22 @@ public class ServerModulesCiTests
     }
 
     /// <summary>
+    /// Резервная загрузка пакетов NuGet по внутреннему адресу GitLab: список пакетов закрытого проекта анонимно пуст,
+    /// поэтому он запрашивается с токеном задания, а пустой или неполученный список - ошибка, а не тихий пропуск.
+    /// </summary>
+    [Theory]
+    [InlineData(ModuleKind.Server)]
+    [InlineData(ModuleKind.Client)]
+    public void Package_list_of_private_feed_uses_job_token(ModuleKind kind)
+    {
+        var yml = ModuleCiTemplate.Content(new AdminSettings().Also(s => s.Normalize()), kind).Replace("\r\n", "\n");
+        var list = yml.Split('\n').Where(l => l.Contains("/packages?package_type=nuget")).ToList();
+        Assert.NotEmpty(list);
+        Assert.Contains("JOB-TOKEN: $CI_JOB_TOKEN", list[0]);
+        Assert.Contains("не получен или пуст", yml);
+    }
+
+    /// <summary>
     /// Runner выполняет script с set -eo pipefail: X=$(... | grep ...) без совпадений (например, в новом репозитории
     /// без тегов v*) молча завершает job с кодом 1. Такие подстановки обязаны иметь запасной вариант (|| true),
     /// кроме блоков, где сделано set +e.

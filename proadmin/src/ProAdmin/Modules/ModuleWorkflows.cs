@@ -625,8 +625,8 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
     private readonly bool _deployToStage;
     private readonly string? _replaces;
 
-    /// <param name="replaces">Активный релиз, который новый заменяет: его MR закрываются и ветки удаляются,
-    /// когда новая ветка уже собрана (не удалось собрать - старый релиз остаётся).</param>
+    /// <param name="replaces">Активный релиз, который новый заменяет: его MR закрываются и ветки удаляются только после
+    /// успешной выкладки замены на стейдж. Не удалось (MR, pipeline, сервер) - новый релиз удаляется, старый остаётся.</param>
     public ModulePrepareReleaseWorkflow(IModuleTarget pilot, GitLabClient git, PublishJob job, ModuleContext ctx,
         ModuleVersion version, IReadOnlyCollection<string>? selectedShas, IReadOnlyList<string> notes, bool deployToStage = true, string? replaces = null)
         : base(pilot, git, job, ctx)
@@ -688,16 +688,6 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
             }
         }
 
-        if (_replaces is { } old)
-        {
-            foreach (var oldMr in await Git.ListOpenMergeRequestsToAsync(Project, old, ct) ?? new())
-                await Git.CloseMergeRequestAsync(Project, oldMr.Iid, ct);
-            if (ModuleBranches.ReleaseVersion(old) is { } oldVersion)
-                try { await Git.DeleteBranchAsync(Project, ModuleBranches.ReleasePrep(oldVersion), ct); } catch (GitLabApiException) { /* уже нет */ }
-            await Git.DeleteBranchAsync(Project, old, ct);
-            Ok($"Релиз {old} заменён на {release}: его Merge Request закрыты, ветка удалена (в прод он не пойдёт).");
-        }
-
         var description =
             $"## Релиз {_version}\n\n" +
             (_replaces is { } replaced ? $"Заменяет {replaced} (не выпущен).\n\n" : "") +
@@ -705,18 +695,48 @@ internal sealed class ModulePrepareReleaseWorkflow : ModuleWorkflowBase
             (skipped.Count > 0 ? $"\n### Не входят в релиз (остаются в dev)\n\n{string.Join("\n", skipped.Select(c => $"- {c.Title}"))}\n" : "") +
             (_notes.Count > 0 ? $"\n### Заметки\n\n{string.Join("\n", _notes.Select(n => "- " + n))}\n" : "") +
             $"\n---\n\nСоздано PilotProAdmin: Merge Request вливается сразу, релиз выкладывается на стейдж.\n\n- Pilot: {Job.PilotUser}";
-        var (mr, _) = await EnsureMergeRequestAsync(source, release, $"Релиз {_version}", description,
-            removeSourceBranch: true, squash: false, ct);
-        Job.Update(j => j.MergeRequestUrl = mr.WebUrl);
-        Ok($"Ветка {release} и Merge Request готовы - релиз выкладывается на стейдж.", mr.WebUrl);
+        long? mrIid = null;
+        try
+        {
+            var (mr, _) = await EnsureMergeRequestAsync(source, release, $"Релиз {_version}", description,
+                removeSourceBranch: true, squash: false, ct);
+            mrIid = mr.Iid;
+            Job.Update(j => j.MergeRequestUrl = mr.WebUrl);
+            Ok($"Ветка {release} и Merge Request готовы{(_deployToStage ? " - релиз выкладывается на стейдж" : "")}.", mr.WebUrl);
 
-        // dev / стейдж одним шагом: влить снимок, версия и CHANGELOG, сборка, выкладка, тег rc.
-        // Не удалось (pipeline, сервер) - ветка и MR остаются, повтор - «Влить / стейдж».
-        if (!_deployToStage)
-            return;
-        for (var i = 0; i < 15 && string.IsNullOrEmpty((await Git.GetMergeRequestAsync(Project, mr.Iid, ct)).Sha); i++)
-            await Task.Delay(TimeSpan.FromSeconds(2), ct); // sha нового MR GitLab заполняет асинхронно
-        await new ModuleReleaseToStageWorkflow(Pilot, Git, Job, Ctx, release, mr.Iid).RunAsync(ct);
+            // dev / стейдж одним шагом: влить снимок, версия и CHANGELOG, сборка, выкладка, тег rc.
+            // Не удалось (pipeline, сервер) - ветка и MR остаются, повтор - «На стейдж»; при замене релиза - см. ниже.
+            if (_deployToStage)
+            {
+                for (var i = 0; i < 15 && string.IsNullOrEmpty((await Git.GetMergeRequestAsync(Project, mr.Iid, ct)).Sha); i++)
+                    await Task.Delay(TimeSpan.FromSeconds(2), ct); // sha нового MR GitLab заполняет асинхронно
+                await new ModuleReleaseToStageWorkflow(Pilot, Git, Job, Ctx, release, mr.Iid).RunAsync(ct);
+            }
+        }
+        catch (Exception ex) when (_replaces is { } kept && ex is not OperationCanceledException)
+        {
+            // Замена не выложена: новый релиз убирается целиком, заменяемый остаётся активным и его можно продолжить.
+            if (mrIid is { } created)
+                try { await Git.CloseMergeRequestAsync(Project, created, CancellationToken.None); } catch { /* уборка */ }
+            await CleanupAsync(release, source);
+            throw new WorkflowException($"{ex.Message} Новый релиз {release} не выложен и удалён, релиз {kept} сохранён - его можно продолжить.",
+                (ex as WorkflowException)?.Details);
+        }
+
+        // Старый релиз закрывается только после успешной выкладки замены.
+        if (_replaces is { } old)
+            await RetireAsync(old, release, ct);
+    }
+
+    /// <summary>Заменённый релиз: закрыть его Merge Request и удалить ветки (в прод он не пойдёт).</summary>
+    private async Task RetireAsync(string old, string release, CancellationToken ct)
+    {
+        foreach (var oldMr in await Git.ListOpenMergeRequestsToAsync(Project, old, ct) ?? new())
+            await Git.CloseMergeRequestAsync(Project, oldMr.Iid, ct);
+        if (ModuleBranches.ReleaseVersion(old) is { } oldVersion)
+            try { await Git.DeleteBranchAsync(Project, ModuleBranches.ReleasePrep(oldVersion), ct); } catch (GitLabApiException) { /* уже нет */ }
+        await Git.DeleteBranchAsync(Project, old, ct);
+        Ok($"Релиз {old} заменён на {release}: его Merge Request закрыты, ветка удалена (в прод он не пойдёт).");
     }
 
     private async Task CleanupAsync(string release, string prep)

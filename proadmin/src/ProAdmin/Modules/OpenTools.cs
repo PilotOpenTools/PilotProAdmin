@@ -369,6 +369,17 @@ public sealed class OpenToolsService
         return modules.FirstOrDefault(m => tool.Matches(m.Name));
     }
 
+    /// <summary>
+    /// Причина не устанавливать: на сервере уже версия пакета или новее (прочитана заново перед записью).
+    /// null - устанавливать (модуля нет, он старше или версию не разобрать).
+    /// </summary>
+    internal static string? SkipInstall(string? installed, string package) => Compare(installed, package) switch
+    {
+        OpenToolSync.Current => $"уже {installed} - обновлять нечего.",
+        OpenToolSync.Newer => $"на сервере {installed}, новее релиза {package} - не перезаписываю.",
+        _ => null,
+    };
+
     internal static OpenToolSync Compare(string? server, string? github)
     {
         if (!TryVersion(server, out var s) || !TryVersion(github, out var g))
@@ -402,6 +413,9 @@ public sealed class OpenToolsService
             ? await _modules.ListServerExtensionsAsync(env.PilotUrl, login, license, ct)
             : (await _modules.ListAsync(env.PilotUrl, login, license, ct)).Modules;
         var existing = Find(tool, release, modules);
+        // Список на странице - снимок: за это время CI мог выложить версию новее релиза GitHub. Её не перезаписываем.
+        if (SkipInstall(existing?.Version, package.Version) is { } skip)
+            return $"{env.Title}: {tool.Title} {skip}";
 
         var job = new PublishJob
         {
