@@ -229,8 +229,9 @@ function Wait-PilotDatabase([string]$contour, [datetime]$since) {
         $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         try { $log = (docker logs --since $since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') "pilot-server-$contour" 2>&1 | ForEach-Object { "$_" }) -join "`n" }
         finally { $ErrorActionPreference = $prev }
-        if ($log -match "$name to state Launched") { return 'Launched' }
-        if ($log -match "$name to state Broken") { return 'Broken' }
+        # Последнее состояние: после Launched база могла перейти в Broken (и наоборот после перезапуска).
+        $states = [regex]::Matches($log, "$name to state (Launched|Broken)")
+        if ($states.Count) { return $states[$states.Count - 1].Groups[1].Value }
         Start-Sleep 3
     }
     'Timeout'
@@ -252,21 +253,28 @@ function New-S3TempFolders([string]$c) {
     }
 }
 
+# База, уже прописанная в settings.xml (прошлым запуском установки), должна быть запущена: смотрим её последнее состояние
+# в журнале сервера с момента его старта. Не запущена - установка прерывается с инструкцией, как загрузить базу заново.
+function Assert-PilotDatabaseLaunched([string]$c) {
+    $settingsFile = "$root/$c/pilot-server/settings/settings.xml"
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $started = "$(docker inspect -f '{{.State.StartedAt}}' "pilot-server-$c" 2>$null)".Trim() } finally { $ErrorActionPreference = $prev }
+    $since = if ($started) { ([datetime]::Parse($started)).ToLocalTime().AddSeconds(-5) } else { (Get-Date).AddMinutes(-10) }
+    $state = Wait-PilotDatabase $c $since
+    if ($state -ne 'Launched') {
+        throw ("pilot-server-${c}: база $pilotDbName прописана в settings.xml, но не запущена ($state). Журнал: docker logs pilot-server-$c. " +
+            "Чтобы загрузить её заново: верните $settingsFile.before-import вместо settings.xml, удалите базу (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова.")
+    }
+    Write-Host "  ${c}: база $pilotDbName уже подключена и запущена"
+}
+
 function Import-PilotDatabase([string]$c, $source) {
     $settingsFile = "$root/$c/pilot-server/settings/settings.xml"
     $settings = New-Object Xml.XmlDocument
     $settings.LoadXml([IO.File]::ReadAllText($settingsFile))
     if ($settings.SelectSingleNode("/Configuration/Databases/DatabaseParameters[@Name='$pilotDbName']")) {
-        # Повторная установка: база прописана прошлым запуском, но могла не запуститься - проверяем её состояние с момента старта сервера.
-        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-        try { $started = "$(docker inspect -f '{{.State.StartedAt}}' "pilot-server-$c" 2>$null)".Trim() } finally { $ErrorActionPreference = $prev }
-        $since = if ($started) { ([datetime]::Parse($started)).ToLocalTime().AddSeconds(-5) } else { (Get-Date).AddMinutes(-10) }
-        $state = Wait-PilotDatabase $c $since
-        if ($state -ne 'Launched') {
-            throw ("pilot-server-${c}: база $pilotDbName прописана в settings.xml, но не запущена ($state). Журнал: docker logs pilot-server-$c. " +
-                "Чтобы загрузить её заново: верните $settingsFile.before-import вместо settings.xml, удалите базу (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова.")
-        }
-        Write-Host "  ${c}: база $pilotDbName уже подключена и запущена - пропуск"; return
+        # Повторная установка: база прописана прошлым запуском, но могла не запуститься.
+        Assert-PilotDatabaseLaunched $c; return
     }
     if (Invoke-ContourSql $c 'postgres' "select 1 from pg_database where datname = '$pilotDbName';") {
         throw "В postgres-$c уже есть база $pilotDbName, но Pilot-Server её не подключил (прошлая загрузка оборвалась?). Удалите её (docker exec postgres-$c dropdb -U postgres $pilotDbName) и запустите установку снова."
@@ -1272,6 +1280,13 @@ foreach ($c in $localS3) {
 if ($pilotDbSources.Count) {
     Step "Базы Pilot из файлов (.dbp)"
     foreach ($c in $pilotDbSources.Keys) { Import-PilotDatabase $c $pilotDbSources[$c] }
+}
+# Повторный запуск после сбоя загрузки базы (.installed ещё нет): релизная обёртка с сохранёнными ROLES не передаёт
+# -PilotDatabases, но база, загруженная установщиком (рядом settings.xml.before-import), всё равно должна быть запущена.
+if (-not (Test-Path "$root/.installed")) {
+    foreach ($c in @($myContours | Where-Object { -not $pilotDbSources.Contains($_) -and (Test-Path -LiteralPath "$root/$_/pilot-server/settings/settings.xml.before-import") })) {
+        Assert-PilotDatabaseLaunched $c
+    }
 }
 
 New-Item -ItemType Directory -Force $root | Out-Null

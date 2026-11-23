@@ -18,7 +18,17 @@ public class GitLabAdminCheck(GitLabClientFactory factory, ILogger<GitLabAdminCh
         if (!session.UsesServiceAccounts)
             return true;
 
-        var known = session.GitLabUser!;
+        return await ConfirmGitLabAdminAsync(session, ct);
+    }
+
+    /// <summary>
+    /// Пользователь сессии всё ещё администратор экземпляра GitLab (например, для слияния без Code Review).
+    /// Отозвана роль или токен, GitLab недоступен, токен другого пользователя - false, роль в сессии сбрасывается.
+    /// </summary>
+    public virtual async Task<bool> ConfirmGitLabAdminAsync(UserSession session, CancellationToken ct)
+    {
+        if (session.GitLabToken is null || session.GitLabUser is not { IsAdmin: true } known)
+            return false;
         try
         {
             var user = await factory.Create(session.GitLabToken!).GetCurrentUserAsync(ct);

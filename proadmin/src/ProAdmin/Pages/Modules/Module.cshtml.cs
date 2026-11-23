@@ -391,21 +391,30 @@ public class ModuleModel : AppPageModel
     });
 
     /// <summary>feature/bugfix / dev (squash) / тестовый сервер.</summary>
-    public Task<IActionResult> OnPostMergeToDevAsync(CancellationToken ct) => StartAsync(ct, ctx =>
+    public async Task<IActionResult> OnPostMergeToDevAsync(CancellationToken ct)
     {
-        var mr = OpenMergeRequests.FirstOrDefault(m => m.Iid == Iid && m.TargetBranch == ModuleBranches.Dev)
-                 ?? throw new InvalidOperationException($"Открытый Merge Request !{Iid} в dev не найден.");
-        string? skip = null;
-        if (AppSettings.RequireDevReview && DevReviewers.GetValueOrDefault(mr.Iid) is not { Count: > 0 })
+        // Исключение из Code Review - только администратору GitLab, и роль подтверждается в GitLab заново:
+        // после её отзыва обычного доступа Developer для слияния хватит, а ревью обходить уже нельзя.
+        var adminConfirmed = CanSkipReview && !string.IsNullOrWhiteSpace(SkipReviewReason) &&
+                             await HttpContext.RequestServices.GetRequiredService<Sessions.GitLabAdminCheck>().ConfirmGitLabAdminAsync(CurrentSession, ct);
+        return await StartAsync(ct, ctx =>
         {
-            if (!CanSkipReview)
-                throw new InvalidOperationException($"Merge Request !{mr.Iid} не одобрен: нужен Approve в GitLab от ревьюера (не автора).");
-            skip = string.IsNullOrWhiteSpace(SkipReviewReason)
-                ? throw new InvalidOperationException("Чтобы влить без Code Review, укажите причину.")
-                : SkipReviewReason.Trim();
-        }
-        return _runner.StartMergeToDev(ctx, mr.Iid, mr.SourceBranch ?? "", CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username, skip);
-    });
+            var mr = OpenMergeRequests.FirstOrDefault(m => m.Iid == Iid && m.TargetBranch == ModuleBranches.Dev)
+                     ?? throw new InvalidOperationException($"Открытый Merge Request !{Iid} в dev не найден.");
+            string? skip = null;
+            if (AppSettings.RequireDevReview && DevReviewers.GetValueOrDefault(mr.Iid) is not { Count: > 0 })
+            {
+                if (!CanSkipReview)
+                    throw new InvalidOperationException($"Merge Request !{mr.Iid} не одобрен: нужен Approve в GitLab от ревьюера (не автора).");
+                if (string.IsNullOrWhiteSpace(SkipReviewReason))
+                    throw new InvalidOperationException("Чтобы влить без Code Review, укажите причину.");
+                if (!adminConfirmed)
+                    throw new InvalidOperationException($"Права администратора GitLab не подтверждены - Merge Request !{mr.Iid} вливается только после Approve ревьюера.");
+                skip = SkipReviewReason.Trim();
+            }
+            return _runner.StartMergeToDev(ctx, mr.Iid, mr.SourceBranch ?? "", CurrentSession.PilotLogin, CurrentSession.GitLabUser?.Username, skip);
+        });
+    }
 
     /// <summary>Выложить голову ветки на контур: dev / тест, release/hotfix / стейдж.</summary>
     public Task<IActionResult> OnPostDeployAsync(CancellationToken ct) => StartAsync(ct, ctx =>

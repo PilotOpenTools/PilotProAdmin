@@ -576,25 +576,38 @@ try {
 
 # --- база Pilot из файловой базы: не запустилась - установка падает, а не пишет .installed ---
 Write-Host "`nФайловая база Pilot: база не запустилась"
-$import = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Import-PilotDatabase' }, $true)[0]
-if (-not $import) { throw 'В install.ps1 нет функции Import-PilotDatabase' }
-$notLaunched = $import.Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match '\$state -ne ''Launched''' }, $true)
+$dbFunctions = @{}
+foreach ($name in 'Import-PilotDatabase', 'Assert-PilotDatabaseLaunched', 'Wait-PilotDatabase') {
+    $dbFunctions[$name] = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)[0]
+    if (-not $dbFunctions[$name]) { throw "В install.ps1 нет функции $name" }
+}
+$notLaunched = @('Import-PilotDatabase', 'Assert-PilotDatabaseLaunched' | ForEach-Object {
+    $dbFunctions[$_].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match '\$state -ne ''Launched''' }, $true) })
 Check ($notLaunched.Count -eq 2 -and @($notLaunched | Where-Object { $_.Clauses[0].Item2.Extent.Text -notmatch '\bthrow\b' -or $_.Clauses[0].Item2.Extent.Text -match '\breturn\b' }).Count -eq 0) 'не запустилась (загрузка и повторная установка) - throw, без return'
-Invoke-Expression $import.Extent.Text
+# Релизная обёртка при повторном запуске не передаёт -PilotDatabases: проверка загруженной базы должна идти и без него.
+$installText = [IO.File]::ReadAllText($installPs1)
+Check ($installText -match '(?s)if \(-not \(Test-Path "\$root/\.installed"\)\) \{\s*foreach \(\$c in @\(\$myContours \| Where-Object \{ -not \$pilotDbSources\.Contains\(\$_\) -and \(Test-Path -LiteralPath "[^"]*settings\.xml\.before-import"\) \}\)\) \{\s*Assert-PilotDatabaseLaunched \$c') 'повторный запуск без -PilotDatabases (релизная обёртка): загруженная база проверяется'
+foreach ($f in $dbFunctions.Values) { Invoke-Expression $f.Extent.Text }
 $dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-state-" + [guid]::NewGuid().ToString('N'))
 try {
     $root = $dbTmp; $pilotDbName = 'pilot-ice_ru'
+    function Start-Sleep { }
+    # Журнал сервера: база запустилась, потом сломалась - важно последнее состояние.
+    $script:serverLog = "Database $pilotDbName to state Launched`nDatabase $pilotDbName to state Broken"
+    function docker { if ($args[0] -eq 'inspect') { '2026-11-20T10:00:00Z' } else { $script:serverLog } }
+    Check ((Wait-PilotDatabase 'test' (Get-Date)) -eq 'Broken') 'Wait-PilotDatabase: Launched, затем Broken - Broken'
+    $script:serverLog = "Database $pilotDbName to state Broken`nDatabase $pilotDbName to state Launched"
+    Check ((Wait-PilotDatabase 'test' (Get-Date)) -eq 'Launched') 'Wait-PilotDatabase: Broken, затем Launched - Launched'
+
     New-Item -ItemType Directory -Force "$root/test/pilot-server/settings" | Out-Null
     [IO.File]::WriteAllText("$root/test/pilot-server/settings/settings.xml", "<Configuration><Databases><DatabaseParameters Name='$pilotDbName' /></Databases></Configuration>")
-    function docker { '2026-11-20T10:00:00Z' }
-    function Wait-PilotDatabase { $script:dbState }
-    $script:dbState = 'Broken'
+    $script:serverLog = "Database $pilotDbName to state Launched`nDatabase $pilotDbName to state Broken"
     $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
     Check ($msg -match 'не запущена \(Broken\)' -and $msg -match 'before-import') 'повторная установка: прописанная, но сломанная база - ошибка с инструкцией'
-    $script:dbState = 'Launched'
+    $script:serverLog = "Database $pilotDbName to state Launched"
     $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
     Check ($msg -eq '') 'повторная установка: запущенная база - пропуск без ошибки'
-    Remove-Item Function:\docker, Function:\Wait-PilotDatabase
+    Remove-Item Function:\docker, Function:\Start-Sleep
 } finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
 
 Write-Host ''

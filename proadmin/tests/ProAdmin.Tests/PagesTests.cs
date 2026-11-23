@@ -338,5 +338,12 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
                 user.IsAdmin = false;
             return Task.FromResult(session.IsAdmin(settings));
         }
+
+        public override Task<bool> ConfirmGitLabAdminAsync(UserSession session, CancellationToken ct)
+        {
+            if (RevokedSessions.Contains(session.Id) && session.GitLabUser is { } user)
+                user.IsAdmin = false;
+            return Task.FromResult(session.GitLabToken is not null && session.GitLabUser?.IsAdmin == true);
+        }
     }
 }
