@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.RegularExpressions;
 using ProAdmin.Modules;
 using ProAdmin.Pilot.ServerModules;
 using ProAdmin.Settings;
@@ -148,6 +149,69 @@ public class ServerModulesCiTests
         }
         Assert.True(File.Exists(copy), $"Нет копии шаблона {copy} (UPDATE_CI_TEMPLATES=1 создаст её).");
         Assert.Equal(expected, File.ReadAllText(copy).Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// Резервная загрузка пакетов NuGet по внутреннему адресу GitLab: список пакетов закрытого проекта анонимно пуст,
+    /// поэтому он запрашивается с токеном задания, а пустой или неполученный список - ошибка, а не тихий пропуск.
+    /// </summary>
+    [Theory]
+    [InlineData(ModuleKind.Server)]
+    [InlineData(ModuleKind.Client)]
+    public void Package_list_of_private_feed_uses_job_token(ModuleKind kind)
+    {
+        var yml = ModuleCiTemplate.Content(new AdminSettings().Also(s => s.Normalize()), kind).Replace("\r\n", "\n");
+        var list = yml.Split('\n').Where(l => l.Contains("/packages?package_type=nuget")).ToList();
+        Assert.NotEmpty(list);
+        Assert.Contains("JOB-TOKEN: $CI_JOB_TOKEN", list[0]);
+        Assert.Contains("не получен или пуст", yml);
+    }
+
+    /// <summary>
+    /// Runner выполняет script с set -eo pipefail: X=$(... | grep ...) без совпадений (например, в новом репозитории
+    /// без тегов v*) молча завершает job с кодом 1. Такие подстановки обязаны иметь запасной вариант (|| true),
+    /// кроме блоков, где сделано set +e.
+    /// </summary>
+    [Theory]
+    [InlineData(ModuleKind.Server)]
+    [InlineData(ModuleKind.Client)]
+    public void Template_grep_substitutions_survive_pipefail(ModuleKind kind)
+    {
+        var lines = ModuleCiTemplate.Content(new AdminSettings().Also(s => s.Normalize()), kind).Replace("\r\n", "\n").Split('\n');
+        var bad = new List<string>();
+        int blockIndent = -1; var safe = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var indent = line.Length - line.TrimStart().Length;
+            if (line.TrimStart() == "- |") { blockIndent = indent; safe = false; continue; }
+            if (blockIndent < 0) continue;
+            if (line.Trim().Length > 0 && indent <= blockIndent) { blockIndent = -1; continue; }
+            if (line.Contains("set +e")) safe = true;
+            if (safe || line.TrimStart().StartsWith('#')) continue;
+            foreach (var sub in AssignedSubstitutions(line))
+                if (Regex.IsMatch(sub, @"\|\s*grep\b") && !sub.Contains("||"))
+                    bad.Add($"строка {i + 1}: {sub}");
+        }
+        Assert.True(bad.Count == 0, "grep в $(...) без || true:\n" + string.Join("\n", bad));
+    }
+
+    /// <summary>Тексты подстановок NAME=$(...) в строке (скобки внутри кавычек не считаются).</summary>
+    private static IEnumerable<string> AssignedSubstitutions(string line)
+    {
+        foreach (Match m in Regex.Matches(line, @"[A-Za-z_][A-Za-z0-9_]*=\$\("))
+        {
+            int depth = 1, j = m.Index + m.Length; char quote = '\0';
+            for (; j < line.Length && depth > 0; j++)
+            {
+                var c = line[j];
+                if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+                if (c is '\'' or '"') quote = c;
+                else if (c == '(') depth++;
+                else if (c == ')') depth--;
+            }
+            yield return line[(m.Index + m.Length)..Math.Max(m.Index + m.Length, j - 1)];
+        }
     }
 
     private static byte[] Zip(params (string Name, byte[] Content)[] entries)

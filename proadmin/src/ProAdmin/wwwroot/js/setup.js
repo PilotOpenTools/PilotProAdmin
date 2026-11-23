@@ -6,11 +6,19 @@
     const back = form.querySelector('[data-setup-back]');
     const next = form.querySelector('[data-setup-next]');
     const submit = form.querySelector('button[type="submit"]');
+    const progress = document.querySelector('[data-setup-progress]');
+    const marks = progress ? Array.from(progress.children) : [];
+    if (progress) progress.hidden = false;
     let step = 0;
 
     function showStep(index, moveFocus = true) {
         step = index;
         steps.forEach((section, i) => { section.hidden = i !== step; });
+        marks.forEach((mark, i) => {
+            mark.classList.toggle('is-done', i < step);
+            if (i === step) mark.setAttribute('aria-current', 'step');
+            else mark.removeAttribute('aria-current');
+        });
         back.hidden = step === 0;
         next.hidden = step === steps.length - 1;
         submit.hidden = !next.hidden;

@@ -17,7 +17,7 @@ public class DetailsModel : AppPageModel
         ViewData["Section"] = "jobs";
         var job = _store.Get(id)?.Snapshot();
         // 404, а не 403: чужая операция не должна подтверждать, что такой идентификатор существует.
-        if (job is null || !JobStore.CanSee(job, CurrentSession, IsProdAdmin))
+        if (job is null || !JobStore.CanSee(job, CurrentSession, IsAdmin))
             return NotFound();
 
         Job = job;
@@ -28,7 +28,7 @@ public class DetailsModel : AppPageModel
     public IActionResult OnGetStatus(Guid id)
     {
         var job = _store.Get(id)?.Snapshot();
-        if (job is null || !JobStore.CanSee(job, CurrentSession, IsProdAdmin))
+        if (job is null || !JobStore.CanSee(job, CurrentSession, IsAdmin))
             return NotFound();
 
         return new JsonResult(new

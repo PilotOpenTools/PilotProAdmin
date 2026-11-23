@@ -18,6 +18,16 @@
         var url = Model.TaskUrl(task);
         return url is null ? "" : url;
     }
+
+    // «Удалить ветку» - задачу не берём: её MR закрывается, ветка удаляется (OnPostDeleteBranchAsync).
+    async Task DeleteBranchForm(string branch, string target)
+    {
+        <form method="post" asp-page-handler="DeleteBranch" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="work-item-delete"
+              data-confirm="Удалить ветку @branch? Её коммиты не попадут в @target, открытый MR из неё закроется.">
+            <input type="hidden" name="Ref" value="@branch" />
+            <button class="btn btn-sm" type="submit">Удалить ветку</button>
+        </form>
+    }
 }
 <div class="crumbs"><a href="@(Model.IsServer ? "/Modules?kind=server" : "/Modules")">@(Model.IsServer ? "Серверные модули" : "Модули")</a> <span>/</span> <span>@Model.Name</span></div>
 
@@ -111,12 +121,14 @@
         // Линия на каждую задачу: ветка / dev / релиз; выборочный релиз виден как «2 из 3 задач» на стейдже.
         var lanes = FlowLanes.Build(git.Repo.WebUrl,
             Model.Work.Select(w => (w.Branch, w.Mr is { } wm ? $"MR !{wm.Iid} / {wm.TargetBranch}" : ModuleBranches.IsHotfix(w.Branch.Name) ? "hotfix / прод" : (string?)null)),
-            Model.Unreleased.AsEnumerable().Reverse(), Model.ReleaseTasks, testColumn: 1, stageColumn: 2);
+            Model.Unreleased.AsEnumerable().Reverse(), Model.ReleaseTasks, testColumn: 1, stageColumn: 2, source: Model.SourceOf);
         var steps = new FlowStep[]
         {
             new("Задача", "ветка / MR", Model.Work.Count > 0 ? $"в работе: {ModuleNextSteps.Plural(Model.Work.Count, "ветка", "ветки", "веток")}" + (devMrs.Count > 0 ? $" · {devMrs.Count} MR" : "") : "веток в работе нет"),
             new("Тест", "dev", Model.Unreleased.Count > 0 ? $"{EnvCaption(ModuleEnv.Test)} · +{ModuleNextSteps.Plural(Model.Unreleased.Count, "задача", "задачи", "задач")}" : EnvCaption(ModuleEnv.Test)),
-            new("Стейдж", release?.Name ?? "release/X.Y.Z", release is null ? "нет активного релиза"
+            // Без активного релиза на стейдже остаётся последний выпущенный: показываем его версию, а не «пусто».
+            new("Стейдж", release?.Name ?? "release/X.Y.Z", release is null
+                ? (EnvCaption(ModuleEnv.Stage) is { Length: > 0 } stageNow ? $"{stageNow} · новый релиз не начат" : "нет активного релиза")
                 : $"{FlowLanes.Reached(lanes, 2, 1, "задачи", "задач", "задач")} · {EnvCaption(ModuleEnv.Stage)}"),
             new("Прод", "main", Model.LastProdVersion is { } pv ? $"v{pv} · {IndexModel.StateLabel(Model.EnvStates.GetValueOrDefault(ModuleEnv.Prod)?.State ?? ModuleSync.Unknown)}" : EnvCaption(ModuleEnv.Prod)),
         };
@@ -125,7 +137,7 @@
     var focus = Model.NextStep?.Href;
 
     @* ---------------------------------------------------------------- действия: задача, релиз, hotfix *@
-    var outside = release is null ? new List<ProAdmin.GitLab.GitLabCommit>() : Model.Unreleased.Where(c => !Model.InRelease.Contains(c.Title ?? "")).ToList();
+    var outside = Model.OutsideRelease;
     // Кнопки «следующего шага» ведут на #tasks / #hotfix: нет такого блока на странице - открывается окно.
     var hasTasksCard = devMrs.Count > 0 || git.TaskBranches.Any(b => devMrs.All(m => m.SourceBranch != b.Name) && releaseMrs.All(m => m.SourceBranch != b.Name));
     var taskDialog = hasTasksCard ? "new-task" : "tasks";
@@ -143,12 +155,21 @@
             <button class="btn" type="button" data-dialog="@taskDialog">+ Создать задачу</button>
             @if (release is null)
             {
-                <button class="btn btn-primary" type="button" data-dialog="release" disabled="@(releaseBlocked is not null)" title="@releaseBlocked">Создать релиз@(Model.Unreleased.Count > 0 ? $" · {Model.Unreleased.Count}" : "")</button>
+                @* Нечего выпускать (или нет стейджа) - кнопки нет, причина видна в «Следующем шаге». *@
+                @if (releaseBlocked is null)
+                {
+                    <button class="btn btn-primary" type="button" data-dialog="release">Создать релиз · @Model.Unreleased.Count</button>
+                }
             }
             else
             {
-                <button class="btn btn-primary" type="button" data-dialog="release">Релиз @release.Name / стейдж / прод</button>
-                <button class="btn" type="button" data-dialog="add-to-release" disabled="@(releaseBlocked is not null)" title="@releaseBlocked">Добавить в @release.Name@(outside.Count > 0 ? $" · {outside.Count}" : "")</button>
+                @* Задачи dev вне релиза добавляются кнопками в «Следующем шаге»; здесь - окно релиза и его отмена. *@
+                <button class="btn btn-primary" type="button" data-dialog="release" title="MR в релиз, выкладка на стейдж, выпуск в прод">Релиз @(ModuleBranches.ReleaseVersion(release.Name)?.ToString() ?? release.Name): стейдж и прод</button>
+                @if (hasStage && Model.Unreleased.Count > 0)
+                {
+                    <button class="btn" type="button" data-dialog="replace-release" title="Собрать новый релиз из выбранных задач dev вместо @release.Name">Новый релиз вместо @(ModuleBranches.ReleaseVersion(release.Name)?.ToString() ?? release.Name)</button>
+                }
+                <button class="btn btn-danger" type="button" data-dialog="cancel-release">Отменить релиз</button>
             }
             <button class="btn" type="button" data-dialog="@hotfixDialog">Hotfix</button>
         </div>
@@ -206,6 +227,7 @@
                                     <label class="check">
                                         <input type="checkbox" name="Selected" value="@c.Id" checked />
                                         <span><span class="mono small">@c.ShortId</span> @c.Title
+                                            @if (Model.SourceOf(c) is { } src) { <span class="muted small">· из <span class="mono">@src</span></span> }
                                             @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }
                                             <span class="muted small">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></span>
                                     </label>
@@ -238,6 +260,7 @@
                                     <label class="check">
                                         <input type="checkbox" name="Selected" value="@c.Id" />
                                         <span><span class="mono small">@c.ShortId</span> @c.Title
+                                            @if (Model.SourceOf(c) is { } src) { <span class="muted small">· из <span class="mono">@src</span></span> }
                                             @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Kaiten</a> }
                                             <span class="muted small">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></span>
                                     </label>
@@ -245,6 +268,61 @@
                             }
                         </ul>
                         <div class="form-actions"><button class="btn btn-primary" type="submit">Добавить в релиз / стейдж</button></div>
+                    </form>
+                </div>
+            </dialog>
+        }
+
+        @if (release is not null && hasStage && Model.Unreleased.Count > 0)
+        {
+            var current = ModuleBranches.ReleaseVersion(release.Name);
+            var releaseOnly = Model.ReleaseOnlyTasks;
+            <dialog class="modal modal-form" id="replace-release">
+                <div class="modal-form-body">
+                    <div class="modal-form-head"><h2>Новый релиз вместо @release.Name</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                    <p class="muted small">
+                        Отметьте задачи <code>dev</code>, которые войдут в новый релиз: можно взять только новые, часть тех, что уже в @release.Name, или все.
+                        Релиз собирается от <code>main</code> (cherry-pick выбранных задач) и выкладывается на стейдж. Когда новая ветка собрана,
+                        <code>@release.Name</code> удаляется и в прод не идёт; не выбранные задачи остаются в <code>dev</code>.
+                    </p>
+                    @if (releaseOnly.Count > 0)
+                    {
+                        <div class="alert alert-warn small">
+                            Только в @release.Name (нет в <code>dev</code>) - в новый релиз <b>не попадут</b>:
+                            @string.Join(", ", releaseOnly.Select(c => $"«{c.Title}»")). Влейте их в <code>dev</code>, если они нужны.
+                        </div>
+                    }
+                    <form method="post" asp-page-handler="ReplaceRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form"
+                          data-confirm-template="Собрать релиз {Version} вместо @release.Name и выложить на стейдж? @release.Name будет удалён.">
+                        <ul class="checklist">
+                            @foreach (var c in Model.Unreleased)
+                            {
+                                var inCurrent = Model.InRelease.Contains(c.Title ?? "");
+                                <li>
+                                    <label class="check">
+                                        <input type="checkbox" name="Selected" value="@c.Id" checked />
+                                        <span><span class="mono small">@c.ShortId</span> @c.Title
+                                            @if (Model.SourceOf(c) is { } src) { <span class="muted small">· из <span class="mono">@src</span></span> }
+                                            @if (inCurrent) { <span class="badge badge-synced">в @release.Name</span> }
+                                            else { <span class="badge badge-onlygit">новая</span> }</span>
+                                    </label>
+                                </li>
+                            }
+                        </ul>
+                        <div class="btn-row">
+                            <label class="field narrow-field"><span>Версия</span>
+                                <input name="Version" value="@(current?.NextMinor().ToString())" required pattern="\d+\.\d+\.\d+" list="replace-release-versions" /></label>
+                            @if (current is not null)
+                            {
+                                <datalist id="replace-release-versions">
+                                    <option value="@current.NextMinor()">новые задачи - minor</option>
+                                    <option value="@current.NextPatch()">исправления - patch</option>
+                                </datalist>
+                            }
+                            <label class="field grow"><span>Заметки к релизу (необязательно)</span><input name="Notes" /></label>
+                        </div>
+                        <p class="muted small">Версия выше @current: @current?.NextMinor() - если добавляются задачи, @current?.NextPatch() - если только исправления.</p>
+                        <div class="form-actions"><button class="btn btn-primary" type="submit">Собрать новый релиз / стейдж</button></div>
                     </form>
                 </div>
             </dialog>
@@ -316,7 +394,7 @@
                               data-confirm="Выложить @st.Branch.Name на сервер @env.Title?">
                             <input type="hidden" name="Env" value="@env.Key" />
                             <input type="hidden" name="Ref" value="@st.Branch.Name" />
-                            <button class="btn btn-sm" type="submit">Выложить @st.Branch.Name /</button>
+                            <button class="btn btn-sm" type="submit">Выложить @st.Branch.Name</button>
                         </form>
                     }
                     @if (!Model.IsServer)
@@ -335,7 +413,7 @@
             </div>
             @if (env != Model.Envs.Last())
             {
-                <div class="promote-arrow">/</div>
+                <div class="promote-arrow" aria-hidden="true">&rarr;</div>
             }
         }
     </div>
@@ -401,7 +479,7 @@
                                     <form method="post" asp-page-handler="MergeToDev" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="inline"
                                           data-confirm="Squash merge !@mr.Iid в dev и выкладка на тест?">
                                         <input type="hidden" name="Iid" value="@mr.Iid" />
-                                        <button class="btn btn-sm btn-primary" type="submit">Влить / тест</button>
+                                        <button class="btn btn-sm btn-primary" type="submit">Влить в тест</button>
                                     </form>
                                 }
                                 else if (!ro && !mr.Draft && Model.CanSkipReview)
@@ -422,13 +500,17 @@
                     </tbody>
                 </table>
             }
-            @if (git.TaskBranches.Where(b => devMrs.All(m => m.SourceBranch != b.Name) && releaseMrs.All(m => m.SourceBranch != b.Name)).ToList() is { Count: > 0 } noMr)
+            @* Только ветки с коммитами сверх своей базы: уже влитые (их коммиты в dev) сюда не попадают. *@
+            @if (Model.Work.Where(w => w.Mr is null && w.Target != ModuleBranches.Main && w.Commits.Count > 0).ToList() is { Count: > 0 } noMr)
             {
                 <p class="small"><b>Ветки без MR:</b>
-                    @foreach (var b in noMr)
+                    @foreach (var w in noMr)
                     {
-                        <a class="mono" href="@git.Repo.WebUrl/-/tree/@Uri.EscapeDataString(b.Name)" target="_blank" rel="noopener">@b.Name</a>
-                        <a class="small" href="@git.Repo.WebUrl/-/merge_requests/new?merge_request%5Bsource_branch%5D=@Uri.EscapeDataString(b.Name)&merge_request%5Btarget_branch%5D=@(b.Name.StartsWith(ModuleBranches.BugfixPrefix) && release is not null ? Uri.EscapeDataString(release.Name) : "dev")&merge_request%5Bsquash%5D=1" target="_blank" rel="noopener">(создать MR)</a>
+                        <a class="mono" href="@git.Repo.WebUrl/-/tree/@Uri.EscapeDataString(w.Branch.Name)" target="_blank" rel="noopener">@w.Branch.Name</a>
+                        @if (!ro)
+                        {
+                            <a class="btn btn-sm" href="@ModuleModel.NewMrUrl(git.Repo.WebUrl, w.Branch.Name, w.Target)" target="_blank" rel="noopener">Создать MR в @w.Target</a>
+                        }
                         <span>&nbsp;</span>
                     }
                 </p>
@@ -518,21 +600,33 @@
                                 <a href="/Types#changes">Вкладка «Типы»</a>
                             </div>
                         }
-                        <label class="field narrow-field"><span>Задача@(Model.AppSettings.Find(ModuleEnv.Prod)?.RequireTaskReference == true ? "" : " (необязательно)")</span><input name="TaskId" placeholder="KTN-…" /></label>
+                        @{ var taskRequired = Model.AppSettings.Find(ModuleEnv.Prod)?.RequireTaskReference == true; }
+                        <label class="field narrow-field"><span>Задача@(taskRequired ? "" : " (необязательно)")</span>
+                            <input name="TaskId" placeholder="KTN-…" required="@taskRequired" autocomplete="off"
+                                   data-required-message="Для выпуска в прод укажите задачу (так настроен контур «Прод»)." /></label>
+                        @if (taskRequired) { <p class="muted small">Номер задачи обязателен: так настроен контур «Прод».</p> }
                         <button class="btn btn-promote" type="submit" disabled="@(releaseMrs.Count > 0)">Выпустить в прод</button>
                     </form>
-
-                    <details class="danger-zone">
-                        <summary>Отменить релиз (критический баг на стейдже)</summary>
-                        <form method="post" asp-page-handler="CancelRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form">
-                            <p class="muted small">MR в релиз закрываются, ветки <code>@release.Name</code> и <code>release-prep/@version</code> удаляются. <code>dev</code> и серверы не меняются. Исправьте баг в <code>dev</code> и подготовьте новый релиз.</p>
-                            <input name="Confirm" placeholder="@release.Name" required />
-                            <button class="btn btn-danger btn-sm" type="submit">Отменить релиз</button>
-                        </form>
-                    </details>
                 }
             </div>
         </dialog>
+        @if (!ro)
+        {
+            <dialog class="modal modal-form" id="cancel-release">
+                <div class="modal-form-body">
+                    <div class="modal-form-head"><h2>Отменить релиз <code>@release.Name</code></h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                    <form method="post" asp-page-handler="CancelRelease" asp-route-name="@Model.Name" asp-route-kind="@Model.ModuleKind.Query()" class="form">
+                        <p class="muted small">
+                            Например, критический баг на стейдже или релиз собран не из тех задач. MR в релиз закрываются, ветки <code>@release.Name</code>
+                            и <code>release-prep/@version</code> удаляются. <code>dev</code>, прод и задачи не меняются - на стейдже остаётся последняя выложенная версия.
+                            Затем исправьте <code>dev</code> и соберите релиз заново.
+                        </p>
+                        <label class="field"><span>Для подтверждения введите <code>@release.Name</code></span><input name="Confirm" placeholder="@release.Name" required /></label>
+                        <div class="form-actions"><button class="btn btn-danger" type="submit">Отменить релиз</button></div>
+                    </form>
+                </div>
+            </dialog>
+        }
         }
 
         @* ---------------------------------------------------------------- hotfix *@
@@ -641,7 +735,7 @@
                     </script>
                 }
             }
-            <p class="small"><a href="/Jobs">Журнал операций /</a></p>
+            <p class="small"><a href="/Jobs">Журнал операций</a></p>
         </section>
     </div>
 
@@ -673,6 +767,10 @@
                             @if (w.Mr is null)
                             {
                                 <span class="badge badge-onlygit">нет MR</span>
+                                @if (!ro && w.Commits.Count > 0)
+                                {
+                                    <a class="btn btn-sm" href="@ModuleModel.NewMrUrl(git.Repo.WebUrl, w.Branch.Name, w.Target)" target="_blank" rel="noopener">Создать MR в @w.Target</a>
+                                }
                             }
                             else
                             {
@@ -690,6 +788,7 @@
                             @foreach (var c in w.Commits.Take(3)) { <li><span class="mono">@c.ShortId</span> @c.Title</li> }
                             @if (w.Commits.Count > 3) { <li class="muted">ещё @(w.Commits.Count - 3)…</li> }
                         </ul>
+                        @if (!ro) { await DeleteBranchForm(w.Branch.Name, w.Target); }
                     </div>
                 }
             </div>
@@ -708,6 +807,8 @@
                             {
                                 var url = TaskLink(c.Title);
                                 <li>@c.Title @if (url.Length > 0) { <a class="small" href="@url" target="_blank" rel="noopener">Открыть</a> }
+                                    @if (Model.SourceOf(c) is { } src) { <span class="muted">· из <span class="mono">@src</span></span> }
+                                    @if (release is not null && !Model.InRelease.Contains(c.Title ?? "")) { <span class="badge badge-onlygit">не в релизе</span> }
                                     <span class="muted">· @c.AuthorName · @c.CommittedDate?.ToLocalTime().ToString("dd.MM")</span></li>
                             }
                         </ul>
@@ -726,7 +827,10 @@
                         <b class="mono">@release.Name</b>
                         @if (releaseMrs.Count > 0) { <span class="badge badge-differs">@releaseMrs.Count MR ждут влития</span> }
                         <ul>
-                            @foreach (var c in Model.ReleaseTasks) { <li>@c.Title</li> }
+                            @foreach (var c in Model.ReleaseTasks)
+                            {
+                                <li>@c.Title @if (Model.SourceOf(c) is { } src) { <span class="muted">· из <span class="mono">@src</span></span> }</li>
+                            }
                         </ul>
                     </div>
                 }
@@ -742,6 +846,7 @@
                     <div class="work-item">
                         <span class="badge badge-failed">hotfix</span> <span class="mono">@w.Branch.Name</span>
                         <div class="muted">@w.Commits.Count @(w.Commits.Count == 1 ? "коммит" : "коммитов") сверх <code>main</code>@(w.Mr is not null ? " · MR !" + w.Mr.Iid : "")</div>
+                        @if (!ro) { await DeleteBranchForm(w.Branch.Name, w.Target); }
                     </div>
                 }
             </div>

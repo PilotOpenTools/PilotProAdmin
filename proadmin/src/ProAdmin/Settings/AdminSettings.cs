@@ -59,7 +59,7 @@ public sealed class AdminSettings
     public string ModulesBuildJob { get; set; } = "build_module";
 
     /// <summary>
-    /// «Влить / тест» только после Code Review: MR в dev одобрен (Approve в GitLab) кем-то кроме автора.
+    /// «Влить в тест» только после Code Review: MR в dev одобрен (Approve в GitLab) кем-то кроме автора.
     /// Администратор GitLab может влить без ревью, указав причину (пишется в журнал).
     /// Для одного разработчика выключается: одобрить MR некому, а pipeline обязателен и без ревью.
     /// </summary>

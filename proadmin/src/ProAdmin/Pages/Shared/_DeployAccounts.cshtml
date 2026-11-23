@@ -1,12 +1,35 @@
 @model List<ProAdmin.Settings.DeployAccountInput>
 <h2>Служебные учётные записи Pilot для выкладки из GitLab CI</h2>
-<p>Пустой пароль сохраняет прежнюю учётную запись. Для замены введите логин и пароль администратора сервера.</p>
-@for (var i = 0; i < Model.Count; i++)
-{
-    <fieldset>
-        <legend>@ProAdmin.Settings.DeployAccounts.Contours[i]</legend>
-        <label asp-for="@Model[i].Login">Логин</label><input asp-for="@Model[i].Login" autocomplete="off" />
-        <label asp-for="@Model[i].Password">Пароль</label><input asp-for="@Model[i].Password" type="password" autocomplete="new-password" />
-        <label><input asp-for="@Model[i].Disable" /> Отключить служебную учётную запись</label>
-    </fieldset>
-}
+<p class="muted small">Сохранённый пароль не показывается: поле пустое, а рядом написано, задан ли он. Пустое поле сохраняет прежний пароль;
+    для замены введите логин и пароль администратора сервера.
+    Модули и отчёты выкладываются входом в базу: если в базе нет пользователя с этим логином, админка создаст его
+    с тем же паролем, правами администратора базы и должностью в подразделении «PilotProAdmin» (займёт одну лицензию).</p>
+<div class="deploy-accounts">
+    @for (var i = 0; i < Model.Count; i++)
+    {
+        var contour = ProAdmin.Settings.DeployAccounts.Contours[i];
+        var title = contour switch { "test" => "Тест", "stage" => "Стейдж", "prod" => "Прод", _ => contour };
+        var hasPassword = Model[i].HasPassword;
+        <fieldset class="deploy-account">
+            <legend><span class="env-dot env-@contour" aria-hidden="true"></span>@title</legend>
+            <label class="field">
+                <span>Логин</span>
+                <input asp-for="@Model[i].Login" autocomplete="off" />
+            </label>
+            <label class="field">
+                <span>Пароль
+                    @if (hasPassword)
+                    {
+                        <span class="badge badge-synced">сохранён</span>
+                    }
+                    else
+                    {
+                        <span class="badge badge-differs">не задан</span>
+                    }
+                </span>
+                <input asp-for="@Model[i].Password" type="password" autocomplete="new-password"
+                       placeholder="@(hasPassword ? "Оставьте пустым, чтобы не менять" : "Введите пароль")" />
+            </label>
+        </fieldset>
+    }
+</div>

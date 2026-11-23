@@ -118,6 +118,24 @@ public sealed class GitLabClient
                                                  (since is { } s ? $"&since={E(s.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"))}" : ""), ct)
         ?? new();
 
+    /// <summary>
+    /// Убирает из <paramref name="commits"/> (задачи вне <paramref name="reference"/>) те, что уже попали в неё cherry-pick'ом:
+    /// выборочный релиз переносит копии задач, и после выпуска исходные коммиты dev так и остаются «впереди» main.
+    /// Копии ищутся среди коммитов ветки не старше самой ранней задачи (не больше 100).
+    /// </summary>
+    public async Task<List<GitLabCommit>> WithoutPickedIntoAsync(string project, string reference, List<GitLabCommit> commits, CancellationToken ct)
+    {
+        if (commits.Count == 0)
+            return commits;
+        var since = commits.Min(c => c.CommittedDate)?.AddMinutes(-1);
+        var picked = (await ListCommitsAsync(project, reference, since, ct))
+            .SelectMany(c => ProAdmin.Types.TypesRepository.PickedFrom(c.Message))
+            .ToList();
+        return picked.Count == 0
+            ? commits
+            : commits.Where(c => !picked.Any(p => c.Id.StartsWith(p, StringComparison.OrdinalIgnoreCase))).ToList();
+    }
+
     /// <summary>Коммиты ветки за период [since, until] (новые первыми). Не больше 100.</summary>
     public async Task<List<GitLabCommit>> ListCommitsAsync(string project, string branch, DateTimeOffset since, DateTimeOffset until, CancellationToken ct) =>
         await GetOrNullAsync<List<GitLabCommit>>($"projects/{E(project)}/repository/commits?ref_name={E(branch)}&per_page=100" +
@@ -199,6 +217,26 @@ public sealed class GitLabClient
         return true;
     }
 
+    /// <summary>Есть ли у группы переменная CI/CD (значение не читается).</summary>
+    public async Task<bool> GroupVariableExistsAsync(string group, string key, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, $"groups/{E(group)}/variables/{E(key)}", null, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return false;
+        await EnsureSuccessAsync(response, ct);
+        return true;
+    }
+
+    /// <summary>Создать переменную CI/CD группы (raw - без подстановки $…).</summary>
+    public async Task CreateGroupVariableAsync(string group, string key, string value, bool masked, bool isProtected, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Post, $"groups/{E(group)}/variables", new Dictionary<string, object>
+        {
+            ["key"] = key, ["value"] = value, ["masked"] = masked, ["protected"] = isProtected, ["raw"] = true,
+        }, ct);
+        await EnsureSuccessAsync(response, ct);
+    }
+
     /// <summary>Снять защиту ветки (нет защиты - ничего не делает).</summary>
     public async Task UnprotectBranchAsync(string project, string branch, CancellationToken ct)
     {
@@ -261,6 +299,39 @@ public sealed class GitLabClient
         var mrs = await GetAsync<List<GitLabMergeRequest>>($"projects/{E(project)}/merge_requests?state=merged&source_branch={E(branch.Name)}&per_page=20", ct) ?? new();
         var head = branch.Commit?.Id;
         return head is not null && mrs.Any(m => string.Equals(m.Sha, head, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Последние влитые MR в ветку (свежие сверху).</summary>
+    public async Task<List<GitLabMergeRequest>> ListMergedMergeRequestsToAsync(string project, string target, CancellationToken ct) =>
+        await GetAsync<List<GitLabMergeRequest>>($"projects/{E(project)}/merge_requests?state=merged&target_branch={E(target)}&order_by=updated_at&per_page=100", ct) ?? new();
+
+    /// <summary>MR, в которых есть коммит (по его исходным коммитам).</summary>
+    public async Task<List<GitLabMergeRequest>> ListCommitMergeRequestsAsync(string project, string sha, CancellationToken ct) =>
+        await GetAsync<List<GitLabMergeRequest>>($"projects/{E(project)}/repository/commits/{E(sha)}/merge_requests", ct) ?? new();
+
+    /// <summary>
+    /// Коммиты ветки, которых нет в <paramref name="target"/> (без merge-коммитов), кроме уже влитых последним MR из неё в target.
+    /// Squash merge кладёт в target новый коммит, а исходные коммиты ветки остаются «впереди» - без этой поправки
+    /// влитая ветка выглядела бы задачей в работе. Коммиты, запушенные после влития, остаются.
+    /// </summary>
+    public async Task<List<GitLabCommit>> UnmergedCommitsAsync(string project, string target, string branch, CancellationToken ct)
+    {
+        var ahead = (await CompareCommitsAsync(project, target, branch, ct)).Where(c => c.ParentIds is not { Count: > 1 }).ToList();
+        if (ahead.Count == 0)
+            return ahead;
+        var merged = await GetAsync<List<GitLabMergeRequest>>(
+            $"projects/{E(project)}/merge_requests?state=merged&source_branch={E(branch)}&target_branch={E(target)}&per_page=1", ct);
+        if (merged?.FirstOrDefault()?.Sha is not { } sha)
+            return ahead;
+        try
+        {
+            var after = (await CompareCommitsAsync(project, sha, branch, ct)).Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return ahead.Where(c => after.Contains(c.Id)).ToList();
+        }
+        catch (GitLabApiException)
+        {
+            return ahead; // коммита MR уже нет (ветку переписали) - считаем по-старому
+        }
     }
 
     /// <summary>Файл ветки байт в байт. null - файла или ветки нет.</summary>
@@ -401,6 +472,14 @@ public sealed class GitLabClient
     }
 
     private static string E(string value) => Uri.EscapeDataString(value);
+
+    /// <summary>Есть ли в реестре пакетов проекта пакет NuGet этой версии (null - проекта нет).</summary>
+    public async Task<bool?> HasNuGetPackageAsync(string project, string name, string version, CancellationToken ct)
+    {
+        var packages = await GetOrNullAsync<List<GitLabPackage>>(
+            $"projects/{E(project)}/packages?package_type=nuget&package_name={E(name)}&per_page=100", ct);
+        return packages?.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase) && p.Version == version);
+    }
 
     private async Task<T> GetAsync<T>(string relative, CancellationToken ct)
     {

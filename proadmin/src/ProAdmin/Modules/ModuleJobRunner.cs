@@ -29,7 +29,8 @@ public sealed class ModuleJobRunner
     public PublishJob StartDeploy(ModuleContext ctx, string env, string reference, IReadOnlyList<string> notes, string pilotUser, string? gitLabUser, bool isTag = false) =>
         Start(ctx, env, isTag ? "откат модуля" : "выкладка модуля", $"{reference} / {EnvTitle(ctx, env)}", notes, pilotUser, gitLabUser,
             (job, git) => new ModuleDeployWorkflow(_targets.Get(ctx.Kind), git, job, ctx, env, reference, notes, isTag),
-            $"Готово: {reference} на сервере {EnvTitle(ctx, env)}.");
+            $"Готово: {reference} на сервере {EnvTitle(ctx, env)}.",
+            managedStageRelease: env == ModuleEnv.Stage && !isTag && ModuleBranches.IsRelease(reference) ? reference : null);
 
     public PublishJob StartCiUpdate(ModuleContext ctx, string content, string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Test, "обновление шаблона CI", $"ci/template / {ModuleBranches.Dev}", Array.Empty<string>(), pilotUser, gitLabUser,
@@ -46,17 +47,24 @@ public sealed class ModuleJobRunner
         string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Stage, "релиз / стейдж", $"{ModuleBranches.Dev} / {ModuleBranches.Release(version)} / {EnvTitle(ctx, ModuleEnv.Stage)}", notes, pilotUser, gitLabUser,
             (job, git) => new ModulePrepareReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, version, selected, notes),
-            $"Готово: релиз {version} на стейдже.");
+            $"Готово: релиз {version} на стейдже.", managedStageRelease: ModuleBranches.Release(version));
+
+    /// <summary>Новый релиз вместо активного (не выпущенного): выбранные задачи dev, старый релиз удаляется.</summary>
+    public PublishJob StartReplaceRelease(ModuleContext ctx, string oldRelease, ModuleVersion version, IReadOnlyCollection<string> selected,
+        IReadOnlyList<string> notes, string pilotUser, string? gitLabUser) =>
+        Start(ctx, ModuleEnv.Stage, "новый релиз / стейдж", $"{oldRelease} / {ModuleBranches.Release(version)} / {EnvTitle(ctx, ModuleEnv.Stage)}", notes, pilotUser, gitLabUser,
+            (job, git) => new ModulePrepareReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, version, selected, notes, replaces: oldRelease),
+            $"Готово: релиз {version} вместо {oldRelease} на стейдже.", managedStageRelease: ModuleBranches.Release(version));
 
     public PublishJob StartAddToRelease(ModuleContext ctx, string release, IReadOnlyCollection<string> selected, string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Stage, "задачи / релиз / стейдж", $"{ModuleBranches.Dev} / {release} / {EnvTitle(ctx, ModuleEnv.Stage)}", Array.Empty<string>(), pilotUser, gitLabUser,
             (job, git) => new ModuleAddToReleaseWorkflow(_targets.Get(ctx.Kind), git, job, ctx, release, selected),
-            $"Готово: задачи добавлены в {release}, релиз на стейдже.");
+            $"Готово: задачи добавлены в {release}, релиз на стейдже.", managedStageRelease: release);
 
     public PublishJob StartReleaseToStage(ModuleContext ctx, string release, long? mrIid, string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Stage, "релиз / стейдж", $"{release} / {EnvTitle(ctx, ModuleEnv.Stage)}", Array.Empty<string>(), pilotUser, gitLabUser,
             (job, git) => new ModuleReleaseToStageWorkflow(_targets.Get(ctx.Kind), git, job, ctx, release, mrIid),
-            $"Готово: {release} на стейдже.");
+            $"Готово: {release} на стейдже.", managedStageRelease: release);
 
     public PublishJob StartReleaseToProd(ModuleContext ctx, string release, string? task, bool allowUntested, string pilotUser, string? gitLabUser) =>
         Start(ctx, ModuleEnv.Prod, "релиз / прод", $"{release} / {ModuleBranches.Main}",
@@ -72,13 +80,15 @@ public sealed class ModuleJobRunner
     private static string EnvTitle(ModuleContext ctx, string env) => ModuleEnv.Find(ctx.Settings, env)?.Title ?? env;
 
     private PublishJob Start(ModuleContext ctx, string env, string operation, string branchText, IReadOnlyList<string> notes,
-        string pilotUser, string? gitLabUser, Func<PublishJob, GitLabClient, ModuleWorkflowBase> create, string doneText)
+        string pilotUser, string? gitLabUser, Func<PublishJob, GitLabClient, ModuleWorkflowBase> create, string doneText,
+        string? managedStageRelease = null)
     {
         var jobKey = ctx.Kind.JobEnv(env);
+        var projectPath = env == ModuleEnv.Stage ? ctx.ProjectPath : null;
         PublishJob job;
         lock (_startLock)
         {
-            if (_store.FindActive(jobKey, ctx.RepoName) is { } active)
+            if (_store.FindActive(jobKey, ctx.RepoName, projectPath) is { } active)
                 throw new InvalidOperationException($"По модулю «{ctx.RepoName}» на контуре {EnvTitle(ctx, env)} уже идёт операция «{active.Operation}» (запустил {active.PilotUser}).");
 
             job = new PublishJob
@@ -88,6 +98,8 @@ public sealed class ModuleJobRunner
                 EnvTitle = ctx.Kind.JobEnvTitle(EnvTitle(ctx, env)),
                 Branch = branchText,
                 AutomationName = ctx.RepoName,
+                ModuleProjectPath = projectPath,
+                ManagedStageRelease = managedStageRelease,
                 CommitMessage = operation,
                 ChangeNotes = notes.ToList(),
                 PilotUser = pilotUser,

@@ -25,7 +25,7 @@
             Путь отчёта: правка в Pilot / тест (<code>dev</code>) / прод (<code>main</code>); в строке подсвечен этап, где сейчас идёт работа.
             Репозиторий ищется по имени: имя проекта в группе <code>@(Model.ReportsGroupPath ?? "-")</code> = имя отчёта в Pilot.
             Отчёты меняются в Pilot (модуль Reports отправляет их в <code>dev</code> или, для исправления прода, в <code>hotfix/…</code> от <code>main</code>; прямо в <code>main</code> он не отправляет), здесь - только перенос на прод
-            и обратно: хотфикс, влитый в <code>main</code>, переносится в <code>dev</code> и на тест кнопкой «/ В тест».
+            и обратно: хотфикс, влитый в <code>main</code>, переносится в <code>dev</code> и на тест кнопкой «В тест».
         </p>
     </details>
 </div>
@@ -48,7 +48,11 @@ else if (catalog is not null)
     {
         var env = ReportCatalog.FindEnv(Model.AppSettings, envKey)!;
         <div class="alert alert-error">@env.Title: @error.Message</div>
-        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication && Model.UsesServiceAccounts)
+        {
+            <partial name="_ServiceAccountHint" model="env.Title" />
+        }
+        else if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
         {
             <section class="card narrow-card">
                 <h2>Вход в базу сервера «@env.Title» для отчётов</h2>
@@ -149,7 +153,7 @@ else if (catalog is not null)
                                     }
                                     else if (row.PendingPromotion || prodState != SyncState.Synced)
                                     {
-                                        <a class="promote" href="/Reports/Promote?name=@q" title="dev / main / продовый сервер">На прод /</a>
+                                        <a class="promote" href="/Reports/Promote?name=@q" title="dev / main / продовый сервер">На прод</a>
                                     }
                                 }
                                 @if (row.Repo is not null && main is not null && !Model.ReportsReadOnly)

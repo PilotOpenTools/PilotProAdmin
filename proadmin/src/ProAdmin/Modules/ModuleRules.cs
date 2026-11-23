@@ -266,7 +266,7 @@ public static partial class ModuleSources
             var nl = result.Contains("\r\n") ? "\r\n" : "\n";
             string Line(string text) => indent + text + nl;
             var block =
-                Line("<!-- Версия модуля - только <Version>: AssemblyVersion/FileVersion генерирует SDK. Остальные атрибуты - в AssemblyInfo.cs. -->") +
+                Line("<!-- Версия модуля - только элемент Version: AssemblyVersion/FileVersion генерирует SDK. Остальные атрибуты - в AssemblyInfo.cs. -->") +
                 Line("<GenerateAssemblyInfo>true</GenerateAssemblyInfo>") +
                 string.Concat(new[] { "Title", "Description", "Company", "Copyright", "Product", "Configuration", "Trademark" }
                     .Select(a => Line($"<GenerateAssembly{a}Attribute>false</GenerateAssembly{a}Attribute>"))) +

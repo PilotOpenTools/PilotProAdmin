@@ -88,17 +88,17 @@ public class AccessTests
     }
 
     [Fact]
-    public void Prod_admin_is_the_session_that_logged_in_on_the_prod_server()
+    public void With_a_Pilot_login_admin_is_the_session_that_logged_in_on_the_prod_server()
     {
         var settings = new AdminSettings();
         settings.Normalize();
         settings.Find(AdminSettings.Test)!.PilotUrl = "http://test/db";
         settings.Find(AdminSettings.Prod)!.PilotUrl = "http://prod/db";
 
-        Assert.True(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null), new EnvironmentAccess("prod", "Прод", "http://prod/db", null)).IsProdAdmin(settings));
-        Assert.False(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null)).IsProdAdmin(settings));
-        Assert.False(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null), new EnvironmentAccess("prod", "Прод", "http://prod/db", "отказ")).IsProdAdmin(settings));
-        Assert.False(Session().IsProdAdmin(settings)); // вход по адресу вручную при настроенных серверах
+        Assert.True(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null), new EnvironmentAccess("prod", "Прод", "http://prod/db", null)).IsAdmin(settings));
+        Assert.False(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null)).IsAdmin(settings));
+        Assert.False(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null), new EnvironmentAccess("prod", "Прод", "http://prod/db", "отказ")).IsAdmin(settings));
+        Assert.False(Session().IsAdmin(settings)); // вход по адресу вручную при настроенных серверах
     }
 
     [Fact]
@@ -107,12 +107,12 @@ public class AccessTests
         var noProd = new AdminSettings();
         noProd.Normalize();
         noProd.Find(AdminSettings.Test)!.PilotUrl = "http://test/db";
-        Assert.True(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null)).IsProdAdmin(noProd));
-        Assert.False(Session().IsProdAdmin(noProd));
+        Assert.True(Session(new EnvironmentAccess("test", "Тест", "http://test/db", null)).IsAdmin(noProd));
+        Assert.False(Session().IsAdmin(noProd));
 
         var firstRun = new AdminSettings();
         firstRun.Normalize();
-        Assert.True(Session().IsProdAdmin(firstRun)); // серверов нет вовсе: настроить их иначе нельзя
+        Assert.True(Session().IsAdmin(firstRun)); // серверов нет вовсе: настроить их иначе нельзя
     }
 
     private static UserSession Session(params EnvironmentAccess[] access) =>

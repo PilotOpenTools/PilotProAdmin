@@ -116,7 +116,7 @@
             <div class="modal-form-body">
                 <div class="modal-form-head"><h2>Новое изменение типов</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
                 <p class="muted small">Создастся ветка <code>types/KTN-123-…</code> от <code>dev</code>. Правки из редактора сохраняются в неё,
-                    на тест она попадёт после «Влить / тест». Потом изменение можно связать с коммитом модуля или автоматизации.</p>
+                    на тест она попадёт после «Влить в тест». Потом изменение можно связать с коммитом модуля или автоматизации.</p>
                 <form method="post" asp-page-handler="CreateBranch" class="form">
                     <label class="field"><span>Задача и суть изменения</span>
                         <input name="NewChange" required placeholder="KTN-123 Договор: срок действия" /></label>
@@ -212,16 +212,20 @@
                                 <a class="btn btn-sm" href="/Types?view=types&branch=@Uri.EscapeDataString(br.Name)">Править</a>
                                 @if (c.Ahead > 0)
                                 {
-                                    <details class="merge-form">
-                                        <summary class="btn btn-sm btn-primary">Влить / тест</summary>
-                                        <form method="post" asp-page-handler="MergeBranch" class="form">
-                                            <input type="hidden" name="Branch" value="@br.Name" />
-                                            <label class="field"><span>Что изменено (коммит в dev, пункт CHANGELOG)</span>
-                                                <input name="Message" required value="@c.Title" /></label>
-                                            <p class="muted small">MR <code>@br.Name / dev</code> (squash) / pipeline / merge / запись <code>dev</code> на тестовый сервер.</p>
-                                            <button class="btn btn-sm btn-primary" type="submit">Влить</button>
-                                        </form>
-                                    </details>
+                                    var mergeId = ProAdmin.Pages.Types.IndexModel.MergeDialogId(br.Name);
+                                    <button class="btn btn-sm btn-primary" type="button" data-dialog="@mergeId">Влить в тест</button>
+                                    <dialog class="modal modal-form" id="@mergeId">
+                                        <div class="modal-form-body">
+                                            <div class="modal-form-head"><h2>Влить в тест</h2><button class="btn btn-sm btn-ghost" type="button" data-close aria-label="Закрыть">Закрыть</button></div>
+                                            <p class="muted small">Ветка <code>@br.Name</code>: MR в <code>dev</code> (squash), pipeline, merge и запись <code>dev</code> на тестовый сервер.</p>
+                                            <form method="post" asp-page-handler="MergeBranch" class="form">
+                                                <input type="hidden" name="Branch" value="@br.Name" />
+                                                <label class="field"><span>Что изменено (коммит в dev, пункт CHANGELOG)</span>
+                                                    <input name="Message" required value="@c.Title" /></label>
+                                                <div class="form-actions"><button class="btn btn-primary" type="submit">Влить в тест</button></div>
+                                            </form>
+                                        </div>
+                                    </dialog>
                                 }
                                 <form method="post" asp-page-handler="DeleteBranch" class="inline" data-confirm="Удалить ветку @br.Name со всеми правками?">
                                     <input type="hidden" name="Branch" value="@br.Name" />
@@ -234,11 +238,11 @@
                             }
                             else if (c.Stage == TypesChangeStage.Test)
                             {
-                                <a class="btn btn-sm" href="/Types/Promote?target=release&selected=@c.Commit!.Id" title="Перенести только это изменение в release и на стейдж">/ стейдж</a>
+                                <a class="btn btn-sm" href="/Types/Promote?target=release&selected=@c.Commit!.Id" title="Перенести только это изменение в release и на стейдж">На стейдж</a>
                             }
                             else if (c.Stage == TypesChangeStage.Stage)
                             {
-                                <a class="btn btn-sm btn-promote" href="/Types/Promote?target=main&selected=@c.Commit!.Id" title="Выпустить это изменение в main и на прод">/ прод</a>
+                                <a class="btn btn-sm btn-promote" href="/Types/Promote?target=main&selected=@c.Commit!.Id" title="Выпустить это изменение в main и на прод">На прод</a>
                             }
                         </td>
                     </tr>
@@ -371,7 +375,7 @@ else if (snap is not null)
     </div>
     @if (Model.Branch is not null)
     {
-        <div class="alert alert-info">Ветка изменения <code>@Model.Branch</code>: правки сохраняются в неё. На тест - «Влить / тест» на вкладке <a href="/Types#changes">«Изменения»</a>.</div>
+        <div class="alert alert-info">Ветка изменения <code>@Model.Branch</code>: правки сохраняются в неё. На тест - «Влить в тест» на вкладке <a href="/Types#changes">«Изменения»</a>.</div>
     }
     else if (!ro)
     {

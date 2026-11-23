@@ -107,6 +107,31 @@ public sealed class PilotModuleGateway : IModuleTarget
             return _sessions.ApplyAndConfirmAsync(s, modifier, $"новая версия серверного расширения {fileName}");
         }, ct);
 
+    /// <summary>
+    /// Первая установка серверного расширения (так ставят ServerHost): объект $PilotServerExtension с zip в корневой папке
+    /// расширений, как делает «Модули расширения» клиента Pilot. Pilot-Server загрузит его при следующем старте базы.
+    /// </summary>
+    public Task<Guid> CreateServerExtensionAsync(string url, PilotLogin login, int licenseType, string name, string fileName, byte[] zip,
+        string additional, string reason, CancellationToken ct) =>
+        _sessions.RunAsync(url, login, licenseType, async s =>
+        {
+            var type = s.Metadata.Types.FirstOrDefault(t => t.Name == ServerExtensionTypeName)
+                       ?? throw new PilotGatewayException(PilotErrorKind.Configuration, $"В базе нет типа {ServerExtensionTypeName}.");
+            var root = (await FindRootsAsync(s)).FirstOrDefault()
+                       ?? throw new PilotGatewayException(PilotErrorKind.Configuration, "В базе не найдена папка расширений (тип Extension_folder) или нет прав на неё.");
+            var attributes = type.Attributes.Select(a => a.Name).ToHashSet(StringComparer.Ordinal);
+            var id = Guid.NewGuid();
+            var modifier = s.CreateModifier();
+            var builder = modifier.CreateObject(id, root.Id, type.Id);
+            if (attributes.Contains(NameAttribute))
+                builder.SetAttribute(NameAttribute, new DValue { StrValue = name });
+            if (attributes.Contains(AdditionalAttribute))
+                builder.SetAttribute(AdditionalAttribute, new DValue { StrValue = additional });
+            builder.CreateSnapshot(reason).AddFile(PilotReportGateway.Document(fileName, zip), s.Storage);
+            await _sessions.ApplyAndConfirmAsync(s, modifier, $"установка серверного расширения {fileName}");
+            return id;
+        }, ct);
+
     public async Task<IReadOnlyList<PackageAssembly>?> AssembliesAsync(string url, PilotLogin login, int licenseType, PilotModule module, CancellationToken ct)
     {
         var zip = await DownloadAsync(url, login, licenseType, module, ct);

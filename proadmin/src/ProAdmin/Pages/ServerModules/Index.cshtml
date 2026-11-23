@@ -50,7 +50,11 @@
 @if (Model.Error is not null)
 {
     <div class="alert @(Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Configuration ? "alert-warn" : "alert-error")">@Model.Error.Message</div>
-    @if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+    @if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication && Model.UsesServiceAccounts)
+    {
+        <partial name="_ServiceAccountHint" model="Model.Current!.Title" />
+    }
+    else if (Model.Error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
     {
         <section class="card narrow-card">
             <h2>Вход в базу сервера «@Model.Current!.Title»</h2>
@@ -72,11 +76,22 @@
         <section class="card">
             <h2>Как установить ServerHost (один раз на сервер)</h2>
             <ol>
-                <li>Соберите <code>server-extensions/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>.</li>
-                <li>В клиенте Pilot: «Модули расширения» / добавить <code>ServerHost.zip</code> как расширение Pilot-Server.</li>
+                <li>Возьмите <code>ServerHost-X.Y.Z.zip</code> из <a href="https://github.com/PilotOpenTools/PilotProAdmin/releases/latest" target="_blank" rel="noopener">релиза PilotProAdmin</a>
+                    (или соберите <code>server-extensions/ServerHost/ServerHost.sln</code> в Release - получится <code>ServerHost/dist/ServerHost.zip</code>).</li>
+                <li>Загрузите архив формой ниже (только администратор админки) или в клиенте Pilot: «Модули расширения» / добавить как расширение Pilot-Server.
+                    Когда хост есть в релизе GitHub, его можно поставить и на странице <a href="/OpenTools">PilotOpenTools</a>.</li>
                 <li>Перезапустите сервер Pilot (контейнер) - это последний перезапуск: дальше модули обновляются отсюда.</li>
                 <li>Модули, которые сейчас установлены штатно (например, ApprovalDocumentVersionSaving), загрузите здесь и удалите из «Модулей расширения».</li>
             </ol>
+            @if (Model.IsAdmin && !readOnly)
+            {
+                <form method="post" asp-page-handler="UpdateHost" enctype="multipart/form-data" class="form" id="install-host"
+                      data-confirm="@(Model.IsProd ? "Установить ServerHost в базу ПРОДА? Он заработает после перезапуска сервера Pilot." : "Установить ServerHost в базу? Он заработает после перезапуска сервера Pilot.")">
+                    <input type="hidden" name="Env" value="@Model.Env" />
+                    <label class="field"><span>Архив ServerHost (в корне <code>ServerHost.servext.dll</code>)</span><input type="file" name="Archive" accept=".zip" required /></label>
+                    <button class="btn btn-primary" type="submit">Установить в базу</button>
+                </form>
+            }
         </section>
     }
 }
@@ -95,7 +110,7 @@
             Pilot-Server читает хост один раз при старте: новая версия начинает работать только после перезапуска сервера Pilot
             (всех узлов в кластере) - в отличие от модулей, которые обновляются на лету.
         </p>
-        @if (Model.IsProdAdmin && !readOnly)
+        @if (Model.IsAdmin && !readOnly)
         {
             <form method="post" asp-page-handler="UpdateHost" enctype="multipart/form-data" class="form"
                   data-confirm="@(Model.IsProd ? "Записать новую версию ServerHost в базу ПРОДА? Она вступит в силу после перезапуска сервера Pilot." : "Записать новую версию ServerHost в базу? Она вступит в силу после перезапуска сервера Pilot.")">
@@ -105,9 +120,9 @@
                 <button class="btn btn-primary" type="submit">Записать в базу</button>
             </form>
         }
-        else if (!Model.IsProdAdmin)
+        else if (!Model.IsAdmin)
         {
-            <p class="muted small">Обновлять сам хост может только администратор прода.</p>
+            <p class="muted small">Обновлять сам хост может только администратор админки.</p>
         }
     </section>
 }
@@ -326,7 +341,7 @@ else if (state is not null && Model.HostLookupError is null)
                 }
                 else
                 {
-                    <span>Возьмите debug у администратора (<code>server-extensions/Debug</code>: <code>dotnet publish -c Release</code>).</span>
+                    <span>Скачайте <code>PilotServerDebug-&lt;версия&gt;.zip</code> из <a href="https://github.com/PilotOpenTools/PilotServerDebug/releases/latest" target="_blank" rel="noopener">релизов PilotServerDebug</a> и распакуйте, например, в <code>C:\Tools\debug</code>.</span>
                 }
             </li>
             <li>У нужной активности в таблице выше нажмите «Отладить локально» / <b>debug.json</b> (можно сразу указать Id объекта;

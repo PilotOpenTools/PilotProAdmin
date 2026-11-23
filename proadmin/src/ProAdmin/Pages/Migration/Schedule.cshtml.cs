@@ -68,7 +68,7 @@ public class ScheduleModel : AppPageModel
                 return Page();
             }
 
-            var saved = await _client.SaveScheduleAsync(dto, CurrentSession.PilotLogin, ct);
+            var saved = await _client.SaveScheduleAsync(dto, CurrentSession.Actor, ct);
             TempData["Flash"] = $"Расписание «{saved.Name}» сохранено: {saved.Description}, следующий запуск {saved.NextRunAt?.ToLocalTime():dd.MM HH:mm}.";
             return RedirectToPage("/Migration/Index");
         }

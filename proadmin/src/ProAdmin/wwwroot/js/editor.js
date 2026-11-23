@@ -151,7 +151,7 @@
         const msg = isDelete
             ? `Удалить «${currentName()}» из ветки ${data.branch} и с сервера?`
             : data.workMode
-                ? `Сохранить «${currentName()}» в ${target}? Сервер не меняется: ${data.hotfix ? 'на прод - «Hotfix в прод»' : 'на тест - «Влить / тест»'} на странице автоматизации.`
+                ? `Сохранить «${currentName()}» в ${target}? Сервер не меняется: ${data.hotfix ? 'на прод - «Hotfix в прод»' : 'на тест - «Влить в тест»'} на странице автоматизации.`
                 : `Отправить «${currentName()}» в ветку ${data.branch}? Изменения попадут на сервер после успешного pipeline.`;
         if (!confirm(msg)) { e.preventDefault(); return; }
         dirty = false;

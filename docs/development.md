@@ -33,4 +33,4 @@ dotnet docfx docfx.json --warningsAsErrors
 
 На Windows добавьте `-WithPortable`, чтобы собрать и проверить запуск приложений из архива Portable.
 
-Workflow Release проверяет контейнеры и сборку архивов в PR в `main`. Его также можно запустить вручную. После слияния тег `v1.0.3` публикует Docker Lite, архив Docker-образов, Windows Portable и комплект кластера с контрольными суммами. Оба образа получают тег `1.0.3` в GHCR. Workflow проверяет доступ к ним без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.
+Workflow Release проверяет контейнеры и сборку архивов в PR в `main`. Его также можно запустить вручную. Локально `-Offline` дополнительно собирает оба образа из рабочего дерева и кладёт их в `PilotProAdmin-vX.Y.Z-offline.zip` рядом с `install.ps1`: так проверяют установку незакоммиченного кода на другой машине. После слияния тег `v1.0.3` публикует Docker Lite, Offline (Lite с архивом образов), архив Docker-образов, Windows Portable и комплект кластера с контрольными суммами. Оба образа получают тег `1.0.3` в GHCR. Workflow проверяет доступ к ним без учётных данных. Версию задаёт `proadmin/src/ProAdmin/PilotProAdmin.csproj`.

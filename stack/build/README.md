@@ -16,7 +16,7 @@
 .\build\make-passwords.ps1            # собрать заново только Install\PASSWORDS.md
 ```
 
-Нужен git: им собираются бандлы модулей в `Install\modules\sources`. Папки модулей могут быть и без `.git` (например, скачанный архив): тогда бандл - один коммит из файлов папки с учётом её `.gitignore`.
+Нужен git: им собираются бандлы модулей в `Install\modules\sources`. Pilot.ClientSdk и Reports ведутся в отдельных репозиториях [PilotClientSdk](https://github.com/PilotOpenTools/PilotClientSdk) и [PilotReports](https://github.com/PilotOpenTools/PilotReports). Сборка берёт их клоны из папки `-ModulesRoot` (по умолчанию та, где лежит клон PilotProAdmin, то есть `..\PilotClientSdk` и `..\PilotReports` рядом с ним), а если клона там нет, клонирует репозиторий с GitHub во временную папку; без интернета положите клоны заранее. Бандл - ветка `main` клона с тегами, без веток задач.
 
 Свежий бэкап (без `-DataFrom` и `-NoData`) снимается только с работающего стека, запущенного из этой же папки: `.env` контуров, `gitlab\config` и данные админки бэкап берёт из соседних папок. Если стек запущен из другой папки, сборка останавливается сразу: снимите бэкап там (`backup\backup.ps1`) и передайте его через `-DataFrom`. Бэкап без `.env` какого-либо контура считается неудачным.
 

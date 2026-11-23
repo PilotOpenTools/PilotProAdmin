@@ -19,6 +19,11 @@
         {
             <a class="action-link" href="/Modules/Assemblies" title="Какие сторонние dll и каких версий можно класть в модули; состав модулей на серверах">Сборки</a>
         }
+        @if (!Model.ModulesReadOnly)
+        {
+            <a class="btn btn-sm btn-primary" href="/Modules/Create@(Model.IsServer ? "?kind=server" : "")" title="Репозиторий в группе GitLab с готовым каркасом, ветками и CI">Новый модуль</a>
+        }
+        <a class="btn btn-sm" href="/OpenTools" title="PilotClientSdk, PilotReports, PilotLookUp и ServerHost: версии на серверах против релизов GitHub, установка и обновление">Проверить модули PilotOpenTools</a>
         <a class="action-link" href="#libraries" title="Режим библиотек и список разрешённых">Библиотеки</a>
         <a class="action-link" href="@(Model.IsServer ? "/Process#server-modules" : "/Process#modules")">Как это работает</a>
     </div>
@@ -63,7 +68,11 @@ else if (catalog is not null)
     {
         var env = catalog.Envs.First(e => e.Key == envKey);
         <div class="alert alert-error">@env.Title: @error.Message</div>
-        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
+        @if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication && Model.UsesServiceAccounts)
+        {
+            <partial name="_ServiceAccountHint" model="env.Title" />
+        }
+        else if (error.Kind == ProAdmin.Pilot.PilotErrorKind.Authentication)
         {
             <section class="card narrow-card">
                 <h2>Вход в базу сервера «@env.Title» для модулей</h2>
@@ -133,13 +142,18 @@ else if (catalog is not null)
                                     @if (git.MainVersion is not null) { <span>· main @git.MainVersion</span> }
                                     @if (!git.HasCi) { <span class="badge badge-differs" title="Без .gitlab-ci.yml выкладка невозможна - нечего брать из артефактов">нет CI</span> }
                                     @if (git.Dev is null) { <span class="badge badge-differs">нет dev</span> }
+                                    @if (!Model.IsServer && (OpenToolsCatalog.ForClientModule(git.AssemblyName) ?? OpenToolsCatalog.ForClientModule(row.Name)) is { } openTool)
+                                    {
+                                        <a class="badge" href="@openTool.RepositoryUrl" target="_blank" rel="noopener"
+                                           title="Исходники и релизы модуля - в github.com/@openTool.Repository; этот репозиторий GitLab - копия стенда для выкладки через CI">PilotOpenTools</a>
+                                    }
                                 </div>
                             </td>
                             <td>@await Html.PartialAsync("_MiniFlow", MiniFlows.ForModule(row))</td>
                             <td class="small">
                                 @if (git.TaskBranches.Count > 0) { <span class="badge" title="@string.Join(", ", git.TaskBranches.Select(b => b.Name))">задачи: @git.TaskBranches.Count</span> }
                                 @if (git.HotfixBranches.Count > 0) { <span class="badge badge-failed" title="@string.Join(", ", git.HotfixBranches.Select(b => b.Name))">hotfix: @git.HotfixBranches.Count</span> }
-                                <a href="/Modules/Module?name=@q@kindQuery">открыть /</a>
+                                <a href="/Modules/Module?name=@q@kindQuery">открыть</a>
                             </td>
                         </tr>
                     }
@@ -149,10 +163,72 @@ else if (catalog is not null)
         </div>
     }
 
-    @if (catalog.Unmatched.Count > 0)
+    var openToolModules = Model.IsServer
+        ? new List<(string Name, Dictionary<string, ProAdmin.Pilot.PilotModule> ByEnv)>()
+        : catalog.Unmatched.Where(u => OpenToolsCatalog.ForClientModule(u.Name) is not null).ToList();
+    var unmatched = catalog.Unmatched.Except(openToolModules).ToList();
+    @if (!Model.IsServer)
+    {
+        var inGitLab = catalog.Rows.Select(r => OpenToolsCatalog.ForClientModule(r.Git?.AssemblyName) ?? OpenToolsCatalog.ForClientModule(r.Name)).Where(t => t is not null).ToHashSet();
+        var tools = OpenToolsCatalog.All.Where(t => t.Kind == OpenToolKind.Client && !inGitLab.Contains(t)).ToList();
+        @if (tools.Count > 0)
+        {
+            <section class="card" id="opentools">
+                <div class="page-head">
+                    <h2>Модули PilotOpenTools</h2>
+                    <div class="head-actions"><a class="btn btn-sm btn-primary" href="/OpenTools">Сверить с GitHub и обновить</a></div>
+                </div>
+                <p class="muted small">
+                    Эти модули взяты из <a href="@OpenToolsCatalog.Organization" target="_blank" rel="noopener">github.com/PilotOpenTools</a>:
+                    их исходники и релизы на GitHub, поэтому репозитория в группе GitLab у них нет и CI стенда их не выкладывает.
+                    Установка и обновление из релиза GitHub - на странице «PilotOpenTools».
+                </p>
+                <table class="table">
+                    <thead><tr><th>Модуль</th>@foreach (var env in catalog.Envs) { <th>@env.Title</th> }</tr></thead>
+                    <tbody>
+                    @foreach (var tool in tools)
+                    {
+                        var found = openToolModules.Where(u => tool.Matches(u.Name)).ToList();
+                        <tr>
+                            <td>
+                                <a class="strong" href="@tool.RepositoryUrl" target="_blank" rel="noopener">@tool.Title</a>
+                                <span class="badge" title="Модуль из github.com/@tool.Repository">PilotOpenTools</span>
+                                <div class="muted small">@(found.FirstOrDefault().Name ?? tool.Description)</div>
+                            </td>
+                            @foreach (var env in catalog.Envs)
+                            {
+                                var m = found.Select(u => u.ByEnv.GetValueOrDefault(env.Key)).FirstOrDefault(x => x is not null);
+                                <td class="small">
+                                    @if (catalog.PilotErrors.ContainsKey(env.Key))
+                                    {
+                                        <span class="muted">сервер недоступен</span>
+                                    }
+                                    else if (m is null)
+                                    {
+                                        <span class="badge badge-onlygit">нет на сервере</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="mono">@(m.Version ?? "есть")</span>
+                                        @if (!Model.ModulesReadOnly)
+                                        {
+                                            @await Html.PartialAsync("_ModuleDisableForm", new ModuleDisableForm(env.Key, env.Title, m.Id, m.Name, Model.ProtectedReason(m), null))
+                                        }
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </section>
+        }
+    }
+
+    @if (unmatched.Count > 0)
     {
         <details class="card">
-            <summary><b>Модули на серверах без репозитория в группе:</b> @catalog.Unmatched.Count</summary>
+            <summary><b>Модули на серверах без репозитория в группе:</b> @unmatched.Count</summary>
             <p class="muted small">
                 Репозиторий сопоставляется по AssemblyProduct (= «Наименование» в Pilot), имени проекта GitLab или коду в скобках
                 («… - (OpenStoradge) - (CICD)» / проект OpenStoradge). Чтобы модуль появился в таблице, создайте для него репозиторий в группе.
@@ -160,7 +236,7 @@ else if (catalog is not null)
             <table class="table">
                 <thead><tr><th>Наименование в Pilot</th>@foreach (var env in catalog.Envs) { <th>@env.Title</th> }</tr></thead>
                 <tbody>
-                @foreach (var (name, byEnv) in catalog.Unmatched)
+                @foreach (var (name, byEnv) in unmatched)
                 {
                     <tr>
                         <td>@name</td>

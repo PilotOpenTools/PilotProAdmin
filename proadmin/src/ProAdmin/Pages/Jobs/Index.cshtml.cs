@@ -16,7 +16,7 @@ public class IndexModel : AppPageModel
     {
         ViewData["Section"] = "jobs";
         var session = CurrentSession;
-        var all = IsProdAdmin;
+        var all = IsAdmin;
         ShowAll = all;
         Jobs = _store.Recent(200).Where(j => JobStore.CanSee(j, session, all)).ToList();
     }

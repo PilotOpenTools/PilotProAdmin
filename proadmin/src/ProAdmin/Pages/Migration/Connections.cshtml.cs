@@ -37,7 +37,7 @@ public class ConnectionsModel : AppPageModel
         Clean();
         try
         {
-            Config = await _client.SaveConfigAsync(Config, CurrentSession.PilotLogin, ct);
+            Config = await _client.SaveConfigAsync(Config, CurrentSession.Actor, ct);
             TempData["Flash"] = "Подключения сохранены.";
             return RedirectToPage();
         }
@@ -55,7 +55,7 @@ public class ConnectionsModel : AppPageModel
         Clean();
         try
         {
-            Config = await _client.SaveConfigAsync(Config, CurrentSession.PilotLogin, ct);
+            Config = await _client.SaveConfigAsync(Config, CurrentSession.Actor, ct);
             CheckResults = await _client.CheckConfigAsync(ct);
         }
         catch (MigrationServiceException ex)

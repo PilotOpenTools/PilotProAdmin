@@ -509,11 +509,131 @@ exit /b 0
     $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod', '-SkipLoad')
     $log = Get-Content $env:STUB_LOG -Raw
     Check ($r.Code -eq 0 -and $log -notmatch 'tar xzf|ls -A /v') 'бэкап без части rustfs: без ошибок, том не трогается (прежнее поведение)'
+
+    # Бэкап времён MinIO: папка minio\<контур>\pilot-ice-ru, в settings.xml адрес minio-<контур>, учётка Pilot только в .env.
+    Snap
+    New-Item -ItemType Directory "$snapRoot\minio\prod\pilot-ice-ru\10\199\obj" -Force | Out-Null
+    [IO.File]::WriteAllText("$snapRoot\minio\prod\pilot-ice-ru\10\199\obj\xl.meta", 'm')
+    [IO.File]::WriteAllText("$snapRoot\pilot\prod\pilot-server\settings\settings.xml", '<Configuration><FileArchiveParametersS3 AccessKeyId="pilot" Url="http://minio-prod:9000" Bucket="pilot-ice-ru" /></Configuration>')
+    [IO.File]::AppendAllText("$snapRoot\admin\env\prod\.env", "MINIO_PILOT_USER=pilot`nMINIO_PILOT_SECRET=pilotS3secret98765`n")
+    $w = Fresh 'minio-legacy'
+    $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod', '-SkipLoad')
+    if ($r.Code) { Write-Host $r.Out }
+    $log = Get-Content $env:STUB_LOG -Raw
+    $xml = [IO.File]::ReadAllText("$($w.Data)/prod/pilot-server/settings/settings.xml")
+    Check ($r.Code -eq 0 -and $xml -match 'Url="http://rustfs-prod:9000"' -and $xml -notmatch 'minio-prod') 'бэкап MinIO: адрес S3-архива в settings.xml заменён на rustfs-prod'
+    Check ($log -match '-v cicd_rustfs_prod:/v -v \S+\.restore-minio:/b:ro rustfs/rustfs:1\.0\.5 -c "mkdir -p /v/pilot-ice-ru && cp -r /b/pilot-ice-ru/\. /v/pilot-ice-ru/ && chown 10001:10001 /v && chown -R 10001:10001 /v/pilot-ice-ru"') 'бэкап MinIO: папка бакета копируется в том cicd_rustfs_prod, владелец 10001 (и корень тома)'
+    $cp = $log.IndexOf('cp -r /b/pilot-ice-ru'); $cu = $log.IndexOf('--remove-orphans'); $ua = $log.IndexOf('rc admin user add')
+    Check ($cp -ge 0 -and $cp -lt $cu -and $cu -lt $ua) 'бэкап MinIO: копирование до compose up, учётка Pilot - после (шаг «Бакеты RustFS»)'
+    Check ($log -match '-e PILOT_U -e PILOT_S -e PILOT_POLICY' -and $log -notmatch 'pilotS3secret98765') 'учётка Pilot: секрет передаётся окружением, в аргументах docker его нет'
+    Check ($r.Out -match 'rustfs-prod: учётка pilot' -and -not (Test-Path "$($w.Data)/.restore-minio")) 'учётка pilot заведена; промежуточная копия удалена'
 }
 finally {
     $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne "$tmp\stub" }) -join ';'
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
+
+# --- база Pilot из файловой базы: разбор пути (папка, .zip, путь внутри .zip) и распаковка ---
+Write-Host "`nФайловая база Pilot: путь к источнику"
+foreach ($name in 'Resolve-PilotDbSource', 'Copy-PilotDbSource', 'Copy-Tree') {
+    $f = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)[0]
+    if (-not $f) { throw "В install.ps1 нет функции $name" }
+    Invoke-Expression $f.Extent.Text
+}
+$onLinux = $false
+$dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-selftest-" + [guid]::NewGuid().ToString('N'))
+try {
+    foreach ($b in 'one', 'two') {
+        New-Item -ItemType Directory -Force "$dbTmp\src\Databases\$b\FileArchive\10\199" | Out-Null
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\base.dbp", $b)
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\FileArchive\x.pilotfa", '')
+        [IO.File]::WriteAllText("$dbTmp\src\Databases\$b\FileArchive\10\199\body", 'b')
+    }
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $zipPath = "$dbTmp\Databases.zip"
+    # Записи с \ в именах - как в архивах, собранных в Windows.
+    $zs = [IO.File]::Create($zipPath); $za = New-Object IO.Compression.ZipArchive($zs, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem "$dbTmp\src" -Recurse -File) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $file.FullName, $file.FullName.Substring("$dbTmp\src\".Length))
+        }
+    } finally { $za.Dispose(); $zs.Dispose() }
+    $err = { param($p) try { Resolve-PilotDbSource $p | Out-Null; '' } catch { $_.Exception.Message } }
+    Check ((Resolve-PilotDbSource "$dbTmp\src\Databases\one").Dir -eq "$dbTmp\src\Databases\one") 'папка базы'
+    Check ((Resolve-PilotDbSource "`"$dbTmp\src\Databases\one\`"").Dir -eq "$dbTmp\src\Databases\one") 'папка в кавычках и с \ в конце'
+    Check ((Resolve-PilotDbSource "$dbTmp\src\Databases\one\base.dbp").Dir -eq "$dbTmp\src\Databases\one") 'путь к самому base.dbp'
+    Check ((Resolve-PilotDbSource "$zipPath\Databases\two\base.dbp").Inner -eq 'Databases/two') 'путь к base.dbp внутри .zip'
+    Check ((& $err "$dbTmp\src") -match 'несколько баз') 'папка с двумя базами - отказ'
+    Check ((& $err "$dbTmp\nope") -match 'Не найдено') 'нет пути - отказ'
+    $z = Resolve-PilotDbSource "$zipPath\Databases\two"
+    Check ($z.Zip -eq $zipPath -and $z.Inner -eq 'Databases/two') 'путь внутри .zip (записи с \)'
+    Check ((& $err $zipPath) -match 'несколько баз') '.zip с двумя базами без пути - отказ'
+    Check ((& $err "$zipPath\Databases\three") -match 'нет base.dbp') 'нет базы внутри .zip - отказ'
+    Copy-PilotDbSource $z "$dbTmp\out"
+    Check ((Test-Path "$dbTmp\out\base.dbp") -and [IO.File]::ReadAllText("$dbTmp\out\base.dbp") -eq 'two' -and (Test-Path "$dbTmp\out\FileArchive\10\199\body") -and (Test-Path "$dbTmp\out\FileArchive\x.pilotfa")) 'распаковка базы и архива из .zip'
+    Check (-not (Test-Path "$dbTmp\out\Databases")) 'из .zip берётся только выбранная база'
+} finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
+
+# --- база Pilot из файловой базы: не запустилась - установка падает, а не пишет .installed ---
+Write-Host "`nФайловая база Pilot: база не запустилась"
+$dbFunctions = @{}
+foreach ($name in 'Import-PilotDatabase', 'Assert-PilotDatabaseLaunched', 'Wait-PilotDatabase', 'Get-PilotImportMarker', 'Test-PilotDatabaseRegistered', 'Resume-PilotDatabaseImport') {
+    $dbFunctions[$name] = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)[0]
+    if (-not $dbFunctions[$name]) { throw "В install.ps1 нет функции $name" }
+}
+$notLaunched = @('Import-PilotDatabase', 'Assert-PilotDatabaseLaunched' | ForEach-Object {
+    $dbFunctions[$_].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match '\$state -ne ''Launched''' }, $true) })
+Check ($notLaunched.Count -eq 2 -and @($notLaunched | Where-Object { $_.Clauses[0].Item2.Extent.Text -notmatch '\bthrow\b' -or $_.Clauses[0].Item2.Extent.Text -match '\breturn\b' }).Count -eq 0) 'не запустилась (загрузка и повторная установка) - throw, без return'
+# Релизная обёртка при повторном запуске не передаёт -PilotDatabases: начатая загрузка проверяется или продолжается и без него.
+$installText = [IO.File]::ReadAllText($installPs1)
+Check ($installText -match '(?s)if \(-not \(Test-Path "\$root/\.installed"\)\) \{\s*foreach \(\$c in @\(\$myContours \| Where-Object \{ -not \$pilotDbSources\.Contains\(\$_\) \}\)\) \{ Resume-PilotDatabaseImport \$c \}') 'повторный запуск без -PilotDatabases (релизная обёртка): начатая загрузка проверяется до .installed'
+# Метка незавершённой загрузки - до первой записи данных (рабочая копия), снимается только после запуска базы.
+$importText = $dbFunctions['Import-PilotDatabase'].Body.Extent.Text
+$markerAt = $importText.IndexOf('WriteAllText((Get-PilotImportMarker $c)')
+Check ($markerAt -gt 0 -and $markerAt -lt $importText.IndexOf('Copy-PilotDbSource') -and $importText.LastIndexOf('Get-PilotImportMarker') -gt $importText.IndexOf("'Launched'")) 'метка загрузки ставится до рабочей копии и снимается после запуска базы'
+foreach ($f in $dbFunctions.Values) { Invoke-Expression $f.Extent.Text }
+$dbTmp = Join-Path ([IO.Path]::GetTempPath()) ("pilotdb-state-" + [guid]::NewGuid().ToString('N'))
+try {
+    $root = $dbTmp; $pilotDbName = 'pilot-ice_ru'
+    function Start-Sleep { }
+    # Журнал сервера: база запустилась, потом сломалась - важно последнее состояние.
+    $script:serverLog = "Database $pilotDbName to state Launched`nDatabase $pilotDbName to state Broken"
+    function docker { if ($args[0] -eq 'inspect') { '2026-11-20T10:00:00Z' } else { $script:serverLog } }
+    Check ((Wait-PilotDatabase 'test' (Get-Date)) -eq 'Broken') 'Wait-PilotDatabase: Launched, затем Broken - Broken'
+    $script:serverLog = "Database $pilotDbName to state Broken`nDatabase $pilotDbName to state Launched"
+    Check ((Wait-PilotDatabase 'test' (Get-Date)) -eq 'Launched') 'Wait-PilotDatabase: Broken, затем Launched - Launched'
+
+    New-Item -ItemType Directory -Force "$root/test/pilot-server/settings" | Out-Null
+    [IO.File]::WriteAllText("$root/test/pilot-server/settings/settings.xml", "<Configuration><Databases><DatabaseParameters Name='$pilotDbName' /></Databases></Configuration>")
+    $script:serverLog = "Database $pilotDbName to state Launched`nDatabase $pilotDbName to state Broken"
+    $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'не запущена \(Broken\)' -and $msg -match 'before-import') 'повторная установка: прописанная, но сломанная база - ошибка с инструкцией'
+    $script:serverLog = "Database $pilotDbName to state Launched"
+    $msg = try { Import-PilotDatabase 'test' $null; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '') 'повторная установка: запущенная база - пропуск без ошибки'
+
+    # Загрузка оборвалась до записи settings.xml (например, на копировании в RustFS): рабочая папка есть, before-import нет.
+    [IO.File]::WriteAllText("$root/test/pilot-server/settings/settings.xml", '<Configuration><Databases /></Configuration>')
+    New-Item -ItemType Directory -Force "$root/test/databases/.import-$pilotDbName" | Out-Null
+    function Import-PilotDatabase { param($c, $source) $script:resumed = "$c|$($source.Title)" }
+    function Resolve-PilotDbSource { param($p) if ($p -eq 'D:\base') { @{ Dir = $p; Title = $p } } else { throw "Не найдено: $p" } }
+    $script:resumed = ''
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), "D:\base`n")
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '' -and $script:resumed -eq 'test|D:\base') 'прерванная загрузка без -PilotDatabases продолжается из сохранённого источника'
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), "D:\moved`n")
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'не завершена' -and $msg -match '-PilotDatabases') 'источник недоступен - остановка с инструкцией (без .installed)'
+    [IO.File]::WriteAllText((Get-PilotImportMarker 'test'), '')
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -match 'источник неизвестен') 'источник не сохранён - остановка с инструкцией'
+    Remove-Item -LiteralPath (Get-PilotImportMarker 'test')
+    $script:resumed = ''
+    $msg = try { Resume-PilotDatabaseImport 'test'; '' } catch { $_.Exception.Message }
+    Check ($msg -eq '' -and $script:resumed -eq '') 'без метки и before-import - контур без загрузки базы, проверка не нужна'
+    Remove-Item Function:\docker, Function:\Start-Sleep, Function:\Import-PilotDatabase, Function:\Resolve-PilotDbSource
+} finally { Remove-Item -Recurse -Force $dbTmp -ErrorAction SilentlyContinue }
+
 Write-Host ''
 if ($failed) { Write-Host "НЕ ПРОЙДЕНО: $failed" -ForegroundColor Red; exit 1 }
 Write-Host 'ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' -ForegroundColor Green

@@ -19,11 +19,33 @@ if ($LASTEXITCODE -or $dockerHost -notlike 'npipe:*' -or ($env:DOCKER_HOST -and 
 $engine = & docker info --format '{{.OSType}}'
 if ($LASTEXITCODE -or $engine -ne 'linux') { throw 'Запустите Docker Desktop в режиме Linux containers на компьютере с исходным стендом.' }
 
-if (-not ($InstallDirectory -or $StackDirectory)) {
-    $workDir = & docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' postgres-prod
-    if ($LASTEXITCODE -or -not $workDir -or $workDir -eq '<no value>') {
-        throw 'Не найдена папка Compose контейнера postgres-prod. Укажите -InstallDirectory или -StackDirectory.'
+# Папка установки - та, где лежат .env и docker-compose.yml (её создаёт install.ps1, например ...\PilotProAdmin-install).
+# Указали папку выше (распакованный релиз) - берём единственную вложенную папку с .env и docker-compose.yml.
+if ($InstallDirectory -and -not (Test-Path -LiteralPath (Join-Path $InstallDirectory '.env') -PathType Leaf)) {
+    $nested = @(Get-ChildItem -LiteralPath $InstallDirectory -Directory -ErrorAction SilentlyContinue | Where-Object {
+        (Test-Path -LiteralPath (Join-Path $_.FullName '.env') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName 'docker-compose.yml') -PathType Leaf)
+    })
+    if ($nested.Count -ne 1) {
+        throw "В $InstallDirectory нет .env. Укажите папку установки, где лежат .env и docker-compose.yml."
     }
+    $InstallDirectory = $nested[0].FullName
+    Write-Host "Папка установки: $InstallDirectory"
+}
+
+if (-not ($InstallDirectory -or $StackDirectory)) {
+    # Метку читаем из JSON: Windows PowerShell 5.1 срезает кавычки внутри --format '{{index ... "label"}}',
+    # и docker отвечает «function "com" not defined».
+    $workDir = $null
+    $inspect = & docker inspect postgres-prod 2>$null
+    if (-not $LASTEXITCODE -and $inspect) {
+        $labels = (($inspect | Out-String) | ConvertFrom-Json)[0].Config.Labels
+        if ($labels) { $workDir = $labels.'com.docker.compose.project.working_dir' }
+    }
+    if (-not $workDir) {
+        throw 'Не найдена папка Compose контейнера postgres-prod (контейнер не запущен или создан не через docker compose). Укажите -InstallDirectory - папку установки, где лежат .env и docker-compose.yml.'
+    }
+    Write-Host "Папка стенда (по контейнеру postgres-prod): $workDir"
     if (Test-Path -LiteralPath (Join-Path $workDir 'backup')) {
         $StackDirectory = $workDir
     } elseif ((Split-Path $workDir -Leaf) -eq 'prod' -and

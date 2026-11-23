@@ -25,9 +25,8 @@
 
 | Папка | Что внутри |
 |---|---|
-| `../client-modules/` | `Pilot.ClientSdk` (общий клиентский модуль, до 2.0.0 - Modules), `Test-module`, шаблон CI |
-| `../Reports/` | модуль отчётов |
-| `../server-extensions/` | Три решения: `ServerHost` (загрузчик серверных модулей и тесты), `Debug` (локальная отладка), `TestServerAction` (пример модуля); шаблон CI - см. README папки |
+| `../client-modules/` | `Test-module`, шаблон CI. Общий клиентский модуль и модуль отчётов - в репозиториях [PilotClientSdk](https://github.com/PilotOpenTools/PilotClientSdk) и [PilotReports](https://github.com/PilotOpenTools/PilotReports) |
+| `../server-extensions/` | Два решения: `ServerHost` (загрузчик серверных модулей и тесты), `TestServerAction` (пример модуля); шаблон CI - см. README папки. Локальная отладка - [PilotServerDebug](https://github.com/PilotOpenTools/PilotServerDebug) |
 | `../gitlab/ci-checks/` | проверки автоматизаций и отчётов для GitLab CI, свой репозиторий `pilot-ci/checks` |
 | `backup/` | ежедневные резервные копии (Postgres, файлы Pilot и RustFS, GitLab, админка, тома Grafana, Loki и Prometheus) в `D:\Backups`, проверка и восстановление - см. README папки |
 | `Install/` | установочная папка для другого сервера, с текущими данными или чистая. Передаётся целиком, заполняет её `build/build.ps1` - см. `build/README.md`. Ручная настройка Pilot - `Install/docs/` |

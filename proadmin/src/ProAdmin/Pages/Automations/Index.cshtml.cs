@@ -71,6 +71,8 @@ public class IndexModel : AppPageModel
     {
         if (Prepare() is { } redirect)
             return redirect;
+        if (UsesServiceAccounts)
+            return NotFound(); // при входе через GitLab учётки Pilot - только служебные из «Настроек»
         if (BlockedCredentialAttempt() is { } blocked)
             return blocked;
         var env = AppSettings.Find(CredEnv);

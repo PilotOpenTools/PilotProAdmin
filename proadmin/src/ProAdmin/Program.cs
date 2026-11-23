@@ -44,7 +44,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.SlidingExpiration = true;
         options.Events.OnValidatePrincipal = async context =>
         {
-            // Сессия живёт в памяти: после перезапуска или выхода cookie становится недействительной.
+            // Сессии GitLab переживают перезапуск (sessions.dat); после выхода или простоя cookie недействительна.
             var vault = context.HttpContext.RequestServices.GetRequiredService<SessionVault>();
             var sid = context.Principal?.FindFirst(SessionVault.SidClaim)?.Value;
             if (sid is null || !vault.Touch(sid))
@@ -68,11 +68,11 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.ConfigureFilter(new ProAdmin.Pages.PilotCredentialsFilter());
     options.Conventions.AllowAnonymousToPage("/Error");
     options.Conventions.AllowAnonymousToPage("/Process");
-    // Запись в общих настройках, миграции и настройках серверов - только вошедшим администратором Pilot прода.
+    // Запись в общих настройках, миграции и настройках серверов - только администратору админки.
     options.Conventions.AddFolderApplicationModelConvention("/Migration", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
     options.Conventions.AddPageApplicationModelConvention("/Servers/Index", model => model.Filters.Add(new ProAdmin.Pages.ProdAdminOnlyFilter()));
     options.Conventions.AddPageApplicationModelConvention("/Settings", model => model.Filters.Add(
-        new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries") { AllowGitLabAdminWithoutProd = true }));
+        new ProAdmin.Pages.ProdAdminOnlyFilter("Libraries")));
 });
 
 builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.FromSeconds(60))
@@ -80,6 +80,8 @@ builder.Services.AddHttpClient("gitlab", client => client.Timeout = TimeSpan.Fro
 // Проверка job-токена выкладки: тайм-аут 15 с и без редиректов (токен не должен уйти на другой хост).
 builder.Services.AddHttpClient(ProAdmin.Modules.CiJobVerifier.ClientName, client => client.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+// Наличие Pilot.ClientSdk в nuget.org при создании модуля: в закрытом контуре без интернета - быстрый отказ.
+builder.Services.AddHttpClient(ProAdmin.Modules.ModuleCreation.NuGetProbeClient, client => client.Timeout = TimeSpan.FromSeconds(8));
 builder.Services.AddHttpClient("gitlab-probe", client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddHttpClient<ProAdmin.Types.GitHubTypesClient>(client =>
@@ -88,6 +90,18 @@ builder.Services.AddHttpClient<ProAdmin.Types.GitHubTypesClient>(client =>
         client.MaxResponseContentBufferSize = ProAdmin.Types.GitHubTypesClient.MaxArchiveBytes;
     })
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+
+// Релизы github.com/PilotOpenTools без токена; файлы релиза - только с хранилища GitHub по https.
+builder.Services.AddHttpClient(ProAdmin.Modules.OpenToolsReleases.ClientName, client =>
+    {
+        // Три попытки по 20 с (GitHubRedirectHandler) на запрос и на каждый редирект файла релиза.
+        client.Timeout = TimeSpan.FromSeconds(150);
+        client.MaxResponseContentBufferSize = ProAdmin.Modules.OpenToolsReleases.MaxAssetBytes;
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PilotProAdmin");
+    })
+    // Прокси - из HTTPS_PROXY / NO_PROXY окружения (по умолчанию у SocketsHttpHandler).
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) })
+    .AddHttpMessageHandler(() => new ProAdmin.Modules.GitHubRedirectHandler());
 
 builder.Services.AddHttpClient("migration", client => client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<ProAdmin.Migration.MigrationClient>();
@@ -103,6 +117,7 @@ builder.Services.AddSingleton<PilotGateway>();
 builder.Services.AddSingleton<GitLabAuthService>();
 builder.Services.AddSingleton<GitLabSignIn>();
 builder.Services.AddSingleton<GitLabClientFactory>();
+builder.Services.AddSingleton<ProAdmin.Sessions.GitLabAdminCheck>();
 builder.Services.AddSingleton<AutomationCatalog>();
 builder.Services.AddSingleton<AutomationOperations>();
 builder.Services.AddSingleton<JobStore>();
@@ -121,6 +136,10 @@ builder.Services.AddSingleton<ProAdmin.Modules.ModuleCatalog>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblySpecStore>();
 builder.Services.AddSingleton<ProAdmin.Modules.AssemblyScanService>();
 builder.Services.AddSingleton<ProAdmin.Modules.ModuleJobRunner>();
+builder.Services.AddSingleton(sp => new ProAdmin.Modules.OpenToolsReleases(
+    sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<ILogger<ProAdmin.Modules.OpenToolsReleases>>(),
+    Path.Combine(dataDirectory, ProAdmin.Modules.OpenToolsReleases.LocalFolder)));
+builder.Services.AddSingleton<ProAdmin.Modules.OpenToolsService>();
 builder.Services.AddSingleton<ProAdmin.Compare.CompareService>();
 builder.Services.AddSingleton<ProAdmin.Types.TypesStore>();
 builder.Services.AddSingleton<ProAdmin.Types.TypesJobRunner>();

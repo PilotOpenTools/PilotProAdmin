@@ -167,6 +167,17 @@ jobs:
         with:
           name: container-release
           path: artifacts
+      - name: Package offline kit
+        env:
+          RELEASE_VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          cd artifacts
+          sha256sum --check SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt
+          # Lite и архив образов в одном zip: install.ps1 загружает образы из архива рядом с собой, без GHCR.
+          offline="PilotProAdmin-v$RELEASE_VERSION-offline.zip"
+          cp "PilotProAdmin-v$RELEASE_VERSION-lite.zip" "$offline"
+          zip -0 -j -q "$offline" "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
+          sha256sum "$offline" >> SHA256SUMS-CONTAINERS.txt
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,7 +190,9 @@ jobs:
           assets=("PilotProAdmin-v$RELEASE_VERSION-lite.zip"
                   "PilotProAdmin-v$RELEASE_VERSION-win-x64-portable.zip"
                   "PilotProAdmin-v$RELEASE_VERSION-linux-amd64-images.tar.gz"
+                  "PilotProAdmin-v$RELEASE_VERSION-offline.zip"
                   "PilotProAdmin-v$RELEASE_VERSION-cluster.tar.gz"
+                  ServerHost-*.zip
                   SHA256SUMS.txt SHA256SUMS-CONTAINERS.txt SHA256SUMS-CLUSTER.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"

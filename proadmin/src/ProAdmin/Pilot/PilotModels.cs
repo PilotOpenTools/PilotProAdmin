@@ -59,4 +59,4 @@ public class PilotGatewayException : Exception
 }
 
 public sealed class PilotCredentialsRequiredException()
-    : PilotGatewayException(PilotErrorKind.Authentication, "Подключите учётную запись Pilot для этого контура.");
+    : PilotGatewayException(PilotErrorKind.Authentication, "Не задана учётная запись Pilot для этого контура: служебную учётную запись задают в «Настройках».");

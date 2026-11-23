@@ -88,7 +88,7 @@ public class ItemModel : AppPageModel
     }
 
     /// <summary>
-    /// «Влить / тест»: содержимое ветки задачи уходит обычной отправкой в dev (MR, pipeline, запись на тестовый сервер, merge),
+    /// «Влить в тест»: содержимое ветки задачи уходит обычной отправкой в dev (MR, pipeline, запись на тестовый сервер, merge),
     /// после успеха ветка удаляется. Если dev ушёл вперёд, сначала «Обновить из dev», иначе его изменения затёрлись бы.
     /// </summary>
     public async Task<IActionResult> OnPostMergeTaskAsync(CancellationToken ct)

@@ -167,6 +167,8 @@ docker compose up -d --build migration
 
 `GET /api/status`, `GET|PUT /api/config`, `POST /api/config/check`, `GET /api/import/sources`, `GET /api/export/list`, `POST /api/plan`, `POST /api/runs`, `GET /api/runs[/{id}]`, `POST /api/runs/{id}/cancel`, `GET|POST /api/schedules`, `GET|DELETE /api/schedules/{id}`. `GET /health` работает без ключа.
 
+Режим командной строки для установки: `docker run --rm -e PILOT_SECRET <образ> --encrypt-aes` печатает секрет из `PILOT_SECRET` в том виде, в каком Pilot-Server хранит его в `settings.xml` (`EncryptedSecretAccessKey`). Сервис при этом не запускается. Им пользуется установка, когда делает базу из файловой базы Pilot (`-PilotDatabases`).
+
 `POST /api/plan` («проверка») данные не меняет, но пишет в архив приёмника пробный объект `.pilot-migration-probe-*` (определение общего хранилища) и тут же удаляет его; одновременно выполняется не больше двух проверок.
 
 Ключ S3 присланного архива приходит в запросе на перенос, но в журналы `data/runs` и наружу не отдаётся: там он заменён на маску (`MigrationRequest.WithoutSecrets`).

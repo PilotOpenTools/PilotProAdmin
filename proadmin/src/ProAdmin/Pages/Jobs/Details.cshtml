@@ -42,10 +42,10 @@
             </div>
         }
     </div>
-    <div class="btn-row">
+    <div class="head-actions">
         <a class="btn" id="link-mr" href="@SafeUrl.Http(job.MergeRequestUrl)" target="_blank" rel="noopener" hidden="@(SafeUrl.Http(job.MergeRequestUrl) is null)">Merge Request</a>
         <a class="btn" id="link-pipeline" href="@SafeUrl.Http(job.PipelineUrl)" target="_blank" rel="noopener" hidden="@(SafeUrl.Http(job.PipelineUrl) is null)">Pipeline</a>
-        <a class="btn btn-ghost" href="@back.Url">@back.Title</a>
+        <a class="btn" href="@back.Url">@back.Title</a>
     </div>
 </div>
 

@@ -212,7 +212,7 @@ public class AssembliesModel : AppPageModel
         return Page();
     }
 
-    private string Who => CurrentSession.GitLabUser?.Username is { Length: > 0 } u ? u : CurrentSession.PilotLogin;
+    private string Who => CurrentSession.Actor;
 
     private void Prepare()
     {

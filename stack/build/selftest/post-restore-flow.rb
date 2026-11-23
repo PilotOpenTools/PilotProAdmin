@@ -212,6 +212,8 @@ module Doorkeeper
     attr_accessor :redirect_uri, :name
 
     def self.find_by(uid:) = uid == 'cid' ? ($app ||= new) : nil
+    def self.column_names = []
+    def self.create!(**attrs) = ($state[:created_apps] ||= []) << attrs
 
     def initialize
       @redirect_uri = 'http://localhost:5300/GitLab/Callback'
@@ -234,6 +236,7 @@ ENV.update('OAUTH_CLIENT_ID' => 'cid', 'ADMIN_CALLBACK' => 'http://10.0.0.5:5300
 if scenario.start_with?('clean')
   ENV['OLD_HOST'] = ''
   ENV['ALLOW_MISSING_GROUPS'] = '1' if scenario == 'clean'
+  ENV['REPORTS_OAUTH_CLIENT_ID'] = 'reports-cid' if scenario == 'clean'
 end
 
 out = StringIO.new
@@ -283,6 +286,7 @@ when 'restore'
   check.call(text.include?('mod-a overrides group variable DEPLOY_KEY_PROD'), 'project-level override is reported')
   check.call($state[:app_saved] && $app.redirect_uri == "http://localhost:5300/GitLab/Callback\nhttp://10.0.0.5:5300/GitLab/Callback",
              "oauth: admin callback added, the old one kept (got #{$app&.redirect_uri.inspect})")
+  check.call(text.include?('reports oauth: no client id, skipped') && $state[:created_apps].nil?, 'reports oauth: skipped without client id')
   gate = ->(pid) { $state[:projects][pid]['gate'] }
   check.call(gate.call(1) == true && gate.call(3) == true && gate.call(5) == true, 'merge gate: module with CI file, report with custom ci_config_path, already-set one')
   check.call(gate.call(4) == false && gate.call(2) == false, 'merge gate: project without CI and archived project are not touched')
@@ -301,6 +305,9 @@ when 'clean'
   check.call(status == 2, "exit 2: groups do not exist yet (got #{status.inspect})")
   check.call(!text.include?('ERROR') && $state[:commits].empty?, 'missing groups are a skip, not an error')
   check.call(text.include?('oauth: no client id or admin address, skipped') && !$state[:app_saved], 'oauth: skipped without client id and admin address')
+  app = ($state[:created_apps] || []).find { |a| a[:uid] == 'reports-cid' }
+  check.call(app && app[:confidential] == false && app[:scopes] == 'api' && app[:redirect_uri] == 'http://127.0.0.1:7890/callback' && !app.key?(:secret),
+             "reports oauth: public application created with the local redirect (got #{app.inspect})")
 when 'clean_strict'
   check.call(status == 1 && text.include?('not found'), "after a restore a missing group is an error (got #{status.inspect})")
 when 'defaults_refused'
