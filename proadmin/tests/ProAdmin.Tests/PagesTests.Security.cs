@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ProAdmin.Infrastructure;
+using ProAdmin.Jobs;
+using ProAdmin.Modules;
 using Microsoft.AspNetCore.DataProtection;
 using ProAdmin.Sessions;
 using ProAdmin.Settings;
@@ -95,6 +97,52 @@ public sealed partial class PagesTests
         var result = await PostDeploy(_factory.CreateClient(), "tok", Factory.CiKey);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, result.Code);
         Assert.Contains("MODULES_DEPLOY_KEY_PROD", result.Text);
+    }
+
+    [Theory]
+    [InlineData("modules/mod1", "mod1", "release/1.0.0", HttpStatusCode.OK)]
+    [InlineData("modules/mod1", "Модуль", "release/1.0.0", HttpStatusCode.OK)]
+    [InlineData("modules/mod1", "mod1", "release/1.1.0", HttpStatusCode.Conflict)]
+    [InlineData("modules/subgroup/mod1", "mod1", "release/1.0.0", HttpStatusCode.Conflict)]
+    [InlineData("modules/mod1", "mod1", null, HttpStatusCode.Conflict)]
+    public async Task CiStageDeployDefersOnlyToTheAdminOperationForItsRelease(
+        string activeProject, string activeName, string? activeRelease, HttpStatusCode expected)
+    {
+        const string stageKey = "test-stage-key";
+        const string project = "modules/mod1";
+        const string release = "release/1.0.0";
+        _factory.GitLabJob = _ => GitLabAnswer(JobJson(release, project));
+        using var app = _factory.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+            services.PostConfigure<AppOptions>(options =>
+            {
+                options.CiDeploy.Keys[ModuleEnv.Stage] = stageKey;
+                options.CiDeploy.Logins[ModuleEnv.Stage] = new CiDeployLogin { Login = "service" };
+            })));
+        using var client = app.CreateClient();
+        _factory.NewSession(withGitLab: true, services: app.Services);
+        var store = app.Services.GetRequiredService<JobStore>();
+        var active = new PublishJob
+        {
+            Env = ModuleKind.Client.JobEnv(ModuleEnv.Stage),
+            AutomationName = activeName,
+            ModuleProjectPath = activeProject,
+            ManagedStageRelease = activeRelease,
+            Status = JobStatus.WaitingPipeline,
+        };
+        store.Add(active);
+        try
+        {
+            var result = await PostDeploy(client, "tok", stageKey, ("ref", release), ("project", project));
+            Assert.Equal(expected, result.Code);
+            if (expected == HttpStatusCode.OK)
+                Assert.Contains($"/Jobs/{active.Id}", result.Text);
+            Assert.Equal(active.Id, Assert.Single(store.Recent(300), job => job.Env == active.Env && !job.IsFinished).Id);
+        }
+        finally
+        {
+            active.Update(job => job.Status = JobStatus.Failed);
+            store.Persist();
+        }
     }
 
     [Fact]

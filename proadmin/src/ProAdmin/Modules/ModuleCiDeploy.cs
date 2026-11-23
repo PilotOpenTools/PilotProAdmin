@@ -96,6 +96,7 @@ public static class ModuleCiDeployEndpoint
         }
 
         var repoName = project.Split('/').Last();
+        var stageProjectPath = envKey == ModuleEnv.Stage ? project : null;
         var notes = form["notes"].ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(20).ToList();
         var job = new PublishJob
         {
@@ -104,14 +105,22 @@ public static class ModuleCiDeployEndpoint
             EnvTitle = kind.JobEnvTitle(env.Title),
             Branch = $"{reference} / {env.Title}",
             AutomationName = repoName,
+            ModuleProjectPath = stageProjectPath,
             CommitMessage = "выкладка из CI",
             ChangeNotes = notes,
             PilotUser = login.Login,
             GitLabUser = verified.User ?? "GitLab CI",
             PipelineUrl = verified.PipelineUrl,
         };
-        if (store.FindActive(job.Env, repoName) is { } active)
+        if (store.FindActive(job.Env, repoName, stageProjectPath) is { } active)
+        {
+            // Операция выпуска сама запишет сборку после pipeline. Отклонение её deploy_stage заблокировало бы весь pipeline.
+            if (envKey == ModuleEnv.Stage && active.ManagedStageRelease == reference &&
+                string.Equals(active.ModuleProjectPath, project, StringComparison.OrdinalIgnoreCase))
+                return Results.Text($"Релиз {reference} выложит операция админки после завершения pipeline.\n" +
+                                    $"Операция в админке: {JobLink(publicUrl, active.Id)}\n", "text/plain; charset=utf-8");
             return Results.Text($"По модулю «{repoName}» на контуре {env.Title} уже идёт операция «{active.Operation}». Повторите job позже.\n", statusCode: 409);
+        }
         job.Add("info", $"Модуль «{repoName}»: выкладка из CI ({reference} @ {ModuleDeploy.Short(sha)}).", job.PipelineUrl);
         store.Add(job);
 
