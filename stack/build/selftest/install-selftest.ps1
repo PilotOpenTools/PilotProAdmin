@@ -110,6 +110,7 @@ if "%1"=="run" (
 if "%1"=="compose" if "%2"=="config" (echo grafana/grafana:11& exit /b 0)
 if "%1"=="exec" (
   echo %* | findstr /c:"gitlab-psql" >nul && (echo %STUB_PROJECTS%& exit /b 0)
+  echo %* | findstr /c:"runner.token" >nul && (echo glrt-stub-token& exit /b 0)
   echo %* | findstr /c:" grep " >nul && exit /b %STUB_GREP_RC%
   exit /b 0
 )

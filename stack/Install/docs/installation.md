@@ -333,9 +333,37 @@
 
 При переносе из копии у контуров могут быть свои пароли с префиксами PROD\_, TEST\_ и STAGE\_: значение с префиксом важнее общего. Имена MINIO_USER и MINIO_PASSWORD исторические: это ключ и секрет доступа RustFS.
 
-> **Смена паролей.** Пароли PostgreSQL и RustFS записываются в базы при первом запуске. Если поменять их только в .env, сервисы перестанут подключаться: меняйте одновременно .env, роль в PostgreSQL (ALTER ROLE), учётную запись RustFS и settings.xml контура. Пароли Pilot, Grafana и GitLab меняются в их интерфейсах, после этого поправьте .env.
+> **Смена паролей** — по разделу «Смена паролей» ниже: только правка .env не меняет пароли в самих сервисах.
 
 Пароли администраторов Pilot и ключи S3 для миграции лежат в DATA_ROOT/services/migration/config.json открытым текстом. На Linux файл создаётся с правами 600; на Windows закройте папку данных средствами ОС.
+
+### Смена паролей
+
+Пароли PostgreSQL и RustFS записаны не только в .env, но и в самих сервисах (роли PostgreSQL, учётки RustFS, settings.xml контура). Если поменять значение только в .env, сервисы перестанут подключаться. Перед сменой снимите копию («Миграция → Подготовить перенос данных»). Команды выполняются в папке установки; повторный запуск установщика — тот же install.ps1 с прежней папкой установки (вопросов он не задаёт). Пароль задавайте из букв и цифр: символы $ # " ' и пробел ломают .env.
+
+**Роли статистики (metrics_writer, metrics_reader).** Задайте новые METRICS_WRITER_PASSWORD и METRICS_READER_PASSWORD в .env и запустите установщик ещё раз. Он пересоздаст postgres-prod с новыми значениями, скрипт ролей 02-metrics-roles.sh выполнит ALTER ROLE для обеих ролей, а сборщики статистики и Grafana пересоздадутся с новыми паролями. Проверка: в Grafana открывается дашборд отчётов, docker logs report-metrics-collector без ошибок входа.
+
+**pilotuser контура** (Pilot-Server и миграция):
+
+1.  Задайте новый пароль в .env: \<КОНТУР\>\_PILOT_PG_PASSWORD для одного контура или PILOT_PG_PASSWORD, если у контуров общий пароль (тогда повторите шаги 2–3 для каждого контура).
+2.  Смените пароль роли, вводя SQL в psql (так пароль не попадает в аргументы команд): docker exec -i postgres-\<контур\> psql -U postgres, затем ALTER ROLE pilotuser PASSWORD '\<новый\>'; и \\q.
+3.  Остановите сервер (docker stop pilot-server-\<контур\>) и в data\\\<контур\>\\pilot-server\\settings\\settings.xml замените значение Password= в строке подключения к PostgreSQL.
+4.  Запустите установщик ещё раз: он запустит сервер и пересоздаст сервис миграции с новым паролем (Migration\_\_PgPasswords).
+
+**Суперпользователь postgres.** docker exec -i postgres-\<контур\> psql -U postgres, затем ALTER ROLE postgres PASSWORD '\<новый\>';, и тот же пароль в PG_SUPERUSER_PASSWORD (или \<КОНТУР\>\_PG_SUPERUSER_PASSWORD) в .env.
+
+**Root RustFS (MINIO_USER, MINIO_PASSWORD).** Задайте новое значение в .env и запустите установщик ещё раз: контейнер rustfs-\<контур\> пересоздаётся с новым ключом root. Pilot и миграция работают под отдельной учёткой, их это не затрагивает.
+
+**Учётка Pilot в RustFS (MINIO_PILOT_SECRET).** Её секрет хранится ещё и в settings.xml в зашифрованном виде:
+
+1.  Задайте новый MINIO_PILOT_SECRET (или \<КОНТУР\>\_MINIO_PILOT_SECRET) в .env и запустите установщик ещё раз: шаг «Бакеты RustFS» заново заводит учётку с этим секретом.
+2.  Зашифруйте секрет так же, как Pilot: $env:PILOT_SECRET = '\<новый секрет\>'; docker run --rm -e PILOT_SECRET \<образ из RELEASE_MIGRATION_IMAGE в .env\> --encrypt-aes; Remove-Item Env:PILOT_SECRET.
+3.  Остановите pilot-server-\<контур\>, в settings.xml замените EncryptedSecretAccessKey у S3-архива на полученное значение и запустите сервер (docker compose up -d pilot-server-\<контур\>).
+4.  В админке «Миграция → Подключения» введите новый секретный ключ S3 этого контура.
+
+Смена секрета учётки Pilot в RustFS на живом стенде не проверялась: после неё проверьте, что документы контура открываются в клиенте Pilot.
+
+**Pilot, Grafana, GitLab.** Пароль администратора Pilot меняют в Pilot-myAdmin, Grafana и root GitLab — в их интерфейсах. После этого поправьте .env (PILOT_ADMIN_PASSWORD, GRAFANA_ADMIN_PASSWORD), чтобы он не вводил в заблуждение; служебные учётки выкладки меняются в «Настройках» админки.
 
 ### Где что лежит
 
@@ -358,6 +386,18 @@
 > gitlab\\ — GitLab; журнал восстановления gitlab\logs\restore.log
 
 Вне папки установки, на томах Docker проекта compose: файлы Pilot (S3) в RustFS (\<проект\>\_rustfs\_\<контур\>), данные Grafana, Loki и Prometheus, артефакты и загрузки GitLab. Список томов: docker volume ls. Не удаляйте тома и не запускайте docker compose down -v без копии. Копию вместе с томами делает «Миграция → Подготовить перенос данных».
+
+### Резервные копии
+
+Копию стенда снимает комплект «Миграция → Подготовить перенос данных»: распакуйте его в постоянную папку и запустите prepare-transfer.ps1 (разовая копия) или зарегистрируйте ежедневное задание:
+
+> .\register-task.ps1 -InstallDirectory 'D:\PilotProAdmin\PilotProAdmin-install' -Root 'E:\Backups' -KeepDays 14
+
+Задание «PilotProAdmin Backup» каждый день в 03:00 запускает backup.ps1 из комплекта: базы PostgreSQL, файлы Pilot, тома RustFS, GitLab (gitlab-backup и секреты), данные админки, тома мониторинга и закреплённые образы. Копии старше 14 дней удаляются, последняя удачная остаётся; итог последнего запуска — \<Root\>\last-backup.json. Задание работает, пока пользователь вошёл в Windows. Восстановление — установка из копии в новую папку (install.ps1 -Backup), см. раздел 3. Копию храните на другом диске и с ограниченным доступом: в ней все пароли стенда.
+
+Комплект переноса работает на Windows с Docker Desktop. Для установки на Linux готового скрипта копии пока нет: останавливайте стенд (docker compose down в папке установки) и копируйте папку установки и тома Docker проекта (docker volume ls) средствами ОС; восстановить такую копию через install.ps1 -Backup нельзя, её возвращают на место вручную.
+
+**Задание «CICD Backup» прежних версий** вызывало stack\backup\backup.ps1 из checkout репозитория. В 1.1.1 этот файл оставлен как совместимая обёртка над proadmin\transfer\backup.ps1, но в следующем релизе будет удалён: перерегистрируйте задание командой proadmin\transfer\register-task.ps1 (с -StackDirectory для раздельной раскладки) и проверьте его: Get-ScheduledTask -TaskName 'PilotProAdmin Backup' \| Get-ScheduledTaskInfo.
 
 **Файловый архив Pilot (S3)** хранит RustFS (rustfs/rustfs:1.0.5, Apache-2.0): контейнер rustfs-\<контур\>, адрес S3 для Pilot http://rustfs-\<контур\>:9000, бакет pilot-ice-ru. Файлы лежат в именованном томе, а не в папке данных: на Windows папка хоста, подключённая к контейнеру, ломает составную загрузку больших файлов (RustFS отвечает NoSuchKey). RustFS 1.0.x вышел недавно: поведение с Pilot-Server под вашей нагрузкой проверьте на тесте, поддержку хранилищ, отличных от MinIO, уточните у вендора Pilot.
 

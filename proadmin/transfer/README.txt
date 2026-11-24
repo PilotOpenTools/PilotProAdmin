@@ -33,3 +33,15 @@
 
    В копию входят данные и конфигурация. Образы Docker установщик получит отдельно.
    Лицензии Pilot проверьте после переноса на новое оборудование.
+
+Ежедневная резервная копия
+
+   Тот же комплект снимает плановые копии. Оставьте распакованную папку в постоянном месте и зарегистрируйте задание:
+
+   .\register-task.ps1 -InstallDirectory 'D:\PilotProAdmin\PilotProAdmin-install' -Root 'E:\Backups' -KeepDays 14
+
+   Задание «PilotProAdmin Backup» каждый день в 03:00 (ключ -At) запускает backup.ps1: копия в <Root>\<дата_время>,
+   старше KeepDays дней удаляются, последняя удачная остаётся. Итог - <Root>\last-backup.json.
+   Задание работает, пока пользователь вошёл в Windows (так работает Docker Desktop). Прежнее задание «CICD Backup»
+   скрипт удаляет. Проверка: Start-ScheduledTask -TaskName 'PilotProAdmin Backup', затем last-backup.json.
+   Копию из такого каталога тоже можно передать install.ps1 -Backup.

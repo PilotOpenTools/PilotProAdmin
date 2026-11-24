@@ -76,7 +76,7 @@ docker exec pilot-server-test sh -c "find / -name 'automation.log' 2>/dev/null"
 
 ## 3. База данных для метрик
 
-Все контуры пишут в одну базу `pilot_metrics` на `postgres-prod`, контур указан в колонке `env`. База и роли `metrics_writer` (сборщики пишут под ней и создают свои таблицы) и `metrics_reader` (Grafana, только чтение) создаются при первом старте контейнера на пустой папке данных (`prod/init/postgres/02-metrics-roles.sh`), схема и таблицы - парсером при первом запуске. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её (идемпотентно; пароли берутся из окружения контейнера - `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `prod/.env`):
+Все контуры пишут в одну базу `pilot_metrics` на `postgres-prod`, контур указан в колонке `env`. База и роли `metrics_writer` (сборщики пишут под ней и создают свои таблицы) и `metrics_reader` (Grafana, только чтение) создаются при первом старте контейнера на пустой папке данных (`stack/Install/init/postgres/02-metrics-roles.sh`; установщик запускает его при каждом запуске), схема и таблицы - парсером при первом запуске. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её (идемпотентно; пароли берутся из окружения контейнера - `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `.env` папки установки):
 
 ```powershell
 docker exec postgres-prod bash /docker-entrypoint-initdb.d/02-metrics-roles.sh

@@ -60,11 +60,11 @@ GitLab CE и GitLab Runner могут работать без доступа в 
 
 ### Собрать пакеты на машине с интернетом
 
-Команда dotnet restore с ключом --packages складывает в папку все пакеты решения вместе с зависимостями. Выполните её для каждого репозитория модулей: клона из GitLab или из папки modules\sources комплекта. Папка offline-packages общая. В примере клоны лежат в D:\repos:
+Команда dotnet restore с ключом --packages складывает в папку все пакеты решения вместе с зависимостями. Выполните её для каждого репозитория модулей: клона из вашего GitLab или из открытых репозиториев PilotOpenTools на GitHub. Папка offline-packages общая. В примере клоны лежат в D:\repos:
 
-> git clone C:\PilotProAdmin\Install\modules\sources\Pilot.ClientSdk.bundle D:\repos\Pilot.ClientSdk
+> git clone https://github.com/PilotOpenTools/PilotClientSdk D:\repos\Pilot.ClientSdk
 >
-> git clone C:\PilotProAdmin\Install\modules\sources\Reports.bundle D:\repos\Reports
+> git clone https://github.com/PilotOpenTools/PilotReports D:\repos\Reports
 >
 > dotnet restore D:\repos\Pilot.ClientSdk\Pilot.ClientSdk.sln --packages D:\offline-packages -p:EnableWindowsTargeting=true
 >

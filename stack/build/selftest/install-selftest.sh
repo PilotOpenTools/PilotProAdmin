@@ -45,7 +45,7 @@ case "$1" in
     case "$*" in *02-metrics-roles.sh*) exit "${STUB_ROLES_RC:-0}" ;; esac
     if [ "$c" = gitlab ]; then
       case "$1" in
-        sh) shift; shift; cmd="$1"; case "$cmd" in *readiness*) exit "${STUB_READY_RC:-0}" ;; *) exec sh -c "$cmd" ;; esac ;;
+        sh) shift; shift; cmd="$1"; case "$cmd" in *readiness*) exit "${STUB_READY_RC:-0}" ;; *runner.token*) echo glrt-stub-token; exit 0 ;; *) exec sh -c "$cmd" ;; esac ;;
         gitlab-psql) echo "${STUB_PROJECTS:-5}"; exit 0 ;;
         grep) shift; exec grep "$@" ;;
         gitlab-rails) env > "$STUB_RAILS_ENV"; exit "${STUB_HARDEN_RC:-0}" ;;

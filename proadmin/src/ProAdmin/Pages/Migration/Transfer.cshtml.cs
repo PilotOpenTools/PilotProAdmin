@@ -7,7 +7,7 @@ namespace ProAdmin.Pages.Migration;
 
 public sealed class TransferModel : PageModel
 {
-    private static readonly string[] Files = ["prepare-transfer.ps1", "backup.ps1", "monitoring.ps1", "README.txt"];
+    private static readonly string[] Files = ["prepare-transfer.ps1", "backup.ps1", "register-task.ps1", "monitoring.ps1", "README.txt"];
 
     public IActionResult OnGetDownload()
     {

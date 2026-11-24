@@ -288,8 +288,11 @@ foreach ($part in $monitoring.Keys) {
 Part 'images' {
     $dir = Join-Path $Root 'images'
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $refs = foreach ($f in 'prod\docker-compose.yml', 'stage\init-stage.sh') {
-        [regex]::Matches([IO.File]::ReadAllText((Join-Path $cicd $f)), '(?:rustfs/rustfs|[\w.][\w./-]*pilot-server|pilotdev/pilot-web-myadmin):[^@\s}]+@sha256:[0-9a-f]{64}') | ForEach-Object { $_.Value }
+    # Закреплённые образы берутся из compose установки (папка установки) или раздельной раскладки (prod, stage).
+    $composeFiles = if ($installEnv) { @(Join-Path (Split-Path $installEnv -Parent) 'docker-compose.yml') }
+                    else { @((Join-Path $cicd 'prod\docker-compose.yml'), (Join-Path $cicd 'stage\init-stage.sh')) }
+    $refs = foreach ($f in @($composeFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+        [regex]::Matches([IO.File]::ReadAllText($f),'(?:rustfs/rustfs|[\w.][\w./-]*pilot-server|pilotdev/pilot-web-myadmin):[^@\s}]+@sha256:[0-9a-f]{64}') | ForEach-Object { $_.Value }
     }
     foreach ($ref in @($refs | Sort-Object -Unique)) {
         $tar = Join-Path $dir (($ref -replace '@sha256:(.{12}).*$', '_$1' -replace '[^\w.-]', '_') + '.tar')
