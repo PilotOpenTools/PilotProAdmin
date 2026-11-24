@@ -1,6 +1,6 @@
 # Мониторинг и статистика
 
-Один compose-проект `metrics`: нагрузка и логи всех контейнеров плюс статистика автоматизаций, отчётов и модулей Pilot.
+Роль `metrics` установочного комплекта (`Install/docker-compose.yml`): нагрузка и логи всех контейнеров плюс статистика автоматизаций, отчётов и модулей Pilot.
 
 | Сервис | Что делает | Порт на хосте |
 |---|---|---|
@@ -19,12 +19,7 @@
 
 Контуры Pilot должны работать раньше: сборщики автоматизаций берут лог из контейнеров `pilot-server-test` и `pilot-server-stage`, а база находится на проде. Если контур работает кластером, логи узлов лежат в подкаталогах `logs/<узел>/`: задайте сервису сборщика `LOG_PATH: /App/logs/*/automation.log` (метка узла берётся из имени каталога, подробности в [README сборщика](automation-collector/README.md), §4.4).
 
-```powershell
-copy .env.example .env     # обязательно: GRAFANA_ADMIN_PASSWORD, PG_PASSWORD = пароль metrics_writer, METRICS_READER_PASSWORD = пароль metrics_reader (те же значения, что в prod/.env)
-docker compose up -d --build
-```
-
-Обычно стек запускают целиком: `.\shared\stack.ps1 up` из папки `stack`.
+Роль ставит установщик релиза, когда на вопрос о статистике выбрано «установить здесь». Пароли (`GRAFANA_ADMIN_PASSWORD`, `METRICS_WRITER_PASSWORD`, `METRICS_READER_PASSWORD`) он создаёт сам в `.env` папки установки, конфигурацию из `config/` кладёт в `monitoring/`, сборщики собирает на месте.
 
 Grafana открывается на `http://<хост>:3000`, логин и пароль берутся из `.env` при первом запуске. Потом пароль меняют в интерфейсе.
 
@@ -40,7 +35,7 @@ Grafana открывается на `http://<хост>:3000`, логин и па
 | Pilot - клиентские модули | `dashboard-pilot-modules.json` |
 | Pilot - серверные модули | `dashboard-pilot-server-modules.json` |
 
-Дашборды автоматизаций и отчётов сюда не входят. На этом стенде они импортированы вручную из `automation-collector/grafana_dashboard_pilot_automation.json` и `report-collector/grafana/dashboard-pilot-reports.json`. В установочном комплекте их подключает сборка: `build/build.ps1` копирует оба файла в `Install/monitoring`.
+Дашборды автоматизаций и отчётов сюда не входят. Их подключает релиз: `scripts/package-release.ps1` кладёт `automation-collector/grafana_dashboard_pilot_automation.json` и `report-collector/grafana/dashboard-pilot-reports.json` в `monitoring/grafana/dashboards/` установщика.
 
 ## Логи и авторизация
 
@@ -60,7 +55,7 @@ cAdvisor 0.49.1 на Docker с хранилищем образов containerd (�
 
 ## Безопасность
 
-- `GRAFANA_ADMIN_PASSWORD`, `PG_PASSWORD` и `METRICS_READER_PASSWORD` обязательны: без них compose не запустится (значений по умолчанию нет).
+- `GRAFANA_ADMIN_PASSWORD`, `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` обязательны: без них compose не запустится (значений по умолчанию нет). Установщик создаёт их сам.
 - У Prometheus нет аутентификации; порт 9090 слушает только этот хост (`INTERNAL_BIND` в `.env` меняет адрес - тогда закройте порт брандмауэром). Управление Prometheus по HTTP выключено: перечитать конфигурацию можно командой `docker kill -s SIGHUP prometheus`.
 - Источник `Pilot metrics (prod)` подключается под ролью `metrics_reader`: у неё только `CONNECT` к `pilot_metrics`, `USAGE` на схемы и `SELECT` на таблицы (включая будущие); записать данные и зайти в базы Pilot она не может. Источник помечен только для чтения и не редактируется из интерфейса Grafana. Сборщики пишут под `metrics_writer` (владелец `pilot_metrics`, без прав на базы Pilot). Обе роли создаёт `prod/init/postgres/02-metrics-roles.sh`. Для контура, созданного раньше: `docker compose up -d` в `prod` с новыми `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `prod/.env`, затем `docker exec postgres-prod bash /docker-entrypoint-initdb.d/02-metrics-roles.sh`, затем `PG_USER=metrics_writer` и те же пароли в `metrics/.env`. Пароли ролей меняет `shared/rotate-contour-secrets` с `-Env prod`.
 - Сборщики автоматизаций получают только каталог логов контура (`${DATA_ROOT}/<контур>/logs`, только чтение), а не все тома Pilot-Server.
@@ -70,7 +65,6 @@ cAdvisor 0.49.1 на Docker с хранилищем образов containerd (�
 ## Структура
 
 ```
-docker-compose.yml, .env.example
 config/prometheus/prometheus.yml
 config/loki/loki-config.yml
 config/promtail/promtail-config.yml
@@ -80,4 +74,4 @@ automation-collector/          сборщик статистики автома�
 report-collector/              сборщик статистики отчётов и модулей
 ```
 
-Тома `grafana_grafana_data`, `grafana_prometheus_data` и `grafana_loki_data` названы явно, в них лежат данные прежнего проекта `grafana`. При изменении состава сервисов обновите `stack/Install` и `backup/backup.ps1`.
+При изменении состава сервисов обновите `Install/docker-compose.yml` и комплект переноса данных `proadmin/transfer/backup.ps1`.

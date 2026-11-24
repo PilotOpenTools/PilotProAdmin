@@ -44,9 +44,9 @@ Job `deploy_*` отправляет zip в админку с двумя дока
 ветке: `dev` - тест, `release/*` - стейдж, `main`/`master` - прод; ключ сверяется с ключом этого контура.
 Задание `check_libraries` ничего не выкладывает и шлёт только `X-Job-Token`.
 
-Ключи раздельные, по одному на контур; админка читает их из `proadmin/.env`:
+Ключи раздельные, по одному на контур; админка читает их из `.env` папки установки (установщик создаёт их сам):
 
-| Контур | Переменная `proadmin/.env` | Переменная группы GitLab | Флаги в GitLab |
+| Контур | Переменная `.env` | Переменная группы GitLab | Флаги в GitLab |
 |---|---|---|---|
 | тест | `MODULES_DEPLOY_KEY_TEST` (/ `App__CiDeploy__Keys__test`) | `DEPLOY_KEY_TEST` | Masked |
 | стейдж | `MODULES_DEPLOY_KEY_STAGE` (/ `App__CiDeploy__Keys__stage`) | `DEPLOY_KEY_STAGE` | Masked **и Protected** |
@@ -54,13 +54,13 @@ Job `deploy_*` отправляет zip в админку с двумя дока
 
 Пустой ключ контура - выкладка в этот контур из CI выключена.
 
-Выпустить ключи (по одному на контур; при смене обновить значение и в `proadmin/.env`, и в GitLab):
+Выпустить ключи (по одному на контур; при смене обновить значение и в `.env` папки установки, и в GitLab):
 
 ```bash
 openssl rand -hex 32
 ```
 
-1. Записать значения в `proadmin/.env` (`MODULES_DEPLOY_KEY_TEST`, `_STAGE`, `_PROD`), затем `docker compose up -d` в `proadmin`.
+1. Записать значения в `.env` папки установки (`MODULES_DEPLOY_KEY_TEST`, `_STAGE`, `_PROD`), затем `docker compose up -d proadmin` в ней.
 2. GitLab / группа / Settings / CI/CD / Variables / Add variable: три переменные из таблицы, Visibility **Masked**;
    для `DEPLOY_KEY_STAGE` и `DEPLOY_KEY_PROD` ещё и **Protect variable**. Группы: `client-modules` и `server-extensions`.
 3. В каждом репозитории модуля защитить ветки `main` и `release/*` (Settings / Repository / Protected branches):

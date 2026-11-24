@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самопроверка shared/wait-for-postgres.sh без стенда: Ascon.Pilot.Daemon подменён заглушкой, всё в одноразовом контейнере Linux.
+# Самопроверка Install/wait-for-postgres.sh без стенда: Ascon.Pilot.Daemon подменён заглушкой, всё в одноразовом контейнере Linux.
 #   docker run --rm -v "<путь к stack>:/stack:ro" postgres:16 bash /stack/build/selftest/wait-for-postgres-selftest.sh
 # Проверяет: монолит (settings.xml, applied.conf) как раньше; узел кластера: -rc, применение, -wc, проверочное чтение,
 # хост и порт ожидания PostgreSQL из --pgConnectionString; нет conf, сбой -rc и -wc, тайм-аут, изменение конфигурации
@@ -65,7 +65,7 @@ run() {  # run <аргументы обёртки>
       STUB_DB="$DB" STUB_LOG="$LOG" STUB_RCN="$T/rcn" STUB_CONN="$CONN" \
       STUB_RC_HANG="${STUB_RC_HANG:-}" STUB_RC_FAIL_FROM="${STUB_RC_FAIL_FROM:-}" STUB_RC_EMPTY="${STUB_RC_EMPTY:-}" \
       STUB_MUTATE_AFTER="${STUB_MUTATE_AFTER:-}" STUB_WC_FAIL="${STUB_WC_FAIL:-}" STUB_WC_IGNORE="${STUB_WC_IGNORE:-}" \
-      bash "$STACK/shared/wait-for-postgres.sh" "$@" > "$OUT" 2> "$ERR"
+      bash "$STACK/Install/wait-for-postgres.sh" "$@" > "$OUT" 2> "$ERR"
 }
 node() { run "--pgConnectionString=$CONN" --indexPath=/idx --httpPort=5545; }
 calls() { sed -n 's/^\(rc\|wc\|start\)\b.*/\1/p' "$LOG" | tr '\n' ' '; }

@@ -4,8 +4,7 @@
 # 1. .env, который создаёт install.sh, проходит `compose config` для каждой роли и во всех путях установки: чистая, повторный запуск,
 #    несколько машин с заданными паролями, восстановление из бэкапа, данные без метки .installed. docker внутри install.sh подменён заглушкой.
 # 2. Без обязательного значения compose отказывает с понятным текстом (во всём файле, а не только у активных ролей).
-# 3. Контурные compose (prod, test, stage, metrics) и proadmin: то же на .env, заполненном вручную.
-# 4. Хранилище (данные - именованный том rustfs_<контур> / rustfs_data): в конфиге каждой роли (контур prod/test/stage, отдельные compose) есть сервис rustfs-<контур> с алиасом rustfs-<контур>, образом rustfs/rustfs, ключом доступа из MINIO_USER/MINIO_PASSWORD и без образа minio.
+# 3. Хранилище (данные - именованный том rustfs_<контур>): в конфиге каждой роли есть сервис rustfs-<контур> с алиасом rustfs-<контур>, образом rustfs/rustfs, ключом доступа из MINIO_USER/MINIO_PASSWORD и без образа minio.
 set -u
 STACK="$(cd "$(dirname "$0")/../.." && pwd)"
 REAL_DOCKER="$(command -v docker)" || { echo "docker не найден"; exit 1; }
@@ -142,36 +141,6 @@ ok "[ $crc != 0 ] && echo \"\$err\" | grep -q 'TLS_ADMIN_CRT'" "надстрой
 fresh; install --no-data --skip-load --roles admin,metrics
 out="$(cd "$T/work" && "$REAL_DOCKER" compose config 2>&1)"
 ok "! echo \"\$out\" | grep -q 'GF_SERVER_PROTOCOL\\|/certs/tls'" "без certs/: конфигурация без HTTPS, как раньше"
-
-echo "== контурные compose и proadmin на .env, заполненном вручную"
-for c in prod test stage; do
-  d="$T/$c"; rm -rf "$d"; mkdir -p "$d"; cp "$STACK/$c/docker-compose.yml" "$d/"
-  # Роли метрик нужны только проду: на нём живёт база pilot_metrics.
-  keys='PG_SUPERUSER_PASSWORD PILOT_PG_PASSWORD MINIO_USER MINIO_PASSWORD'
-  printf '%s\n' "PG_SUPERUSER_PASSWORD=a" "PILOT_PG_PASSWORD=b" "MINIO_USER=u" "MINIO_PASSWORD=c" > "$d/.env"
-  if [ "$c" = prod ]; then printf '%s\n' "METRICS_WRITER_PASSWORD=d" "METRICS_READER_PASSWORD=e" >> "$d/.env"; keys="$keys METRICS_WRITER_PASSWORD METRICS_READER_PASSWORD"; fi
-  ok "cfg_ok $d >/dev/null" "$c: .env со всеми обязательными значениями проходит"
-  check_rustfs "$(cd "$d" && "$REAL_DOCKER" compose config 2>&1)" "$c" u c rustfs_data
-  for k in $keys; do
-    sed "/^$k=/d" "$d/.env" > "$d/.env.cut"; mv "$d/.env.cut" "$d/.env.try"
-    err="$(cd "$d" && "$REAL_DOCKER" compose --env-file .env.try config -q 2>&1)"; crc=$?
-    ok "[ $crc != 0 ] && echo \"\$err\" | grep -q '$k'" "$c без $k: ошибка называет переменную"
-  done
-done
-d="$T/metrics"; mkdir -p "$d"; cp "$STACK/metrics/docker-compose.yml" "$d/"
-printf '%s\n' "GRAFANA_ADMIN_PASSWORD=a" "PG_PASSWORD=b" "METRICS_READER_PASSWORD=c" > "$d/.env"
-ok "cfg_ok $d >/dev/null" "metrics: пароли Grafana, сборщиков и чтения PostgreSQL заданы - проходит"
-for k in GRAFANA_ADMIN_PASSWORD PG_PASSWORD METRICS_READER_PASSWORD; do
-  sed "/^$k=/d" "$d/.env" > "$d/.env.try"
-  err="$(cd "$d" && "$REAL_DOCKER" compose --env-file .env.try config -q 2>&1)"; crc=$?
-  ok "[ $crc != 0 ] && echo \"\$err\" | grep -q '$k'" "metrics без $k: ошибка называет переменную"
-done
-d="$T/proadmin"; mkdir -p "$d"; cp "$STACK/../proadmin/docker-compose.yml" "$d/"
-printf 'MIGRATION_API_KEY=k\n' > "$d/.env"
-ok "cfg_ok $d >/dev/null" "proadmin: ключ миграции задан - проходит"
-: > "$d/.env"
-err="$(cfg_ok "$d")"; crc=$?
-ok "[ $crc != 0 ] && echo \"\$err\" | grep -q 'MIGRATION_API_KEY'" "proadmin без MIGRATION_API_KEY: ошибка называет переменную"
 
 echo
 if [ "$FAILED" = 0 ]; then echo "ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ"; else echo "НЕ ПРОЙДЕНО: $FAILED"; exit 1; fi

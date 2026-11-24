@@ -55,7 +55,7 @@ Lite скачивает PilotProAdmin и PilotMigration из GHCR. Вариан�
 .\install.ps1 -ImageArchive 'D:\Downloads\PilotProAdmin-vX.Y.Z-linux-amd64-images.tar.gz'
 ```
 
-Архив содержит оба приложения. Для локального GitLab, статистики и серверов Pilot нужны доступ к их реестрам и зависимости сборщиков либо заранее подготовленные образы. Для полностью офлайн установки полного стенда используйте [отдельный комплект стека](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html).
+Архив содержит оба приложения. Для локального GitLab, статистики и серверов Pilot нужны доступ к их реестрам и зависимости сборщиков либо заранее подготовленные образы. Как перенести остальные образы на машину без интернета, описано в [установке стенда, раздел 5](https://pilotopentools.github.io/PilotProAdmin/stack/Install/docs/installation.html#5-установка-без-интернета).
 
 ## Чистая установка
 

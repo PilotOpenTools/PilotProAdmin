@@ -19,7 +19,7 @@ datasources:
       maxLines: 1000
 
   # База pilot_metrics на postgres-prod: метрики автоматизаций и статистика отчётов.
-  # Только чтение: роль metrics_reader, пароль из METRICS_READER_PASSWORD (metrics/.env), его обновляет shared/rotate-contour-secrets -Env prod.
+  # Только чтение: роль metrics_reader, пароль из METRICS_READER_PASSWORD (.env папки установки).
   - name: Pilot metrics (prod)
     type: grafana-postgresql-datasource
     uid: pilot-metrics-prod

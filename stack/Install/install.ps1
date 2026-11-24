@@ -141,7 +141,7 @@ function New-RustFsBucket([string]$contour, [string]$user, [string]$pass) {
     }
 }
 
-# Учётка Pilot в RustFS с доступом только к бакету pilot-ice-ru (как в shared\rotate-contour-secrets.ps1). Все значения - через
+# Учётка Pilot в RustFS с доступом только к бакету pilot-ice-ru. Все значения - через
 # окружение внутри sh -c, в аргументы docker не попадают. Повтор для существующих учётки и политики проверен на RustFS 1.0.5.
 function New-RustFsPilotUser([string]$contour, [string]$user, [string]$pass, [string]$pilotUser, [string]$pilotSecret) {
     $env:RCU = $user; $env:RCP = $pass; $env:PILOT_U = $pilotUser; $env:PILOT_S = $pilotSecret
@@ -665,7 +665,7 @@ if ($first) {
     foreach ($c in $myContours) { foreach ($d in 'postgres') {
         if ((Test-Path "$root/$c/$d") -and (Get-ChildItem "$root/$c/$d" -Force | Select-Object -First 1)) {
             $first = $false
-            Write-Warning "В $root/$c/$d уже есть данные без метки .installed: пароли-заглушки в .env не заменяю, чтобы они совпали с паролями внутри данных. Смените их после установки через shared/rotate-contour-secrets.ps1."
+            Write-Warning "В $root/$c/$d уже есть данные без метки .installed: пароли-заглушки в .env не заменяю, чтобы они совпали с паролями внутри данных. Смените их после установки вручную: новое значение в .env, ALTER ROLE в PostgreSQL, учётка RustFS и settings.xml контура."
         }
     } }
 }
@@ -1065,7 +1065,7 @@ if ($restore) {
         $rnames = @(docker run --rm --user 0 --entrypoint sh -v "${rvol}:/v:ro" $rustfsImage -c 'ls -A /v')
         if ($LASTEXITCODE) { throw "Не удалось прочитать том $rvol" }
         if (@($rnames | Where-Object { $_ -and @('.rustfs', '.rustfs.sys') -notcontains "$_" }).Count) {
-            throw "В томе $rvol уже есть данные RustFS, восстановление поверх них установщик не выполняет. Если они не нужны, удалите том (docker compose down; docker volume rm $rvol) и запустите установку снова; либо восстановите вручную: backup\restore.ps1 -Env $c -Parts rustfs -ConfirmOverwrite rustfs"
+            throw "В томе $rvol уже есть данные RustFS, восстановление поверх них установщик не выполняет. Если они не нужны, удалите том (docker compose down; docker volume rm $rvol) и запустите установку снова."
         }
         # Промежуточная копия: Docker Desktop не монтирует съёмные диски, откуда может идти восстановление.
         $staging = "$root/.restore-rustfs"

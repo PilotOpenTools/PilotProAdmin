@@ -1,4 +1,4 @@
-# Репозиторий стека Pilot: compose-контуры, метрики, бэкап, общие скрипты, установочная папка.
+# Установочный комплект (Install), мониторинг и сборщики статистики (metrics).
 # Данные и секреты сюда не попадают.
 
 # Секреты: в git только .env.example
@@ -14,7 +14,7 @@ obj/
 *.user
 TestResults/
 
-# Установочная папка: образы и бэкап (там все пароли!) заполняет build/build.ps1
+# Файлы, которые создаёт установка рядом с комплектом
 Install/images/
 Install/data/
 Install/.data-new/
@@ -30,6 +30,5 @@ Install/firewall-linux.sh
 Install/firewall-windows.ps1
 Install/cluster/routes.yml
 
-# Копии прежних секретов (rotate-contour-secrets.ps1) и временные каталоги установки
-*.before-rotate-*
+# Временные каталоги установки
 Install/.restore-grafana/

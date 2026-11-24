@@ -22,22 +22,20 @@ Grafana строит по ним дашборд **«Pilot - отчёты»**.
 
 ## Запуск
 
-Сервис входит в compose-проект `metrics`. Он должен работать на Docker-хосте с `postgres-prod` (сеть `pilot-prod`), а его порт должен быть **доступен с рабочих мест пользователей Pilot**.
+Сервис входит в роль `metrics` установочного комплекта: установщик собирает образ на месте и запускает его рядом с `postgres-prod`. Порт сервиса (5310) должен быть **доступен с рабочих мест пользователей Pilot**.
 
 ```powershell
-cd stack\metrics
-copy .env.example .env      # поправить при необходимости
-docker compose up -d --build
+# в папке установки
 docker logs -f report-metrics-collector
 ```
 
-База `pilot_metrics` и роли для неё создаются при первом старте `postgres-prod` на пустой папке данных (`prod/init/postgres/02-metrics-roles.sh`): сервис пишет под ролью `metrics_writer` (владелец базы, создаёт и меняет свои таблицы), Grafana читает под `metrics_reader` (только `SELECT`). У обеих нет прав на базы Pilot, у `pilotuser` нет прав на `pilot_metrics`. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её командой (идемпотентна; пароли ролей берёт из окружения контейнера, то есть из `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `prod/.env`, поэтому сначала `docker compose up -d` в `prod`):
+База `pilot_metrics` и роли для неё создаются при первом старте `postgres-prod` на пустой папке данных (`stack/Install/init/postgres/02-metrics-roles.sh`): сервис пишет под ролью `metrics_writer` (владелец базы, создаёт и меняет свои таблицы), Grafana читает под `metrics_reader` (только `SELECT`). У обеих нет прав на базы Pilot, у `pilotuser` нет прав на `pilot_metrics`. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её командой (идемпотентна; пароли ролей берёт из окружения контейнера, то есть из `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `.env` папки установки):
 
 ```powershell
 docker exec postgres-prod bash /docker-entrypoint-initdb.d/02-metrics-roles.sh
 ```
 
-Установщик комплекта (`Install`) делает это сам при каждом запуске.
+Установщик делает это сам при каждом запуске.
 
 Таблица и индексы создаются сервисом при старте.
 

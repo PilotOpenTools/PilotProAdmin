@@ -40,14 +40,14 @@ internal static class RepoCopies
     public static string? SkipReason =>
         Environment.GetEnvironmentVariable("SKIP_REPO_COPIES") == "1" ? "SKIP_REPO_COPIES=1: сверка копий файлов пропущена явно" : null;
 
-    /// <summary>Корень монорепозитория (папка со stack/shared); тест падает, если тесты запущены вне него.</summary>
+    /// <summary>Корень монорепозитория (папка со stack/Install); тест падает, если тесты запущены вне него.</summary>
     public static string Root()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "stack", "shared", "wait-for-postgres.sh")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "stack", "Install", "wait-for-postgres.sh")))
             dir = dir.Parent;
         return dir?.FullName ?? throw new Xunit.Sdk.XunitException(
-            "Не найден корень монорепозитория (папка со stack/shared/wait-for-postgres.sh): сверка копий файлов не может ничего проверить. " +
+            "Не найден корень монорепозитория (папка со stack/Install/wait-for-postgres.sh): сверка копий файлов не может ничего проверить. " +
             "Запускайте тесты в полном монорепозитории или задайте SKIP_REPO_COPIES=1, чтобы пропустить сверку явно.");
     }
 }

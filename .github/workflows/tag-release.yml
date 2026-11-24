@@ -1,0 +1,47 @@
+name: Tag release
+
+# После слияния в main ставит тег vX.Y.Z по <Version> в PilotProAdmin.csproj, если такого тега ещё нет,
+# и запускает Release по этому тегу. Тег, созданный GITHUB_TOKEN, сам workflow Release не запускает,
+# поэтому Release вызывается явно (workflow_dispatch по тегу - тогда github.ref_type = tag и публикуется релиз).
+
+on:
+  push:
+    branches: [main]
+    paths: ['proadmin/src/ProAdmin/PilotProAdmin.csproj']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Create tag and start Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' proadmin/src/ProAdmin/PilotProAdmin.csproj | head -1)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::Invalid project version: $version"; exit 1; fi
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Тег $tag уже есть, релиз не создаётся."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "PilotProAdmin $tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag"
+          echo "Тег $tag поставлен на $GITHUB_SHA, Release запущен."

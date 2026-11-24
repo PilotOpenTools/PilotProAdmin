@@ -46,7 +46,7 @@ rc_bucket() {  # $1 - сеть, $2 - контейнер RustFS, $3 - логин,
     *) RC_HOST_m="http://$3:$4@$2:9000" docker run --rm --network "$1" -e RC_HOST_m --entrypoint rc "$RUSTFS_IMG" mb --ignore-existing m/pilot-ice-ru ;;
   esac
 }
-# Учётка Pilot с доступом только к бакету pilot-ice-ru (как в shared/rotate-contour-secrets.ps1). Значения - через окружение внутри sh -c.
+# Учётка Pilot с доступом только к бакету pilot-ice-ru.Значения - через окружение внутри sh -c.
 # Повтор для существующих учётки и политики проверен на RustFS 1.0.5; «политика уже привязана» у attach - не ошибка.
 rc_pilot_user() {  # $1 - сеть, $2 - контейнер RustFS, $3 - логин root, $4 - пароль root, $5 - учётка Pilot, $6 - её секрет
   RCU="$3" RCP="$4" PILOT_U="$5" PILOT_S="$6" \
@@ -179,7 +179,7 @@ FIRST=0; if [ "$RESTORE" = 0 ] && [ ! -f "$ROOT/.installed" ]; then FIRST=1; fi
 if [ "$FIRST" = 1 ]; then
   for c in $MY_CONTOURS; do for d in postgres; do
     if [ -n "$(ls -A "$ROOT/$c/$d" 2>/dev/null)" ]; then
-      FIRST=0; echo "! В $ROOT/$c/$d уже есть данные без метки .installed: пароли-заглушки в .env не заменяю, чтобы они совпали с паролями внутри данных. Смените их после установки через shared/rotate-contour-secrets.ps1."
+      FIRST=0; echo "! В $ROOT/$c/$d уже есть данные без метки .installed: пароли-заглушки в .env не заменяю, чтобы они совпали с паролями внутри данных. Смените их после установки вручную: новое значение в .env, ALTER ROLE в PostgreSQL, учётка RustFS и settings.xml контура."
     fi
   done; done
 fi
@@ -513,7 +513,7 @@ if [ "$RESTORE" = 1 ]; then
     rnames="$(docker run --rm --user 0 --entrypoint sh -v "$RVOL:/v:ro" "$RUSTFS_IMG" -c 'ls -A /v')" || fail "Не удалось прочитать том $RVOL"
     if [ -n "$(printf '%s
 ' "$rnames" | grep -v -x -e '' -e '.rustfs' -e '.rustfs.sys')" ]; then
-      fail "В томе $RVOL уже есть данные RustFS, восстановление поверх них установщик не выполняет. Если они не нужны, удалите том (docker compose down; docker volume rm $RVOL) и запустите установку снова; либо восстановите вручную: backup/restore.ps1 -Env $c -Parts rustfs -ConfirmOverwrite rustfs"
+      fail "В томе $RVOL уже есть данные RustFS, восстановление поверх них установщик не выполняет. Если они не нужны, удалите том (docker compose down; docker volume rm $RVOL) и запустите установку снова."
     fi
     if [ -n "$(docker ps -q --filter "name=^rustfs-$c\$")" ]; then docker stop "rustfs-$c" >/dev/null; fi   # compose up запустит снова
     # Архив проверяется до распаковки; владелец файлов (10001) берётся из архива.

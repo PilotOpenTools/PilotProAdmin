@@ -17,7 +17,7 @@ public class RepoCopiesTests
     [RepoCopiesFact]
     public void Server_setting_keys_match_in_wrapper_admin_and_migration()
     {
-        var wrapper = Regex.Match(Read("stack", "shared", "wait-for-postgres.sh"), "SERVER_SETTINGS_KEYS=\"([^\"]+)\"").Groups[1].Value
+        var wrapper = Regex.Match(Read("stack", "Install", "wait-for-postgres.sh"), "SERVER_SETTINGS_KEYS=\"([^\"]+)\"").Groups[1].Value
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var admin = Regex.Matches(Read("proadmin", "src", "ProAdmin", "Servers", "ServerSettingCatalog.cs"),
             "new ServerSettingDefinition\\(\"([A-Za-z]+)\"").Select(m => m.Groups[1].Value);
@@ -39,20 +39,5 @@ public class RepoCopiesTests
         var host = Read("server-extensions", "ServerHost", "ServerHost", "Contract", "IServerModulesApi.cs");
         var admin = Read("proadmin", "src", "ProAdmin", "Pilot", "ServerModules", "ServerModulesContract.cs");
         Assert.Equal(Code(host), Code(admin));
-    }
-
-    [RepoCopiesFact]
-    public void Install_kit_wrapper_matches_shared()
-    {
-        Assert.Equal(Read("stack", "shared", "wait-for-postgres.sh"), Read("stack", "Install", "wait-for-postgres.sh"));
-    }
-
-    [RepoCopiesTheory]
-    [InlineData("prod")]
-    [InlineData("test")]
-    [InlineData("stage")]
-    public void Contours_mount_shared_wrapper(string contour)
-    {
-        Assert.Contains("../shared/wait-for-postgres.sh:/wait-for-postgres.sh:ro", Read("stack", contour, "docker-compose.yml"));
     }
 }
