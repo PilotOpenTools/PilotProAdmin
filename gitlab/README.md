@@ -2,17 +2,17 @@
 
 GitLab CE и Runner в Docker: репозитории, CI и реестр пакетов всего стенда. Доступ по `http://<IP>:8080`, git по SSH на порту `2224`, без HTTPS.
 
-Запускается вместе со стеком (`.\shared\stack.ps1 up admin` из папки `stack`) или отдельно, командой `docker compose up -d` в этой папке.
+Ставится ролью `gitlab` установщика из релиза: на вопрос о GitLab выберите «установить здесь» (см. [«Установка и устройство пакета»](../docs/installation-package.md)). Сервисы описаны в `stack/Install/docker-compose.yml`, команды `docker compose` ниже выполняются из папки установки.
 
 | Что | Где |
 |---|---|
 | Контейнеры | `gitlab`, `gitlab-runner` |
 | Сеть | `gitlab_gitlab-net`, в ней же работают задания CI |
-| Настройки | `.env` (образец - `.env.example`) |
-| Данные | `./data`, `./config`, `./logs`, настройки Runner - `./runner-config`. В git не попадают |
-| Артефакты CI и загрузки | тома Docker `gitlab_gitlab_artifacts` и `gitlab_gitlab_uploads`: на папке Windows GitLab не может сделать `chmod` загруженного файла и отвечает ошибкой 500 (Runner - при артефактах, API `uploads` - при вложениях и файлах релизов) |
-| Общие проверки | `ci-checks/`, отдельный репозиторий `pilot-ci/checks` ([README](ci-checks/README.md)) |
-| Резервные копии | `../stack/backup`, [в том числе восстановление GitLab](../stack/backup/README.md#восстановление-gitlab-вручную) |
+| Настройки | `.env` папки установки: `GITLAB_HOST_IP`, `GITLAB_HTTP_PORT`, `GITLAB_SSH_PORT`, `GITLAB_ROOT_PASSWORD` |
+| Данные | `DATA_ROOT/gitlab` (`config`, `data`, `logs`), настройки Runner - `DATA_ROOT/gitlab/runner-config` |
+| Артефакты CI и загрузки | тома Docker `<проект>_gitlab_artifacts` и `<проект>_gitlab_uploads`: на папке Windows GitLab не может сделать `chmod` загруженного файла и отвечает ошибкой 500 (Runner - при артефактах, API `uploads` - при вложениях и файлах релизов) |
+| Общие проверки | `ci-checks/`, отдельный репозиторий `pilot-ci/checks` ([README](ci-checks/README.md)): установщик создаёт его сам |
+| Резервные копии | «Миграция → Подготовить перенос данных» в админке, восстановление - `install.ps1 -Backup` из релиза |
 
 ## Требования
 
@@ -22,15 +22,13 @@ GitLab CE и Runner в Docker: репозитории, CI и реестр пак
 
 ## Первый запуск
 
-1. Скопируйте `.env.example` в `.env` и заполните:
-   - `GITLAB_HOST_IP` - IP этой машины в сети, не `localhost`. Из него собирается `external_url`;
-   - `GITLAB_ROOT_PASSWORD` - начальный пароль `root`, не короче 8 символов. Действует только при первом запуске, потом пароль меняют в интерфейсе.
-2. Запустите `docker compose up -d`. Первый запуск занимает 3-5 минут. Статус `healthy` ставится по `/-/readiness` (до 15 минут на запуск); при сомнении проверьте вручную: команда `docker compose exec gitlab curl -fs http://localhost/-/readiness` вернёт успех (без ошибки), а `docker compose exec gitlab gitlab-ctl status` покажет `run: puma`.
-3. Войдите как `root` и пройдите шаги ниже. На сети, доступной не только вам, сразу закройте саморегистрацию (шаг «Закрытие регистрации»).
+Установщик задаёт `GITLAB_HOST_IP` (спрашивает имя или IP этой машины) и случайный `GITLAB_ROOT_PASSWORD`, ждёт готовности GitLab, создаёт OAuth-приложения, проект проверок `pilot-ci/checks` и регистрирует Runner. Первый запуск занимает 3-5 минут. Статус `healthy` ставится по `/-/readiness` (до 15 минут на запуск); при сомнении проверьте вручную: команда `docker compose exec gitlab curl -fs http://localhost/-/readiness` вернёт успех (без ошибки), а `docker compose exec gitlab gitlab-ctl status` покажет `run: puma`.
+
+Войдите как `root` с паролем `GITLAB_ROOT_PASSWORD` из `.env` и проверьте шаги ниже. На сети, доступной не только вам, убедитесь, что саморегистрация закрыта (шаг «Закрытие регистрации»).
 
 ## Настройка пустого GitLab
 
-Шаги нужны только на новом GitLab. При установке с данными или восстановлении из копии всё уже настроено.
+Шаги нужны на новом GitLab, если установщик их не выполнил (его шаг после установки не прошёл) или GitLab подключён свой. При восстановлении из копии всё уже настроено.
 
 ### Runner
 
@@ -69,7 +67,7 @@ docker compose exec gitlab-runner gitlab-runner register `
 
 | Что | Где настраивается | Описание |
 |---|---|---|
-| OAuth для админки, confidential, scope `api`, Redirect URI `http://<админка>:5300/GitLab/Callback` | Admin / Applications, затем `proadmin/.env` | [README админки](../proadmin/README.md#вход-через-gitlab-oauth-по-желанию) |
+| OAuth для админки, confidential, scope `api`, Redirect URI `http://<админка>:5300/GitLab/Callback` | Admin / Applications, затем `.env` папки установки | [README админки](../proadmin/README.md#вход-через-gitlab-oauth-по-желанию) |
 | OAuth для Reports, **не** confidential, scope `api`, Redirect URI `http://127.0.0.1:7890/callback` | Admin / Applications, затем `Reports.config.json` | [README Reports](https://github.com/PilotOpenTools/PilotReports/blob/main/docs/guide.md#настройка-входа-через-браузер-один-раз-администратор-gitlab) |
 | Переменные `DEPLOY_KEY_TEST` (Masked), `DEPLOY_KEY_STAGE` и `DEPLOY_KEY_PROD` (Masked **и Protected**) в группах `client-modules` и `server-extensions`. Значения - `MODULES_DEPLOY_KEY_TEST`, `_STAGE`, `_PROD` из `.env` стека. Установщик на машине с ролью `gitlab` задаёт их сам (шаг после восстановления или чистой установки) и удаляет старую `DEPLOY_KEY`; вручную - если шаг пропущен или не удался | Группа / Settings / CI/CD / Variables | [Серверные расширения](../server-extensions/README.md#ключи-выкладки-из-ci) |
 | Доступ заданий к пакетам: группа `client-modules` в Job token permissions проекта ClientSdk. Разрешите заданиям читать пакеты и **публиковать** их в реестр: задания `nuget_*` отправляют пакет с `CI_JOB_TOKEN` | Проект / Settings / CI/CD / Job token permissions | [README ClientSdk, 4.1](https://github.com/PilotOpenTools/PilotClientSdk/blob/main/docs/guide.md#41-nuget-пакет) |
@@ -100,9 +98,9 @@ docker compose exec gitlab-runner gitlab-runner register `
 
 1. Снимите копию: `.\backup\backup.ps1` из папки `stack`.
 2. Проверьте [путь обновления GitLab](https://docs.gitlab.com/update/upgrade_paths/): обязательные промежуточные версии пропускать нельзя.
-3. Поменяйте образ в `docker-compose.yml` и выполните `docker compose up -d`. Остановка (`docker compose stop`, `down`, пересоздание) ждёт GitLab до 10 минут: `stop_grace_period` даёт время корректно закрыть базу. Версию Runner держите равной версии GitLab.
+3. Поменяйте образ в `docker-compose.yml` папки установки и выполните `docker compose up -d gitlab gitlab-runner`. Остановка (`docker compose stop`, `down`, пересоздание) ждёт GitLab до 10 минут: `stop_grace_period` даёт время корректно закрыть базу. Версию Runner держите равной версии GitLab.
 
-Подробнее о закреплении образов - в [`stack/README.md`](../stack/README.md#версии-образов).
+Повторный запуск установщика распаковывает комплект заново и вернёт закреплённый в релизе образ: перенесите новую версию в `stack/Install/docker-compose.yml` репозитория. Подробнее о закреплении образов - в [`stack/README.md`](../stack/README.md#версии-образов).
 
 ## Типовые проблемы
 

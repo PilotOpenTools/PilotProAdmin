@@ -5,18 +5,21 @@
 | Переменная | Назначение |
 | --- | --- |
 | `App__DataDirectory` | Каталог настроек, операций и ключей приложения. По умолчанию `data` |
-| `App__SetupKey` | Установочный ключ для подключения первого сервера Pilot |
+| `App__SetupKey` | Ключ установки: защищает мастер первого входа, пока админка не настроена (`ADMIN_SETUP_KEY` в `.env` папки установки) |
+| `App__FirstRunSetup` | Показывать мастер первого входа (подключение GitLab, адресов Pilot и служебных учёток). Установщик включает его сам |
+| `App__Defaults__*` | Начальные адреса для первого запуска: `TestPilotUrl`, `StagePilotUrl`, `ProdPilotUrl`, `GitLabGroupUrl`, `ReportsGitLabGroupUrl`, `ModulesGitLabGroupUrl`, `ServerModulesGitLabGroupUrl`, `TypesGitLabProjectUrl`, `GrafanaUrl`. Потом они меняются в «Настройках» |
+| `App__CiDeploy__Keys__test`, `__stage`, `__prod` | Ключи контуров для выкладки модулей из GitLab CI (`MODULES_DEPLOY_KEY_*` в `.env`) |
 | `App__PublicUrl` | Адрес приложения для браузеров и OAuth. Укажите HTTPS при размещении за обратным прокси |
 | `App__GitLab__ClientId`, `App__GitLab__ClientSecret` | Реквизиты OAuth-приложения GitLab |
 | `App__GitHubTypes__Repository` | URL репозитория типов на GitHub.com |
 | `App__Migration__Url`, `App__Migration__ApiKey` | Внутренний URL и ключ сервиса миграции |
 | `Migration__DataDirectory`, `Migration__ApiKey` | Каталог данных и ключ API со стороны сервиса миграции |
 
-Сохраняйте каталоги данных при обновлении. Настройки подключения к тесту, стейджу и проду меняются на странице «Настройки».
+При установке из релиза эти переменные задаёт установщик: значения лежат в `.env` папки установки ([справочник параметров](../stack/Install/docs/installation.md#параметры-env)). Сохраняйте каталоги данных при обновлении. Настройки подключения к тесту, стейджу и проду меняются на странице «Настройки».
 
 ## GitLab
 
-Укажите адрес существующего GitLab и настройте OAuth с callback `<адрес PilotProAdmin>/GitLab/Callback`. Подключите контуры и группы проектов в админке. Роль `gitlab` установочного комплекта нужна, если хотите развернуть собственный GitLab. [Настройка GitLab и шаблоны CI](https://pilotopentools.github.io/PilotProAdmin/gitlab/README.html).
+Укажите адрес существующего GitLab и настройте OAuth с callback `<адрес PilotProAdmin>/GitLab/Callback`. Подключите контуры и группы проектов в админке. Если нужен новый GitLab, на вопрос установщика о GitLab ответьте «установить здесь»: OAuth-приложение и runner он создаст сам. [Настройка GitLab и шаблоны CI](https://pilotopentools.github.io/PilotProAdmin/gitlab/README.html).
 
 ## GitHub
 

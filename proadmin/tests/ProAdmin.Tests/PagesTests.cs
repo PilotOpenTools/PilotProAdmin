@@ -47,7 +47,7 @@ public sealed partial class PagesTests : IClassFixture<PagesTests.Factory>
         response.EnsureSuccessStatusCode();
         Assert.Equal("application/zip", response.Content.Headers.ContentType?.MediaType);
         using var zip = new System.IO.Compression.ZipArchive(await response.Content.ReadAsStreamAsync());
-        Assert.Equal(new[] { "README.txt", "backup.ps1", "monitoring.ps1", "prepare-transfer.ps1" },
+        Assert.Equal(new[] { "README.txt", "backup.ps1", "monitoring.ps1", "prepare-transfer.ps1", "register-task.ps1" },
             zip.Entries.Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal));
         using var script = zip.GetEntry("prepare-transfer.ps1")!.Open();
         var bom = new byte[3];

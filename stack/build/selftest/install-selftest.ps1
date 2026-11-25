@@ -6,7 +6,8 @@
   Шаг GitLab после установки: вызов gitlab-rails, ключи только через окружение, сбой и ненулевой код, напоминание о ключах.
   Обязательные пароли в .env и сверка загруженных образов с IMAGES.txt (совпадение, расхождение, нет файла или строки).
   RustFS: бакет создаётся клиентом rc из образа RustFS (пароль не в аргументах docker), данные в именованном томе (каталог и chown не нужны).
-  Файлы RustFS из бэкапа: архив rustfsustfs_<контур>.tgz проверяется и распаковывается в том до compose up и до бакета; том с данными - отказ.
+  Файлы RustFS из бэкапа: архив rustfs
+ustfs_<контур>.tgz проверяется и распаковывается в том до compose up и до бакета; том с данными - отказ.
   Для проверки передачи команды нужен Docker и образ alpine:3.
 #>
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,6 @@ foreach ($name in 'Read-Env', 'Set-EnvValue', 'Protect-Secret', 'New-Secret', 'R
     Invoke-Expression $f.Extent.Text
 }
 function Run { & $args[0] $args[1..($args.Count - 1)]; if ($LASTEXITCODE) { throw "Ошибка: $($args -join ' ')" } }
-. (Join-Path $stack 'build\kit-secrets.ps1')
 
 $tmp = Join-Path $env:TEMP ("selftest-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $tmp | Out-Null
@@ -110,6 +110,7 @@ if "%1"=="run" (
 if "%1"=="compose" if "%2"=="config" (echo grafana/grafana:11& exit /b 0)
 if "%1"=="exec" (
   echo %* | findstr /c:"gitlab-psql" >nul && (echo %STUB_PROJECTS%& exit /b 0)
+  echo %* | findstr /c:"runner.token" >nul && (echo glrt-stub-token& exit /b 0)
   echo %* | findstr /c:" grep " >nul && exit /b %STUB_GREP_RC%
   exit /b 0
 )
@@ -288,15 +289,6 @@ exit /b 0
     $w = Fresh 'keys-own'
     $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod,admin', '-SkipLoad')
     Check ($r.Code -eq 0 -and (Test-Path "$($w.Data)/services/proadmin/keys/key-1.xml")) 'свой бэкап: ключи перенесены (никого не разлогинивает)'
-    $kit = Join-Path $tmp 'kit-data'; New-Item -ItemType Directory "$kit\admin\proadmin-data\keys", "$kit\admin\migration-data" -Force | Out-Null
-    [IO.File]::WriteAllText("$kit\admin\proadmin-data\keys\key-1.xml", '<key/>'); [IO.File]::WriteAllText("$kit\admin\proadmin-data\settings.json", '{}')
-    $removed = @(Remove-KitSecrets $kit)
-    Check (($removed -join ',') -eq 'admin\proadmin-data\keys' -and -not (Test-Path "$kit\admin\proadmin-data\keys") -and (Test-Path "$kit\admin\proadmin-data\settings.json") -and (Test-Path "$kit\admin\migration-data")) 'build: Remove-KitSecrets убирает только папку ключей админки'
-    Check (@(Remove-KitSecrets $kit).Count -eq 0) 'build: повторный вызов и данные без ключей не ошибка'
-    # build.ps1 целиком без стенда не запустить: проверяем, что он подключает kit-secrets.ps1 и чистит data до перемещения в комплект.
-    $build = [IO.File]::ReadAllText("$stack\build\build.ps1")
-    $iClean = $build.IndexOf('Remove-KitSecrets $new'); $iMove = $build.IndexOf('Move-Item $new $data')
-    Check ($build -match '\. "\$PSScriptRoot\\kit-secrets\.ps1"' -and $iClean -gt 0 -and $iClean -lt $iMove) 'build: build.ps1 убирает ключи из data до перемещения в Install\data'
 
     Write-Host '== брандмауэр для служебных портов: функции'
     foreach ($v in '10.0.0.1', '192.168.1.255', '0.0.0.0', '255.255.255.255') { Check (Test-IPv4 $v) "$v - IPv4" }
@@ -496,7 +488,7 @@ exit /b 0
     RustfsSnap; $w = Fresh 'rustfs-restore-busy'; $env:STUB_RUSTFS_LS = LsFile @('.rustfs', 'photos')
     $r = Install $w @('-FromBackup', $snapRoot, '-Roles', 'prod', '-SkipLoad')
     $log = Get-Content $env:STUB_LOG -Raw; $flat = $r.Out -replace '\s+', ' '
-    Check ($r.Code -ne 0 -and $flat -match 'cicd_rustfs_prod уже есть данные RustFS' -and $flat -match 'restore\.ps1 -Env prod -Parts rustfs -ConfirmOverwrite rustfs') 'том с данными: отказ с понятным текстом и подсказкой про restore.ps1 -ConfirmOverwrite rustfs'
+    Check ($r.Code -ne 0 -and $flat -match 'cicd_rustfs_prod уже есть данные RustFS' -and $flat -match 'docker volume rm') 'том с данными: отказ с понятным текстом и подсказкой удалить том'
     Check ($log -notmatch 'tar xzf' -and $log -notmatch '--remove-orphans') 'при отказе ничего не распаковано и стек не запущен'
 
     RustfsSnap; $w = Fresh 'rustfs-restore-running'; $env:STUB_RUSTFS_LS = ''; $env:STUB_RUSTFS_RUNNING = '1'

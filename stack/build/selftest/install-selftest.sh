@@ -45,7 +45,7 @@ case "$1" in
     case "$*" in *02-metrics-roles.sh*) exit "${STUB_ROLES_RC:-0}" ;; esac
     if [ "$c" = gitlab ]; then
       case "$1" in
-        sh) shift; shift; cmd="$1"; case "$cmd" in *readiness*) exit "${STUB_READY_RC:-0}" ;; *) exec sh -c "$cmd" ;; esac ;;
+        sh) shift; shift; cmd="$1"; case "$cmd" in *readiness*) exit "${STUB_READY_RC:-0}" ;; *runner.token*) echo glrt-stub-token; exit 0 ;; *) exec sh -c "$cmd" ;; esac ;;
         gitlab-psql) echo "${STUB_PROJECTS:-5}"; exit 0 ;;
         grep) shift; exec grep "$@" ;;
         gitlab-rails) env > "$STUB_RAILS_ENV"; exit "${STUB_HARDEN_RC:-0}" ;;
@@ -436,7 +436,6 @@ out="$(PILOT_PG_PASSWORD= POSTGRES_USER=postgres bash "$STACK/Install/init/postg
 ok "[ $rc != 0 ] && ! grep -q psql \"\$STUB_LOG\"" "пустой пароль тоже отвергается"
 out="$(PILOT_PG_PASSWORD=s3cret POSTGRES_USER=postgres bash "$STACK/Install/init/postgres/01-pilot.sh" 2>&1)"; rc=$?
 ok "[ $rc = 0 ] && grep -q 'pw=s3cret' \"\$STUB_LOG\"" "с паролем он передаётся в psql"
-ok "cmp -s $STACK/Install/init/postgres/01-pilot.sh $STACK/prod/init/postgres/01-pilot.sh && cmp -s $STACK/Install/init/postgres/01-pilot.sh $STACK/test/init/postgres/01-pilot.sh && cmp -s $STACK/Install/init/postgres/01-pilot.sh $STACK/stage/init/postgres/01-pilot.sh" "копии скрипта в prod, test и stage совпадают"
 
 # ---------------------------------------------------------------- роли PostgreSQL для метрик
 echo "== роли метрик: пароли и шаг установки"
@@ -481,7 +480,6 @@ ok "[ $rc != 0 ] && echo \"\$out\" | grep -q 'METRICS_READER_PASSWORD не за�
 out="$(CREATE_METRICS_DB=1 METRICS_WRITER_PASSWORD=SECRETW METRICS_READER_PASSWORD=SECRETR bash "$STACK/Install/init/postgres/02-metrics-roles.sh" 2>&1)"; rc=$?
 ok "[ $rc = 0 ] && grep -q 'psql -v ON_ERROR_STOP=1 -U postgres -d postgres' \"\$STUB_LOG\" && ! grep -q 'SECRETW\|SECRETR' \"\$STUB_LOG\" \"\$STUB_STDIN\"" "с паролями psql вызывается (пользователь postgres по умолчанию), значения в аргументы и текст SQL не попадают"
 ok "grep -q 'getenv wpw METRICS_WRITER_PASSWORD' \"\$STUB_STDIN\" && grep -q 'REVOKE ALL ON DATABASE pilot_metrics FROM PUBLIC, pilotuser' \"\$STUB_STDIN\" && grep -q 'DEFAULT PRIVILEGES FOR ROLE metrics_writer GRANT SELECT ON TABLES TO metrics_reader' \"\$STUB_STDIN\" && ! grep -q '^REASSIGN OWNED' \"\$STUB_STDIN\"" "SQL: пароли через \\getenv, права pilotuser отозваны, права по умолчанию для будущих таблиц, без REASSIGN OWNED"
-ok "for c in prod test stage; do cmp -s $STACK/Install/init/postgres/02-metrics-roles.sh $STACK/\$c/init/postgres/02-metrics-roles.sh || exit 1; done" "копии скрипта в prod, test и stage совпадают"
 
 # ---------------------------------------------------------------- целостность образов из images/
 echo "== сверка загруженных образов с IMAGES.txt"
@@ -568,7 +566,7 @@ ok "[ $rc = 0 ] && grep -q 'tar xzf /b/rustfs_prod.tgz' \"\$STUB_LOG\"" "том 
 
 rustfs_snap
 out="$(RUSTFS_LS='.rustfs\nphotos' bash install.sh --roles prod --skip-load 2>&1)"; rc=$?
-ok "[ $rc != 0 ] && echo \"\$out\" | grep -q 'cicd_rustfs_prod уже есть данные RustFS' && echo \"\$out\" | grep -q 'restore.ps1 -Env prod -Parts rustfs -ConfirmOverwrite rustfs'" "том с данными: отказ с понятным текстом и подсказкой про restore.ps1 -ConfirmOverwrite rustfs"
+ok "[ $rc != 0 ] && echo \"\$out\" | grep -q 'cicd_rustfs_prod уже есть данные RustFS' && echo \"\$out\" | grep -q 'docker volume rm'" "том с данными: отказ с понятным текстом и подсказкой удалить том"
 ok "! grep -q 'tar xzf' \"\$STUB_LOG\" && ! grep -q 'remove-orphans' \"\$STUB_LOG\"" "при отказе ничего не распаковано и стек не запущен"
 
 rustfs_snap

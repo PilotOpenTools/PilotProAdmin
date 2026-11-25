@@ -1,0 +1,74 @@
+name: Tag release
+
+# После слияния в main ставит тег vX.Y.Z по <Version> в PilotProAdmin.csproj и запускает Release по этому тегу.
+# Тег, созданный GITHUB_TOKEN, сам workflow Release не запускает, поэтому Release вызывается явно
+# (workflow_dispatch по тегу: github.ref_type = tag, и publish выкладывает релиз).
+# Повторный запуск безопасен: если тег уже стоит на этом коммите, а релиза нет и Release по тегу не идёт и не прошёл,
+# Release запускается снова. Тег на другом коммите - ошибка (версию забыли поднять).
+
+on:
+  push:
+    branches: [main]
+    paths: ['proadmin/src/ProAdmin/PilotProAdmin.csproj']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Create tag
+        id: tag
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' proadmin/src/ProAdmin/PilotProAdmin.csproj | head -1)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::Invalid project version: $version"; exit 1; fi
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            target=$(git rev-list -n 1 "$tag")
+            if [ "$target" != "$GITHUB_SHA" ]; then
+              echo "Тег $tag уже стоит на $target, а не на $GITHUB_SHA: для нового релиза поднимите версию."
+              echo "own=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Тег $tag уже стоит на этом коммите."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "PilotProAdmin $tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+            echo "Тег $tag поставлен на $GITHUB_SHA."
+          fi
+          echo "own=true" >> "$GITHUB_OUTPUT"
+      - name: Start Release
+        if: steps.tag.outputs.own == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Релиз $TAG уже опубликован."
+            exit 0
+          fi
+          # Запуск Release по этому тегу, который идёт или уже прошёл (релиз мог ещё не появиться), второй раз не нужен.
+          active=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --limit 20 \
+            --json status,conclusion --jq '[.[] | select(.status != "completed" or .conclusion == "success")] | length')
+          if [ "$active" != "0" ]; then
+            echo "Release по $TAG уже запущен или прошёл."
+            exit 0
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Release по $TAG запущен."

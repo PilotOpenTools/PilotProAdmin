@@ -2,6 +2,8 @@
   href: index.md
 - name: Быстрый старт
   href: getting-started.md
+- name: Установка и устройство пакета
+  href: installation-package.md
 - name: Конфигурация
   href: configuration.md
 - name: Git-хостинг

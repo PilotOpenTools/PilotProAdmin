@@ -76,7 +76,7 @@ docker exec pilot-server-test sh -c "find / -name 'automation.log' 2>/dev/null"
 
 ## 3. База данных для метрик
 
-Все контуры пишут в одну базу `pilot_metrics` на `postgres-prod`, контур указан в колонке `env`. База и роли `metrics_writer` (сборщики пишут под ней и создают свои таблицы) и `metrics_reader` (Grafana, только чтение) создаются при первом старте контейнера на пустой папке данных (`prod/init/postgres/02-metrics-roles.sh`), схема и таблицы - парсером при первом запуске. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её (идемпотентно; пароли берутся из окружения контейнера - `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `prod/.env`):
+Все контуры пишут в одну базу `pilot_metrics` на `postgres-prod`, контур указан в колонке `env`. База и роли `metrics_writer` (сборщики пишут под ней и создают свои таблицы) и `metrics_reader` (Grafana, только чтение) создаются при первом старте контейнера на пустой папке данных (`stack/Install/init/postgres/02-metrics-roles.sh`; установщик запускает его при каждом запуске), схема и таблицы - парсером при первом запуске. Если контур создан раньше (база принадлежит `pilotuser`) или базы нет, приведите её (идемпотентно; пароли берутся из окружения контейнера - `METRICS_WRITER_PASSWORD` и `METRICS_READER_PASSWORD` в `.env` папки установки):
 
 ```powershell
 docker exec postgres-prod bash /docker-entrypoint-initdb.d/02-metrics-roles.sh
@@ -105,21 +105,20 @@ docker exec postgres-prod bash /docker-entrypoint-initdb.d/02-metrics-roles.sh
 
 ### 4.1. Контейнеры-сборщики
 
-Постоянно работают контейнеры `automation-metrics-test` и `automation-metrics-stage`, они входят в compose-проект `metrics`. Каждые `INTERVAL` секунд (300) они дочитывают лог и пишут события в `pilot_metrics`. Сборщика для прода нет.
+Постоянно работают контейнеры `automation-metrics-test` и `automation-metrics-stage`, они входят в роль `metrics` установочного комплекта (`stack/Install/docker-compose.yml`). Каждые `INTERVAL` секунд (300) они дочитывают лог и пишут события в `pilot_metrics`. Сборщика для прода нет.
 
 Контейнеру монтируется только каталог логов контура `${DATA_ROOT}/<контур>/logs` как `/App/logs:ro`; других томов Pilot-Server (в них `settings.xml` с паролем PostgreSQL) сборщик не видит. Парсер только читает `automation.log`, больше ему ничего не нужно. Контейнер работает от непривилегированного пользователя (uid 10001), поэтому файл лога и каталог `logs` должны читаться «остальным» (`o+r`, каталог ещё и `o+x`). Какие права Pilot-Server выставляет на `automation.log`, на стенде не проверялось: проверьте `ls -l ${DATA_ROOT}/<контур>/logs/automation.log`. Если доступа нет, сборщик выведет «Нет прав на чтение» и завершится с кодом 3 (цикл напишет `parser failed`); исправьте права либо задайте `user: root` для сервиса в compose.
 
 ```powershell
-cd stack\metrics
-docker compose up -d --build
+# в папке установки
 docker logs -f automation-metrics-test
 ```
 
-После правки `automation_log_parser.py` пересоберите образ той же командой.
+Образ сборщика установщик собирает на месте из `collectors/automation-collector` папки установки. После правки `automation_log_parser.py` выпустите новый релиз или пересоберите образ из этой папки (`docker build`) с тегом из `RELEASE_AUTOMATION_METRICS_IMAGE` в `.env` и выполните `docker compose up -d` в папке установки.
 
 ### 4.2. Разово, с хоста
 
-Нужно для отладки парсера. Понадобятся Python 3 и `psycopg2`. Параметры подключения посмотрите в `automation_log_parser.py --help`, роль `metrics_writer` и её пароль указаны в `stack/metrics/.env` (`PG_USER`, `PG_PASSWORD`):
+Нужно для отладки парсера. Понадобятся Python 3 и `psycopg2`. Параметры подключения посмотрите в `automation_log_parser.py --help`, роль `metrics_writer` и её пароль указаны в `.env` папки установки (`METRICS_WRITER_PASSWORD`):
 
 ```powershell
 pip install psycopg2-binary

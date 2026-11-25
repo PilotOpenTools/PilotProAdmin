@@ -12,27 +12,17 @@ GitLab CE и GitLab Runner могут работать без доступа в 
 
 | **Что** | **Откуда обычно** | **Что делаем без интернета** |
 |----|----|----|
-| Образы GitLab и сервисов | Docker Hub, registry.ascon.ru, gcr.io | Комплект без интернета от поставщика, образы загружаются из папки images |
-| Образы заданий CI | Docker Hub, mcr.microsoft.com, registry.gitlab.com | Тот же комплект: образы заранее лежат на машине с runner. Для проверок ci-checks нужен свой образ с python3 и git, см. шаг 2 |
+| Образы GitLab и сервисов | Docker Hub, registry.ascon.ru, gcr.io | Образы переносят на сервер заранее (docker save / docker load), установщик берёт их локально |
+| Образы заданий CI | Docker Hub, mcr.microsoft.com, registry.gitlab.com | Так же переносятся на машину с runner. Для проверок ci-checks нужен свой образ с python3 и git, см. шаг 2 |
 | Пакеты NuGet и библиотеки DLL | api.nuget.org | Реестр пакетов GitLab, источник для разработчиков и CI |
 
 ## Шаг 1. Образы
 
-Комплект без интернета готовит поставщик. Скриптов сборки в комплекте нет, поэтому собрать его на месте нельзя. Такой комплект узнаётся по второй строке файла IMAGES.txt:
+Установщик из релиза (PilotProAdmin-vX.Y.Z-offline.zip) приносит только образы админки и миграции. Образы GitLab, Runner, служебный образ Runner gitlab-runner-helper той же версии, что и runner, и образы остальных сервисов загрузите в Docker сервера до установки, как описано в документе [«Установка стенда»](installation.md), раздел 5. Затем запустите install.ps1 и на вопрос о GitLab ответьте «установить здесь»: установщик спросит имя или IPv4 сервера, из него собирается адрес GitLab. Не оставляйте localhost, если GitLab нужен с других компьютеров.
 
-> Комплект для установки без интернета: все образы, в том числе GitLab и заданий CI, лежат в images\\.
+На сервере нужно хранилище образов containerd, иначе docker load теряет digest и compose не находит образы. Как его включить, описано там же.
 
-Если там написано «с интернетом» или второй строки нет (комплект собран старой версией сборки), запросите комплект без интернета у поставщика или перенесите недостающие образы сами, как описано в документе [«Установка стенда»](installation.md), раздел «Установка без интернета». Образы заданий CI переносятся так же, их список описан ниже.
-
-В папке images лежат образы GitLab, Runner и служебный образ Runner gitlab-runner-helper, а также образы заданий: .NET SDK, Alpine и Python. Образ GitLab CLI нужен только устаревшим копиям шаблона CI с заданием release, актуальный шаблон его не использует. Перенесите папку на сервер и установите GitLab по инструкции:
-
-> powershell -ExecutionPolicy Bypass -File .\install.ps1 -Roles gitlab -NoData
->
-> **Адрес GitLab.** При -NoData ключ -GitLabHost не применяется, а в .env.example стоит GITLAB_HOST_IP=localhost: адрес GitLab получится http://localhost:8080. Перед установкой задайте в .env GITLAB_HOST_IP=\<адрес сервера\> и GITLAB_ROOT_PASSWORD (если оставить заглушку из .env.example, при установке на одну машину пароль root будет заменён случайным и записан в .env).
->
-> На сервере нужно хранилище образов containerd, иначе docker load теряет digest и compose не находит образы. Как его включить, описано в документе [«Установка стенда»](installation.md), раздел «Установка без интернета».
-
-Если у вас свой GitLab или комплект собран с интернетом, перенесите образы заданий сами. Точные версии указаны в блоке variables (SDK_IMAGE) и в строках image: файла .gitlab-ci.yml в репозиториях модулей, этот же шаблон выдаёт админка на странице модуля. Ещё runner нужен служебный образ gitlab-runner-helper той же версии, что и сам runner. На машине с интернетом сохраните образ, а на машине с runner загрузите его:
+Образы заданий CI перенесите так же. Точные версии указаны в блоке variables (SDK_IMAGE) и в строках image: файла .gitlab-ci.yml в репозиториях модулей, этот же шаблон выдаёт админка на странице модуля. Ещё runner нужен служебный образ gitlab-runner-helper той же версии, что и сам runner. На машине с интернетом сохраните образ, а на машине с runner загрузите его:
 
 > docker save -o sdk.tar "mcr.microsoft.com/dotnet/sdk:\<версия\>@sha256:\<digest\>"
 >
@@ -70,11 +60,11 @@ GitLab CE и GitLab Runner могут работать без доступа в 
 
 ### Собрать пакеты на машине с интернетом
 
-Команда dotnet restore с ключом --packages складывает в папку все пакеты решения вместе с зависимостями. Выполните её для каждого репозитория модулей: клона из GitLab или из папки modules\sources комплекта. Папка offline-packages общая. В примере клоны лежат в D:\repos:
+Команда dotnet restore с ключом --packages складывает в папку все пакеты решения вместе с зависимостями. Выполните её для каждого репозитория модулей: клона из вашего GitLab или из открытых репозиториев PilotOpenTools на GitHub. Папка offline-packages общая. В примере клоны лежат в D:\repos:
 
-> git clone C:\PilotProAdmin\Install\modules\sources\Pilot.ClientSdk.bundle D:\repos\Pilot.ClientSdk
+> git clone https://github.com/PilotOpenTools/PilotClientSdk D:\repos\Pilot.ClientSdk
 >
-> git clone C:\PilotProAdmin\Install\modules\sources\Reports.bundle D:\repos\Reports
+> git clone https://github.com/PilotOpenTools/PilotReports D:\repos\Reports
 >
 > dotnet restore D:\repos\Pilot.ClientSdk\Pilot.ClientSdk.sln --packages D:\offline-packages -p:EnableWindowsTargeting=true
 >

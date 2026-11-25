@@ -47,7 +47,7 @@ PostgreSQL 16.16, Redis 7.4, Traefik 3.6, два узла, ServerHost 1.3.0. Ф�
    сохраните копию (`cp -a <корень данных>/test/pilot-server/settings <корень данных>/test/pilot-server/settings.before-cluster`).
 2. Снимите дамп базы Pilot: `docker exec postgres-test sh -c 'pg_dump -U postgres -Fc pilot-ice_ru > /tmp/pilot-ice_ru.before-cluster.dump'`
    (имя базы - своё). Если база Pilot ещё файловая и `pg_dump` отвечает, что такой базы нет, сохраните копию каталога базы
-   (`<корень данных>/test/databases/<база>`, файлы `.dbp`): `PostgresMigration` в шаге 3 перенесёт её в PostgreSQL. Ежедневный бэкап комплекта по коду `stack/backup/backup.ps1` снимает все базы PostgreSQL, кроме `postgres`, то есть и `configurationdb`;
+   (`<корень данных>/test/databases/<база>`, файлы `.dbp`): `PostgresMigration` в шаге 3 перенесёт её в PostgreSQL. Резервная копия «Миграция → Подготовить перенос данных» (`proadmin/transfer/backup.ps1`) по коду снимает все базы PostgreSQL, кроме `postgres`, то есть и `configurationdb`;
    на живом контуре это не проверялось.
 3. Имя `pilot-server-<контур>` в сети контура должно принадлежать балансировщику (раздел 4), а не монолиту. Переименование контейнера
    монолита не помогает: Compose находит его по меткам и при следующем `docker compose up` (в том числе повторном `install`) запускает снова,
