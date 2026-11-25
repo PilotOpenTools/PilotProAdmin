@@ -38,7 +38,24 @@ $script = Join-Path $PSScriptRoot 'backup.ps1'
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw "Рядом нет backup.ps1: $script" }
 if ($InstallDirectory) {
     $dir = (Resolve-Path -LiteralPath $InstallDirectory).Path
-    if (-not (Test-Path -LiteralPath (Join-Path $dir '.env') -PathType Leaf)) { throw "В $dir нет .env: укажите папку установки, где лежат .env и docker-compose.yml." }
+    $envPath = Join-Path $dir '.env'
+    if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { throw "В $dir нет .env: укажите папку установки, где лежат .env и docker-compose.yml." }
+    # backup.ps1 снимает полную копию: локальный GitLab, мониторинг и три контура со своими PostgreSQL и RustFS.
+    # Если часть стенда подключена извне, каждая ночная копия завершалась бы ошибкой, а частичную копию install.ps1 -Backup не примет.
+    $cfg = @{}
+    foreach ($line in [IO.File]::ReadAllLines($envPath)) { if ($line -match '^([A-Z0-9_]+)=(.*)$') { $cfg[$Matches[1]] = $Matches[2].Trim() } }
+    $roles = @("$($cfg.ROLES)" -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $missing = @('gitlab', 'metrics', 'prod', 'test', 'stage' | Where-Object { $_ -notin $roles })
+    $external = @($cfg.Keys | Where-Object { $_ -match '^(PROD|TEST|STAGE)_EXTERNAL_(PG_HOST|S3_URL)$' -and $cfg[$_] } | Sort-Object)
+    if ($missing.Count -or $external.Count) {
+        $why = @()
+        if ($missing.Count) { $why += "на этой машине не установлены: $($missing -join ', ') (ROLES=$($cfg.ROLES))" }
+        if ($external.Count) { $why += "подключены внешние PostgreSQL или S3: $($external -join ', ')" }
+        throw ("Ежедневная копия поддерживается только для полного стенда на одной машине: локальные GitLab, статистика и контуры prod, test, stage " +
+            "со своими PostgreSQL и RustFS. Здесь $($why -join '; '). Копии внешних сервисов снимайте их собственными средствами, " +
+            'данные этой машины - остановив стенд (docker compose down) и скопировав папку установки и тома Docker проекта; ' +
+            'см. раздел «Резервные копии» инструкции по установке.')
+    }
     $target = "-InstallDirectory `"$dir`""
 } else {
     $dir = (Resolve-Path -LiteralPath $StackDirectory).Path

@@ -45,3 +45,5 @@
    Задание работает, пока пользователь вошёл в Windows (так работает Docker Desktop). Прежнее задание «CICD Backup»
    скрипт удаляет. Проверка: Start-ScheduledTask -TaskName 'PilotProAdmin Backup', затем last-backup.json.
    Копию из такого каталога тоже можно передать install.ps1 -Backup.
+   Задание регистрируется только для полного стенда на одной машине (локальные GitLab, статистика, prod, test, stage
+   со своими PostgreSQL и RustFS). Если что-то подключено извне, скрипт откажется и назовёт причину.
