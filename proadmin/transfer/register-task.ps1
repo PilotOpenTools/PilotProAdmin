@@ -43,7 +43,7 @@ if ($InstallDirectory) {
     # backup.ps1 снимает полную копию: локальный GitLab, мониторинг и три контура со своими PostgreSQL и RustFS.
     # Если часть стенда подключена извне, каждая ночная копия завершалась бы ошибкой, а частичную копию install.ps1 -Backup не примет.
     $cfg = @{}
-    foreach ($line in [IO.File]::ReadAllLines($envPath)) { if ($line -match '^([A-Z0-9_]+)=(.*)$') { $cfg[$Matches[1]] = $Matches[2].Trim() } }
+    foreach ($line in [IO.File]::ReadAllLines($envPath)) { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $cfg[$Matches[1]] = $Matches[2].Trim() } }
     $roles = @("$($cfg.ROLES)" -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $missing = @('gitlab', 'metrics', 'prod', 'test', 'stage' | Where-Object { $_ -notin $roles })
     $external = @($cfg.Keys | Where-Object { $_ -match '^(PROD|TEST|STAGE)_EXTERNAL_(PG_HOST|S3_URL)$' -and $cfg[$_] } | Sort-Object)

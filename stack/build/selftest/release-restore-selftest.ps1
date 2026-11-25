@@ -91,4 +91,27 @@ try {
 } finally {
     $backup.Delete($true)
 }
+
+function New-ScheduledTaskAction {
+    throw 'The backup schedule must be rejected before any task is created.'
+}
+
+$installation = [IO.Directory]::CreateTempSubdirectory('PilotProAdmin-backup-schedule-test-')
+$envFile = Join-Path $installation.FullName '.env'
+try {
+    [IO.File]::WriteAllLines($envFile, @(
+        'ROLES=admin,gitlab,metrics,prod,test,stage'
+        '  TEST_EXTERNAL_PG_HOST=postgres.invalid'
+    ))
+    $register = Join-Path $repo 'proadmin/transfer/register-task.ps1'
+    try {
+        & $register -InstallDirectory $installation.FullName
+        throw 'The backup schedule accepted an external PostgreSQL host.'
+    } catch {
+        if ($_.Exception.Message -notlike '*TEST_EXTERNAL_PG_HOST*') { throw }
+    }
+} finally {
+    [IO.File]::Delete($envFile)
+    $installation.Delete()
+}
 Write-Host 'Release restore checks passed.'
