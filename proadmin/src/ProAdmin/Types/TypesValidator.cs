@@ -63,6 +63,8 @@ public static partial class TypesValidator
             }
         }
 
+        v.Errors.AddRange(ClientRecursionLoops(s.Types));
+
         foreach (var x in s.States.Values.Where(x => !x.IsDeleted && !x.IsSystem))
             if (string.IsNullOrWhiteSpace(x.Title))
                 v.Warnings.Add($"Состояние «{x.Name}»: не задан заголовок.");
@@ -88,6 +90,106 @@ public static partial class TypesValidator
             }
         }
         return v;
+    }
+
+    /// <summary>Корень, от которого клиент Pilot собирает типы для поиска по замечаниям.</summary>
+    public const string RemarksRoot = "doc_remarksFolder";
+
+    [GeneratedRegex("""ExcludeFromSearch\s*=\s*["']([^"']*)["']""", RegexOptions.IgnoreCase)]
+    private static partial Regex ExcludeFromSearchPattern();
+
+    /// <summary>
+    /// Клиент Pilot (AnnotationSearchExpressionContext.GetSearchTypesRecursively) при открытии документа обходит дочерние
+    /// типы от <see cref="RemarksRoot"/> и запоминает пройденным только пользовательский тип (не служебный, вид User,
+    /// без ExcludeFromSearch="annotations"). Если из корня достижим цикл только из незапоминаемых типов
+    /// (например, системный Task_Folder, дочерний сам себе), обход не заканчивается: клиент падает со StackOverflow
+    /// у всех пользователей. Возвращает ошибку на каждую связь «родитель → тип из такого цикла».
+    /// </summary>
+    internal static IEnumerable<string> ClientRecursionLoops(IReadOnlyDictionary<string, TypeDoc> types)
+    {
+        if (!types.ContainsKey(RemarksRoot))
+            yield break;
+
+        IEnumerable<string> ChildrenOf(string name) =>
+            types.TryGetValue(name, out var t) ? t.Children.Where(types.ContainsKey).Distinct(StringComparer.Ordinal) : Enumerable.Empty<string>();
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { RemarksRoot };
+        var queue = new Queue<string>(reachable);
+        while (queue.Count > 0)
+            foreach (var c in ChildrenOf(queue.Dequeue()))
+                if (reachable.Add(c))
+                    queue.Enqueue(c);
+
+        var unmarked = reachable.Where(n => !RememberedByRemarksSearch(types[n])).ToHashSet(StringComparer.Ordinal);
+
+        // Тип зацикливает обход, если из него по незапоминаемым типам можно вернуться в него же.
+        var looping = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var start in unmarked)
+            if (FindLoop(start, unmarked, ChildrenOf) is { } loop)
+                looping[start] = loop;
+        if (looping.Count == 0)
+            yield break;
+
+        if (looping.TryGetValue(RemarksRoot, out var rootLoop))
+            yield return $"Тип «{RemarksRoot}»: {LoopText(types, rootLoop)}";
+
+        foreach (var parent in reachable.Order(StringComparer.Ordinal))
+        {
+            if (looping.ContainsKey(parent))
+                continue;
+            foreach (var child in ChildrenOf(parent).Where(looping.ContainsKey).Order(StringComparer.Ordinal))
+                yield return $"Тип «{parent}»: дочерний тип «{child}» нельзя добавлять - {LoopText(types, looping[child])} " +
+                             $"Уберите «{child}» из дочерних «{parent}».";
+        }
+    }
+
+    private static bool RememberedByRemarksSearch(TypeDoc t)
+    {
+        if (t.IsService || t.Kind != Ascon.Pilot.DataClasses.TypeKind.User)
+            return false;
+        var excluded = ExcludeFromSearchPattern().Match(t.Configuration ?? "");
+        return !(excluded.Success && excluded.Groups[1].Value.Contains("annotations", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<string>? FindLoop(string start, HashSet<string> allowed, Func<string, IEnumerable<string>> children)
+    {
+        var prev = new Dictionary<string, string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        queue.Enqueue(start);
+        var seen = new HashSet<string>(StringComparer.Ordinal) { start };
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            foreach (var c in children(cur).Where(allowed.Contains))
+            {
+                if (c == start)
+                {
+                    var path = new List<string> { start };
+                    for (var x = cur; x != start; x = prev[x])
+                        path.Insert(1, x);
+                    path.Add(start);
+                    return path;
+                }
+                if (seen.Add(c))
+                {
+                    prev[c] = cur;
+                    queue.Enqueue(c);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string LoopText(IReadOnlyDictionary<string, TypeDoc> types, List<string> loop)
+    {
+        var why = types[loop[0]] switch
+        {
+            { IsService: true } => "служебный",
+            { Kind: not Ascon.Pilot.DataClasses.TypeKind.User } t => $"вида {t.Kind}",
+            _ => "исключён из поиска по замечаниям",
+        };
+        return $"клиент Pilot при открытии документа уходит в бесконечную рекурсию и падает (StackOverflow): " +
+               $"тип «{loop[0]}» {why} и через дочерние ссылается сам на себя ({string.Join(" → ", loop)}).";
     }
 
     public static int NextTypeOrder(IEnumerable<int> orders)

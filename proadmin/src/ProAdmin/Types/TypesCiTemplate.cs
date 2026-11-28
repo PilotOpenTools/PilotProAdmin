@@ -104,6 +104,54 @@ public static class TypesCiTemplate
                 seen.add(an)
                 refs(f"{where}, атрибут «{an}»", a.get("configuration"))
 
+        # Клиент Pilot обходит дочерние типы от doc_remarksFolder и запоминает только пользовательские типы
+        # (не служебные, вид User, без ExcludeFromSearch="annotations"). Цикл из незапоминаемых типов
+        # (например, системный Task_Folder, дочерний сам себе) роняет клиент со StackOverflow при открытии документа.
+        REMARKS_ROOT = "doc_remarksFolder"
+        EXCLUDE = re.compile(r"ExcludeFromSearch\s*=\s*[\"']([^\"']*)[\"']", re.I)
+
+        def kids(n):
+            return sorted({c for c in (types.get(n, {}).get("children") or []) if c in types})
+
+        def remembered(d):
+            if d.get("isService") or (d.get("kind") or "User") != "User":
+                return False
+            m = EXCLUDE.search(d.get("configuration") or "")
+            return not (m and "annotations" in m.group(1).lower())
+
+        def find_loop(start, allowed):
+            prev, queue, seen = {}, [start], {start}
+            while queue:
+                cur = queue.pop(0)
+                for c in kids(cur):
+                    if c not in allowed: continue
+                    if c == start:
+                        path, x = [start], cur
+                        while x != start:
+                            path.insert(1, x); x = prev[x]
+                        return path + [start]
+                    if c not in seen:
+                        seen.add(c); prev[c] = cur; queue.append(c)
+            return None
+
+        if REMARKS_ROOT in types:
+            reach, queue = {REMARKS_ROOT}, [REMARKS_ROOT]
+            while queue:
+                for c in kids(queue.pop(0)):
+                    if c not in reach: reach.add(c); queue.append(c)
+            unmarked = {n for n in reach if not remembered(types[n])}
+            looping = {n: p for n in unmarked if (p := find_loop(n, unmarked))}
+            def loop_text(path):
+                return ("клиент Pilot при открытии документа уходит в бесконечную рекурсию и падает (StackOverflow): "
+                        f"тип «{path[0]}» служебный, системный или исключён из поиска по замечаниям и через дочерние ссылается сам на себя ({' → '.join(path)})")
+            if REMARKS_ROOT in looping:
+                errors.append(f"Тип «{REMARKS_ROOT}»: {loop_text(looping[REMARKS_ROOT])}")
+            for p in sorted(reach):
+                if p in looping: continue
+                for c in kids(p):
+                    if c in looping:
+                        errors.append(f"Тип «{p}»: дочерний тип «{c}» нельзя добавлять - {loop_text(looping[c])}. Уберите «{c}» из дочерних «{p}»")
+
         for t, d in machines.items():
             where = f"Группа состояний «{t}»"
             if d.get("isDeleted"):

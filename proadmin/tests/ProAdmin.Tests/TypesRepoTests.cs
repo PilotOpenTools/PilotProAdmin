@@ -184,6 +184,67 @@ public class TypesRepoTests
         Assert.Contains("Порядок 3 занят несколькими типами", Assert.Single(plan.Errors));
     }
 
+    /// <summary>Как на тесте 2026-11-28: «Заметке» добавили дочерний системный Task_Folder, который дочерний сам себе.</summary>
+    private static TypesSnapshot WithRemarks(Action<TypesSnapshot>? change = null)
+    {
+        var repo = RoundTrip(Build());
+        void Add(TypeDoc t) => repo.Types[t.Name] = t;
+        Add(new TypeDoc { Name = TypesValidator.RemarksRoot, Title = "Папка замечаний", Sort = 10, IsService = true, Children = { "doc_remark", "doc_issue" } });
+        Add(new TypeDoc { Name = "doc_remark", Title = "Заметка", Sort = 11, Configuration = "<Configuration ExcludeFromSearch=\"documents\" />" });
+        Add(new TypeDoc { Name = "doc_issue", Title = "Замечание", Sort = 12 });
+        Add(new TypeDoc { Name = "Task_Folder", Title = "Task Folder", Sort = 13, Kind = TypeKind.System, IsService = true, Children = { "Task_Folder" } });
+        Add(new TypeDoc { Name = "projectfolder", Title = "Папка проектов", Sort = 14, Children = { "projectfolder" } });
+        change?.Invoke(repo);
+        return repo;
+    }
+
+    [Fact]
+    public void RemarksTreeWithoutLoopsIsValid()
+    {
+        // Системный тип, дочерний сам себе, вне дерева замечаний и пользовательский тип, дочерний сам себе, - норма.
+        Assert.True(TypesValidator.Validate(WithRemarks(r => r.Types["doc_issue"].Children.Add("projectfolder"))).Ok);
+    }
+
+    [Fact]
+    public void SelfChildSystemTypeUnderRemarksIsAnError()
+    {
+        var repo = WithRemarks(r => r.Types["doc_remark"].Children.Add("Task_Folder"));
+
+        var error = Assert.Single(TypesValidator.Validate(repo).Errors);
+        Assert.StartsWith("Тип «doc_remark»: дочерний тип «Task_Folder» нельзя добавлять", error);
+        Assert.Contains("StackOverflow", error);
+        Assert.Contains("Task_Folder → Task_Folder", error);
+        Assert.False(TypesPlanner.Plan(repo, Build()).CanApply);
+    }
+
+    [Fact]
+    public void LoopOfTypesExcludedFromRemarksSearchIsAnError()
+    {
+        var repo = WithRemarks(r =>
+        {
+            r.Types["a_folder"] = new TypeDoc { Name = "a_folder", Title = "A", Sort = 20, Configuration = "<Configuration ExcludeFromSearch=\"documents,annotations\" />", Children = { "b_folder" } };
+            r.Types["b_folder"] = new TypeDoc { Name = "b_folder", Title = "B", Sort = 21, IsService = true, Children = { "a_folder" } };
+            r.Types["doc_issue"].Children.Add("a_folder");
+        });
+
+        var error = Assert.Single(TypesValidator.Validate(repo).Errors);
+        Assert.StartsWith("Тип «doc_issue»: дочерний тип «a_folder» нельзя добавлять", error);
+        Assert.Contains("a_folder → b_folder → a_folder", error);
+    }
+
+    [Fact]
+    public void LoopThroughSearchableTypeEnds()
+    {
+        // Пользовательский тип в цикле запоминается клиентом - обход останавливается.
+        var repo = WithRemarks(r =>
+        {
+            r.Types["Task_Folder"].Children.Clear();
+            r.Types["Task_Folder"].Children.Add("doc_remark");
+            r.Types["doc_remark"].Children.Add("Task_Folder");
+        });
+        Assert.Empty(TypesValidator.Validate(repo).Errors);
+    }
+
     [Fact]
     public void DeletingMachineUsedByTypeIsAnError()
     {
